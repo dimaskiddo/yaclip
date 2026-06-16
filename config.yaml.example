@@ -1,0 +1,106 @@
+logging:
+  level: "INFO"                        # DEBUG | INFO | WARNING | ERROR
+  file_path: "./workspace/logs/app.log"
+  rotation: "50 MB"
+  retention: "7 days"
+
+web_server:
+  host: "127.0.0.1"
+  port: 7860
+  share: false
+
+ai_pipeline:
+  stt:
+    provider: "local"                  # cloud | local | auto (auto = try cloud, fall back to local)
+    cloud:
+      provider: "google"               # google | openai
+      api_key: "your-api-key-here"
+      model: "gemini-2.5-flash"        # Used for google; openai always uses whisper-1
+    local:
+      device: "auto"                   # auto | cpu | cuda
+      model_size: "large-v3"           # tiny | base | small | medium | large-v3
+
+  llm:
+    provider: "cloud"                  # cloud | local | auto (auto = try cloud, fall back to local)
+    cloud:
+      provider: "google"               # google | openai (openai covers OpenRouter and compatible APIs)
+      base_url: null                   # null = provider default; set for OpenRouter or self-hosted endpoints
+      api_key: "your-api-key-here"
+      model: "gemini-2.5-flash"
+    local:
+      device: "auto"                   # auto | cpu | cuda
+      n_gpu_layers: 0                  # 0 = CPU only; -1 = all layers to GPU
+      model_name: "microsoft/Phi-3-mini-4k-instruct-gguf:q4"
+
+downloader:
+  browser_cookies: "edge"              # Browser for yt-dlp cookie extraction: edge | chrome | firefox
+  target_resolution: "1080p"
+  video_format: "mp4"
+  audio_format: "aac"
+  audio_quality: "192k"
+
+clip_selection:
+  mode: "auto"                         # auto = AI detects clips | manual = user provides timestamps
+  auto_strategy: "hybrid"              # For auto mode only: ai | heatmap | hybrid
+  candidate_multiplier: 2              # RMS/heatmap produces N spikes; LLM receives top (target_clips × multiplier)
+                                       # e.g. 5 clips × 2 = top 10 candidates sent to LLM, rest discarded
+                                       # Min: 1 (exact count, no selection) | Recommended: 2 | Max: 5
+  require_review_before_render: true   # Show review panel before rendering starts
+  heatmap_threshold_percentile: 85     # Minimum heatmap spike percentile to qualify as a clip candidate
+  min_clips: 1
+  max_clips: 25
+  default_clips: 5
+  # Clip length = [default, default + margin]. e.g. default 60 + margin 15 -> clips run 60-75s.
+  default_clip_duration_seconds: 60  # TARGET clip length (and the floor every clip is extended up to)
+  clip_length_margin_seconds: 15     # a clip may run up to default+margin (caps overly-long picks)
+  min_clip_duration_seconds: 30      # WebUI duration-slider LOWER bound (not a per-clip floor)
+  max_clip_duration_seconds: 180     # WebUI duration-slider UPPER bound (not a per-clip cap)
+
+video_processing:
+  output_dir: "./workspace/clips"
+  device: "auto"                       # auto | cpu | cuda
+  content_type_override: "auto"        # auto | PODCAST | INTERVIEW | JUST_CHAT | GAMING_SOLO | GAMING_COLLAB | DONATION_OVERLAY
+  detection_confidence_threshold: 0.6  # Below this, detection falls back to PODCAST and logs a warning
+  auto_face_tracking: true             # Smooth face-centered crop for all layout modes
+  preserve_donation_overlays: true     # Master on/off for donation/MediaShare handling. true = auto-detect
+                                       #   popups, route clips to DONATION_OVERLAY layout, and PiP-composite
+                                       #   Trakteer/Saweria/MediaShare alerts. false = skip all donation scans
+                                       #   (faster) and never auto-route to DONATION_OVERLAY.
+  default_resolution: "1080p"
+  region_detection:                    # YOLOv8n visual analysis: facecam / gameplay / mediashare regions
+    enabled: true                      # false = fall back to motion/face heuristics only
+    device: "auto"                     # auto | cpu | cuda
+    model_name: "yolov8n.pt"           # Ultralytics COCO nano model (auto-downloaded to workspace/models/)
+    sample_frames: 4                   # Frames sampled per candidate/clip window (sparse = fast)
+    gameplay_follow_motion: true       # true = gentle centred pan follows char (small move) | false = static centred crop
+    gameplay_zoom: 1.25                # >1 zooms the gameplay panel tighter (1.25 = 25% closer, crops the ticker out)
+  subtitles:
+    enabled: true
+    collab_enabled: false              # subtitles on 3-stack GAMING_COLLAB (cramped) — off by default
+    uppercase: true                    # render caption text in CAPITALS for readability
+    language: "auto"                   # auto = detect from audio | ISO 639-1 code or name (34 languages)
+    stt_context: ""                    # optional vocab hint for STT accuracy: names/game/terms, e.g. "Trakteer, Saweria, Monument Valley"
+    font_file: "Anton.ttf"
+    font_size: 80
+    primary_color: "#FFFFFF"           # hex #RRGGBB (legacy ASS &HAABBGGRR still accepted); white text
+    highlight_color: "#96C8FF"         # active-word colour — soft blue, eye-friendly
+    outline_color: "#000000"           # caption outline — black
+    outline_thickness: 6
+    bold: true
+    shadow: true
+    alignment: bottom-center           # bottom-left | bottom-center | center | top-center | ... (or ASS int)
+    margin_v: 760                      # pixels from the top of the 1920 canvas (~60% down, off the bottom panel)
+
+workspace_cleanup:
+  enabled: true
+  run_on_startup: true
+  dry_run: false                       # true = log candidates without deleting; use to validate retention settings
+  retention_days:
+    videos: 3                          # Raw yt-dlp downloads — set to -1 to disable purge for this dir
+    audios: 3                          # Extracted audio tracks
+    subtitles: 3                       # Full-video STT transcriptions and AI JSON results — set to -1 to disable
+    tmp: 1                             # FFmpeg scratch files — purge aggressively; 0 = purge every run
+  protected_dirs:                      # These directories are NEVER touched by auto-purge
+    - "bin"
+    - "fonts"
+    - "models"

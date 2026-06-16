@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yaclip"
+version = "0.1.0"
+description = "Yet Another AI Auto-Clipper (YaClip) — cross-platform AI clip generator for YouTube Shorts, Reels, and TikTok"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "loguru",
+    "pydantic",
+    "pyyaml",
+    "apscheduler",
+    "typer",
+    "gradio",
+    "static-ffmpeg",
+    "yt-dlp",
+    "openai",
+    "google-generativeai",
+    "mediapipe",
+    "huggingface_hub",
+    "llama-cpp-python",
+    "faster-whisper",
+    "torch==2.12.0+cpu",
+    "torchvision==0.27.0+cpu",
+    "opencv-python-headless",
+    "ultralytics"
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.1.0",
+    "black>=23.0.0",
+    "isort>=5.0.0",
+    "pytest>=7.0.0"
+]
+
+# uv: resolve torch from the CPU index so `uv sync` / `uv pip install` never pull the CUDA build.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+torchvision = [{ index = "pytorch-cpu" }]

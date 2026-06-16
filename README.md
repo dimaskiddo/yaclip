@@ -1,0 +1,454 @@
+# ✂️ YaClip — AI Auto-Clipper for YouTube Shorts, Reels & TikTok
+
+**YaClip** automatically turns long YouTube videos into short vertical clips, ready to post on YouTube Shorts, Instagram Reels, or TikTok. Just paste a YouTube link — YaClip downloads the video, finds the most engaging moments using AI, and exports polished 9:16 vertical clips with animated subtitles. No video editing skills required.
+
+It works on **Windows, macOS, Linux, and WSL2**, and is designed to run well even on low-spec computers.
+
+---
+
+## ✨ What YaClip Does For You
+
+*   **📦 Self-contained — no extra software to install manually:** YaClip automatically downloads everything it needs (video tools, fonts, AI models) into its own folder on first run. Nothing is installed system-wide.
+*   **🧠 AI-powered clip selection:** Uses Google Gemini or other AI services to read through the video transcript and pick the most interesting, shareable moments. Works offline too with a local AI model.
+*   **⚡ Fast — even on long videos:** Instead of reading the entire transcript of a 2-hour video, YaClip first identifies the loudest and most-replayed sections, then only analyses those. This makes AI processing up to 95% faster.
+*   **💻 Two ways to use it:** A browser-based visual interface (just open a link in your browser) or a terminal command for automation.
+*   **✂️ Manual control when you want it:** Not happy with auto-detection? You can enter your own timestamps instead and let YaClip handle the rest.
+*   **🎥 Smart camera framing:** Automatically detects faces and webcams, and frames the vertical clip so the person stays centred and visible — even in gaming streams with multiple webcams.
+*   **🔤 Animated word-by-word subtitles:** Each spoken word is highlighted as it's said. Subtitles are permanently baked into the video so they show on every platform without any extra steps.
+*   **⚙️ One settings file:** All options — AI provider, subtitle style, clip length, language — are in a single `config.yaml` file that you edit once.
+
+---
+
+## 🎬 How It Works
+
+When you give YaClip a YouTube URL, it goes through these steps automatically:
+
+1. **Download** — downloads the video and audio
+2. **Detect** — analyses the video to understand what type of content it is (podcast, gaming stream, interview, etc.)
+3. **Find moments** — uses YouTube's own most-replayed data or audio energy peaks to locate the best candidate sections
+4. **Transcribe** — converts the audio of those sections to text
+5. **AI picks the best clips** — sends the transcripts to an AI model which selects the most engaging moments and gives each one a title
+6. **Review** — shows you the proposed clips before rendering anything; you can edit, delete, or approve
+7. **Render** — builds the final vertical video with subtitles and smart framing
+8. **Done** — clips saved and ready to upload
+
+```mermaid
+graph TD
+    subgraph "Your Computer"
+        Env["Python Environment (.venv)"]
+        Cache["YaClip Storage Folder (./workspace/)"]
+    end
+
+    subgraph "YaClip"
+        Entry["app.py (Start Here)"]
+        Config["Settings (config.yaml)"]
+
+        Entry --> Browser["Browser Interface"]
+        Entry --> Terminal["Terminal Commands"]
+
+        Browser & Terminal --> Pipeline["Processing Pipeline"]
+
+        subgraph "What Happens Inside"
+            Download["Download Video"]
+            Vision["Detect Content & Faces"]
+            AI["AI — Find & Select Best Moments"]
+            Render["Build Vertical Clip + Subtitles"]
+        end
+
+        Pipeline --> Download
+        Pipeline --> Vision
+        Pipeline --> AI
+        Pipeline --> Render
+    end
+
+    Download --> Cache
+    Vision --> Cache
+    AI --> Cache
+    Render --> Cache
+```
+
+---
+
+## 📚 Detailed Technical Documentation
+
+For a full breakdown of the internal architecture, processing pipeline, and configuration options, see:
+- [Architecture Overview](docs/ARCHITECTURE.md)
+- [Pipeline Workflows](docs/WORKFLOWS.md)
+
+---
+
+## 🎯 Supported Video Types
+
+YaClip automatically detects what kind of video you're working with and adjusts how it frames and layouts the vertical clip. You don't need to set this manually — but you can override it if the detection is wrong.
+
+| Video Type | What it looks like | Vertical layout |
+|---|---|---|
+| **Podcast** | One speaker, mostly static camera, talking directly | Full-screen vertical, face kept centred |
+| **Interview** | Two or more people taking turns speaking | Full-screen vertical, camera smoothly shifts to whoever is talking |
+| **Just Chatting** | Single streamer, no gameplay, may have donation alerts | Webcam on top, stream content on bottom |
+| **Gaming — Solo** | Gameplay visible, one webcam in corner | Webcam on top, gameplay on bottom |
+| **Gaming — Collab** | Gameplay visible, two or more webcams | Webcam 1 on top, gameplay in centre, Webcam 2 on bottom |
+| **Donation Alert** | A donation or media share popup appears during the clip | Webcam on top, donation popup on bottom |
+
+> Donation alert clips are handled automatically — any clip where a Trakteer, Saweria, or MediaShare popup appears will use the Donation Alert layout, no matter what the base video type is.
+
+---
+
+## 🧠 AI Options
+
+YaClip supports several combinations of AI services for transcription and clip selection. You control this in `config.yaml`.
+
+*   **Cloud AI — Google Gemini / OpenAI (recommended for best quality):** Sends audio to a cloud AI service which transcribes it and picks the best clips in one step. Requires an API key. Fast and accurate.
+*   **Local transcription + Cloud AI selection:** Transcribes on your own computer for free, then sends just the text to a cloud AI for clip selection. Good balance of cost and quality.
+*   **Fully offline:** Both transcription and clip selection run entirely on your computer with no internet connection or API key needed. Slower, but fully private and free.
+
+> All three options produce the same output — the choice only affects speed, cost, and whether you need an internet connection.
+
+---
+
+## 📦 Storage & Automatic Cleanup
+
+YaClip keeps all its files inside a `workspace/` folder in the project directory. Nothing is written outside of it.
+
+| Folder | What's stored there |
+|---|---|
+| `workspace/bin/` | Video download and processing tools (auto-downloaded on first run) |
+| `workspace/fonts/` | Subtitle fonts (auto-downloaded on first run) |
+| `workspace/models/` | Local AI model files (downloaded when first used) |
+| `workspace/videos/` | Raw downloaded videos |
+| `workspace/audios/` | Extracted audio files |
+| `workspace/subtitles/` | Transcripts and clip data |
+| `workspace/clips/` | Your finished vertical clips |
+| `workspace/tmp/` | Temporary working files (deleted automatically) |
+
+**Automatic cleanup:** Every time YaClip starts, it automatically deletes old files to free up disk space. By default: videos, audio, and transcripts older than 3 days are removed; temporary files older than 1 day are removed. Your finished clips in `workspace/clips/` are never auto-deleted. You can adjust retention settings in `config.yaml` or clear the cache manually from the Maintenance tab.
+
+---
+
+## 🚀 Getting Started
+
+### 📋 What You Need Before Installing
+
+Before you begin, make sure you have the following installed on your computer:
+
+| Requirement | Version | Where to get it |
+|---|---|---|
+| **Python** | 3.10 or newer | [python.org/downloads](https://www.python.org/downloads/) |
+| **uv** *(recommended)* or pip | Any | [docs.astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/) |
+| **Git** | Any | [git-scm.com](https://git-scm.com/downloads) |
+
+> **How to check if Python is already installed:**
+> Open a terminal and type `python3 --version` (Linux/macOS) or `python --version` (Windows).
+> You need version **3.10 or higher**.
+
+---
+
+### 🖥️ CPU or GPU — Which Setup is Right for You?
+
+YaClip works on **any computer**. Before installing, pick the setup that matches your hardware:
+
+| | CPU Setup *(default, recommended)* | GPU Setup *(optional, faster)* |
+|---|---|---|
+| **Works on** | All computers — Windows, macOS, Linux, WSL2, low-spec laptops | Computers with a **dedicated NVIDIA GPU** only |
+| **AI processing speed** | Normal | Faster (local AI models run on the GPU) |
+| **Disk space used** | ~2–3 GB | ~6–7 GB |
+| **Install complexity** | Simple — just follow the steps below | Extra steps after the main install |
+| **Recommended for** | Most users, WSL2, Docker, any computer without an NVIDIA GPU | Users who want faster local AI processing |
+
+> **Not sure if you have an NVIDIA GPU?**
+> - **Windows:** Open Task Manager → Performance tab → look for any "GPU" entry labelled NVIDIA.
+> - **Linux:** Run `nvidia-smi` in a terminal. If you see GPU information, you have one. If the command is not found, you don't.
+> - **WSL2:** Even if your Windows PC has an NVIDIA GPU, use the **CPU setup** for WSL2 — getting a GPU to work inside WSL2 requires extra configuration that is not covered here.
+
+---
+
+## 🛠️ Installation
+
+### Step 1 — Download YaClip
+
+Open a terminal and run:
+
+```bash
+git clone https://github.com/dimaskiddo/yaclip.git
+cd yaclip
+```
+
+---
+
+### Step 2 — Install System Libraries *(Linux and WSL2 only)*
+
+> **Windows and macOS users: skip this step entirely.**
+
+The face-detection feature requires a small set of graphics libraries that most Linux and WSL2 systems do not include by default. Install them once with the command for your distribution:
+
+| My Linux distro is... | Run this command |
+|---|---|
+| Ubuntu / Debian / Linux Mint | `sudo apt-get install -y libegl1 libgles2 libgl1` |
+| Fedora / RHEL / CentOS | `sudo dnf install -y mesa-libEGL mesa-libGLES mesa-libGL` |
+| Arch Linux / Manjaro | `sudo pacman -S --noconfirm libglvnd mesa` |
+| Alpine Linux | `sudo apk add mesa-egl mesa-gles` |
+| openSUSE | `sudo zypper install -y Mesa-libEGL1 Mesa-libGLESv2-2` |
+
+> Don't know your distro? Run `cat /etc/os-release` and look at the `NAME=` line.
+> If these libraries are missing, YaClip will detect it at startup and print the exact command to install them.
+
+---
+
+### Step 3 — Create an Isolated Python Environment
+
+This keeps YaClip's packages separate from everything else on your computer and prevents conflicts.
+
+```bash
+python3 -m venv .venv
+```
+
+Then **activate** the environment. You need to do this every time you open a new terminal to use YaClip:
+
+```bash
+# Linux / macOS / WSL2:
+source .venv/bin/activate
+
+# Windows (Command Prompt):
+.venv\Scripts\activate.bat
+
+# Windows (PowerShell):
+.venv\Scripts\Activate.ps1
+```
+
+> When the environment is active, you'll see `(.venv)` at the start of your terminal prompt.
+
+---
+
+### Step 4 — Install YaClip Packages
+
+#### 🟢 CPU Setup *(recommended for most users)*
+
+Run these two commands **in order**. Both are required.
+
+**4a. Install all packages:**
+
+```bash
+# Using uv (recommended — much faster):
+uv pip install --no-cache -r requirements.txt
+
+# Using pip (alternative):
+pip install --no-cache-dir -r requirements.txt
+```
+
+**4b. Restore the correct video library *(required — do not skip)*:**
+
+Some packages installed in step 4a will silently swap out a critical video library with a version that crashes on WSL2 and Linux servers. This command puts the correct one back:
+
+```bash
+# Using uv:
+uv pip install --no-cache --force-reinstall --no-deps opencv-python-headless
+
+# Using pip:
+pip install --no-cache-dir --force-reinstall --no-deps opencv-python-headless
+```
+
+---
+
+#### 🟡 GPU Setup *(only if you have an NVIDIA GPU)*
+
+First, complete steps 4a and 4b above exactly as written. Then run these **additional** commands to replace the CPU AI library with the GPU version:
+
+```bash
+# Remove the CPU version that was just installed:
+uv pip uninstall torch torchvision
+
+# Install the GPU version:
+# (Replace "cu121" with your CUDA version if different — check with: nvidia-smi)
+uv pip install --no-cache torch==2.12.0+cu121 torchvision==0.27.0+cu121 \
+  --index-url https://download.pytorch.org/whl/cu121
+```
+
+Then tell YaClip that a real GPU is present by setting an environment variable:
+
+```bash
+# Linux / macOS / WSL2 — add this line to your ~/.bashrc or ~/.zshrc:
+export YACLIP_FORCE_TRITON=1
+
+# Windows — run this once in PowerShell:
+[Environment]::SetEnvironmentVariable("YACLIP_FORCE_TRITON", "1", "User")
+```
+
+---
+
+#### 🔴 Switching back to CPU (if something went wrong)
+
+If you previously installed AI packages outside of this guide, you may have a GPU version of the AI library installed without realising it — this can cause YaClip to crash silently on startup. Switch back to the safe CPU version with:
+
+```bash
+# Remove the GPU version and everything it brought with it:
+uv pip uninstall torch torchvision triton \
+  nvidia-cublas-cu13 nvidia-cudnn-cu13 nvidia-cuda-runtime-cu13 nvidia-cuda-nvrtc-cu13 \
+  nvidia-cuda-cupti-cu13 nvidia-cufft-cu13 nvidia-curand-cu13 nvidia-cusolver-cu13 \
+  nvidia-cusparse-cu13 nvidia-nccl-cu13 nvidia-nvjitlink-cu13 nvidia-nvtx-cu13 \
+  cuda-toolkit cuda-bindings 2>/dev/null || true
+
+# Install the CPU version:
+uv pip install --no-cache torch==2.12.0+cpu torchvision==0.27.0+cpu \
+  --index-url https://download.pytorch.org/whl/cpu
+
+# Restore the correct video library (same as step 4b):
+uv pip install --no-cache --force-reinstall --no-deps opencv-python-headless
+```
+
+---
+
+### Step 5 — Create Your Configuration File
+
+Copy the example configuration and open it in any text editor:
+
+```bash
+cp config.yaml.example config.yaml
+```
+
+The most important thing to set is your AI provider API key under `ai_pipeline` — without it, YaClip will fall back to local AI only. Everything else works with the default values.
+
+---
+
+### Step 6 — Verify Your Installation
+
+Run this to confirm everything installed correctly:
+
+```bash
+python app.py config
+```
+
+You should see your settings printed with no errors. If you get an error, make sure your environment is still active (you should see `(.venv)` in your prompt from Step 3) and that both commands in Step 4 completed without errors.
+
+---
+
+### 🐳 Alternative: Docker *(no manual setup required)*
+
+If you have Docker installed, you can skip Steps 2–4 entirely. Docker packages everything YaClip needs into a single container.
+
+```bash
+# 1. Build the container (one time only):
+docker build -t dimaskiddo/yaclip .
+
+# 2. Copy the configuration file:
+cp config.yaml.example config.yaml
+
+# 3. Run a clip command:
+docker run --rm \
+  -v "$PWD/workspace:/app/workspace" \
+  -v "$PWD/config.yaml:/app/config.yaml" \
+  dimaskiddo/yaclip clip "https://www.youtube.com/watch?v=<id>"
+
+# 4. Or open the browser interface:
+docker run --rm -p 7860:7860 \
+  -v "$PWD/workspace:/app/workspace" \
+  -v "$PWD/config.yaml:/app/config.yaml" \
+  dimaskiddo/yaclip serve
+```
+
+Then open `http://localhost:7860` in your browser.
+
+> Your downloaded videos, AI models, and finished clips are saved to the `workspace/` folder on your computer — not inside the container — so they are kept between runs.
+
+---
+
+## 🕹️ How to Use YaClip
+
+### 🌐 Browser Interface
+
+Start the browser interface by running:
+
+```bash
+python app.py
+```
+
+Then open **`http://127.0.0.1:7860`** in your browser.
+
+> **WSL2 users:** open this URL in your **Windows** browser, not inside WSL.
+
+#### Tabs:
+*   **Clipper** — Paste a YouTube URL, choose how many clips you want, how long they should be, and what language the subtitles should be in. Switch to Manual mode if you want to enter your own timestamps instead of letting AI choose.
+*   **Review & Render** — Before anything is exported, YaClip shows you the proposed clips with their titles and timestamps. You can edit or delete any of them before clicking Render.
+*   **Settings** — Change any setting from the browser without editing the config file directly.
+*   **Maintenance** — See how much disk space each folder is using, and clear old files to free up space.
+
+---
+
+### 💻 Terminal Commands
+
+If you prefer working in a terminal:
+
+**Generate clips from a YouTube video:**
+```bash
+python app.py clip "https://www.youtube.com/watch?v=<id>"
+```
+
+Optional options you can add:
+
+| Option | What it does | Default |
+|---|---|---|
+| `--clips 3` | How many clips to generate | 5 |
+| `--duration 45` | Target length of each clip in seconds | 60 |
+| `--language id` | Subtitle language (e.g. `en`, `id`, `ja`) | auto-detect |
+| `--output-dir ./my-clips` | Where to save the finished clips | `workspace/clips/` |
+| `--force` | Re-download the video even if already downloaded | off |
+
+**Other commands:**
+
+```bash
+# Check how much disk space the cache folders are using:
+python app.py cache status
+
+# Delete old cached files to free up space:
+python app.py cache purge
+
+# Print your current settings:
+python app.py config
+```
+
+---
+
+## 🧪 For Developers — Running Tests
+
+If you are contributing to YaClip or want to run the test suite:
+
+```bash
+pytest
+```
+
+Tests cover: timestamp parsing, settings validation, clip boundary checks, video filter construction, and content type detection logic.
+
+---
+
+## ✍️ Authors
+
+*   **Dimas Restu Hidayanto** — [DimasKiddo on GitHub](https://github.com/dimaskiddo)
+
+---
+
+## 🏗️ Built With
+
+*   **[Python](https://www.python.org/)** — programming language
+*   **[Gradio](https://gradio.app/)** — browser interface
+*   **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — YouTube video downloader
+*   **[FFmpeg](https://ffmpeg.org/)** — video processing and rendering
+*   **[PyTorch](https://pytorch.org/)** — AI model runtime
+*   **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** — local speech-to-text transcription
+*   **[MediaPipe](https://ai.google.dev/edge/mediapipe/solutions/guide)** — face detection
+*   **[Ultralytics YOLOv8](https://docs.ultralytics.com/)** — object and region detection
+*   **[OpenCV](https://opencv.org/)** — video frame analysis
+*   **[Loguru](https://github.com/Delgan/loguru)** — application logging
+
+---
+
+## ⚠️ Disclaimer
+
+Use at your own risk. YaClip is provided as-is with no guarantees. The authors are not responsible for any issues arising from its use, including API costs, platform terms of service actions, or data loss. Always review the terms of service of any platform you download content from or upload clips to.
+
+---
+
+## ⚖️ License
+
+Distributed under the **MIT License**. See `LICENSE` for more information.
+
+---
+**YaClip** — *From long video to ready-to-post short clip, automatically.* ✂️
