@@ -10,7 +10,7 @@ This document details the step-by-step data flow of the YaClip pipeline — how 
 flowchart TD
     Start([Execute app.py]) --> Route{Arguments?}
 
-    Route -- "No args" --> WebUI([Launch Gradio WebUI])
+    Route -- "No args" --> WebUI([Launch Gradio WebUI\nplanned — currently a stub])
     Route -- "CLI args" --> CLI([Execute Typer Command])
 
     WebUI --> Boot
@@ -234,7 +234,7 @@ Uses template matching or a lightweight frame classifier to detect persistent UI
 If no HUD is found, MediaPipe FaceDetection counts distinct, spatially-separated, persistent face regions. When two or more are found alongside alternating speech activity (via lip-movement detection or audio energy per face region), the video is classified as `INTERVIEW`.
 
 **Step 3 — Donation Overlay Sampling:**
-For single-face, no-HUD content, the detector samples for known donation alert signatures: bright pop-up boxes in screen corners, Trakteer.ID and Saweria visual patterns, MediaShare full-screen video intrusions. If found → `JUST_CHAT`.
+For single-face, no-HUD content, the detector samples for known donation alert signatures: bright pop-up boxes in screen corners, Trakteer.ID visual patterns, MediaShare full-screen video intrusions. If found → `JUST_CHAT`.
 
 **Fallback:**
 If all confidence scores are below `detection_confidence_threshold` (default: 0.6), the engine falls back to `PODCAST`, logs a warning with the ambiguous frame samples, and continues. The user can manually override via the WebUI review panel.
@@ -305,7 +305,7 @@ STT and LLM run as two independent steps. Each resolves its own provider from co
 ---
 
 ### 6. Review Gate
-**Module**: `src/interfaces/webui.py`
+**Module**: `src/interfaces/webui.py` *(planned — not yet implemented; `require_review_before_render` config flag is present but rendering runs directly in the current CLI path)*
 
 When `clip_selection.require_review_before_render: true` (default):
 - All clip proposals displayed in the Gradio **Review & Render** tab: Title, Reasoning, Start, End, and the **detected ContentType**.
@@ -381,9 +381,9 @@ Three-region stack (each 1080×640): Primary Facecam Top, Gameplay Center (ALWAY
 
 ### 9. Delivery
 
-**WebUI**: Final clips appear in the **Review & Render** tab output section with HTML5 video preview and per-clip download buttons.
+**WebUI** *(planned)*: Final clips will appear in the **Review & Render** tab output section with HTML5 video preview and per-clip download buttons.
 
-**CLI**: Final clip paths logged to terminal via loguru at INFO level.
+**CLI** *(current)*: Final clip paths logged to terminal via loguru at INFO level.
 
 ---
 

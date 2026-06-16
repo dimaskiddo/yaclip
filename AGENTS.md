@@ -1,4 +1,4 @@
-# Yet Another AI Auto-Clipper — YaClip (WebUI & CLI) — Agent Instructions
+# Yet Another AI Auto-Clipper (YaClip) — Agent Instructions
 
 ## 🎯 Role & Objective
 
@@ -51,7 +51,7 @@ The application recognizes five content types. Detection is automatic unless ove
 |---|---|
 | `PODCAST` | Single dominant speaker, static camera or minimal movement, no gaming HUD, no persistent second face, monologue or Q&A with off-screen host |
 | `INTERVIEW` | Two or more clearly separated face regions, alternating speech patterns, face-switching required when speaker changes |
-| `JUST_CHAT` | Single streamer, no gaming HUD, donation overlays (Trakteer.ID, Saweria) are common and must be preserved |
+| `JUST_CHAT` | Single streamer, no gaming HUD, donation overlays (Trakteer.ID, MediaShare) are common and must be preserved |
 | `GAMING_SOLO` | Persistent gaming HUD/interface visible, single facecam in corner, donation overlays must be preserved |
 | `GAMING_COLLAB` | Persistent gaming HUD, multiple persistent faces (Discord grid, dual-screen collab layout), donation overlays must be preserved |
 | `DONATION_OVERLAY` | **Per-clip, not a video-level type.** Any clip whose window contains a transient mediashare/donation overlay is promoted to this type (from whatever base type the video has) and routed to a dedicated facecam + popup layout. This is the single home for donation handling — the other layouts no longer embed donations. |
@@ -117,7 +117,7 @@ Each component has its own `provider` setting:
 - **WebUI:** Implemented with `gradio`. Must be visually clean and logically organized into tabs: **Clipper**, **Review & Render**, **Settings**, and **Maintenance**.
 - **Gradio Task Queuing (CRITICAL):** Always initialize with `.queue().launch()`. Never use `.launch()` alone — this causes socket timeouts on long video jobs.
 - **WSL Compatibility:** Gradio MUST bind to `127.0.0.1:7860` (configurable) so headless Linux/WSL environments expose the UI to the host Windows browser cleanly.
-- **Execution Routing:** `app.py` is entry/routing only (load config → environment → logging) and delegates to the Typer app in `src/interfaces/cli.py`. If `sys.argv` has CLI arguments → route to Typer; if run bare → launch Gradio. CLI commands: `clip <URL>` (the pipeline, with `--clips/--duration/--language/--output-dir/--force/--debug` overrides), `config`, `cache status`, `cache purge [--dry-run]`, `serve` (WebUI stub). `test-pipeline` and `clean-workspace` remain as hidden back-compat aliases.
+- **Execution Routing:** `app.py` is entry/routing only (load config → environment → logging) and delegates to the Typer app in `src/interfaces/cli.py`. If `sys.argv` has CLI arguments → route to Typer; if run bare → launch Gradio (stub in alpha). CLI commands: `clip <URL>` (the pipeline, with `--clips/--duration/--language/--output-dir/--force/--debug` overrides), `config`, `cache status`, `cache purge [--dry-run]`, `serve` (WebUI stub — not yet implemented). `clean-workspace` remains as a hidden back-compat alias of `cache purge`.
 - **WebUI parity (next phase, REQUIREMENT):** every `config.yaml` field MUST be editable from the Gradio WebUI, with each control's **default loaded from `config.yaml`** — `config.yaml` stays the single source of truth, and the UI is an editor over it (a session override or a save-back), never a competing config store.
 
 ---
@@ -200,7 +200,7 @@ Detection MUST be performed in this order, stopping at the first confident match
    - Two or more distinct, spatially-separated persistent face regions with alternating speech patterns → `INTERVIEW`
    - Single persistent face region → proceed to step 3.
 
-3. **Donation Overlay Sampling** — For single-face, no-HUD content, sample for known donation overlay signatures (bright pop-up alerts in corners, Trakteer/Saweria visual patterns).
+3. **Donation Overlay Sampling** — For single-face, no-HUD content, sample for known donation overlay signatures (bright pop-up alerts in corners, Trakteer/MediaShare visual patterns).
    - Overlay detected → `JUST_CHAT`
    - No overlay detected → `PODCAST`
 
@@ -386,7 +386,7 @@ video_processing:
   content_type_override: "auto"        # auto | PODCAST | INTERVIEW | JUST_CHAT | GAMING_SOLO | GAMING_COLLAB | DONATION_OVERLAY
   detection_confidence_threshold: 0.6  # Below this, detection falls back to PODCAST and logs a warning
   auto_face_tracking: true             # Smooth face-centered crop for Mode A (talking heads)
-  preserve_donation_overlays: true     # Detect and composite Trakteer/Saweria/MediaShare alerts
+  preserve_donation_overlays: true     # Detect and composite Trakteer/MediaShare alerts
   default_resolution: "1080p"
   region_detection:                    # YOLOv8n visual analysis: facecam / gameplay / mediashare regions
     enabled: true                      # false = fall back to motion/face heuristics only
@@ -410,7 +410,7 @@ video_processing:
     bold: true                         # true/false (legacy 0/1 still accepted)
     shadow: true
     alignment: bottom-center           # name (bottom-center/center/top-center/...) or ASS int
-    margin_v: 760                      # pixels from the top of the 1920 canvas (~60% down)
+    margin_v: 760                      # bottom margin in px (bottom-center alignment) — 760px up from canvas bottom = ~60% down from top
 
 workspace_cleanup:
   enabled: true
@@ -590,18 +590,19 @@ Configured in `pyproject.toml` from Phase 1. Not optional.
 
 ```
 yaclip/
-├── app.py                       # Entry point: routes to CLI or Gradio WebUI
-├── config.yaml                  # User configuration
+├── app.py                       # Entry point: routes to Typer CLI or Gradio WebUI (stub)
+├── config.yaml                  # User configuration (gitignored — copy from config.yaml.example)
+├── config.yaml.example          # Distributable config template
 ├── TASKS.md                     # Phase execution backlog and task tracking
 ├── requirements.txt             # pip3 compatibility
+├── requirements-dev.txt         # Dev/test dependencies
 ├── pyproject.toml               # uv/pip deps + ruff/mypy config
 ├── README.md                    # Setup and usage guide
+├── Dockerfile                   # Container build
 ├── docs/
 │   ├── ARCHITECTURE.md          # System design and component overview
 │   └── WORKFLOWS.md             # Pipeline diagrams and operational flows
-├── logs/
-│   └── app.log                  # Loguru rotating log file
-├── tests/                       # Mirrors src/ structure
+├── tests/                       # Mirrors src/ structure (planned)
 │   ├── conftest.py              # Shared pytest fixtures
 │   ├── core/
 │   ├── media/
@@ -613,34 +614,48 @@ yaclip/
 │   ├── core/
 │   │   ├── config.py            # Pydantic config loading and validation
 │   │   ├── constants.py         # ContentType, LayoutMode, AIProvider, ClipMode enums; typed constants
+│   │   ├── environment.py       # setup_environment(), guard_triton_segfault(), ensure_vision_runtime()
 │   │   ├── exceptions.py        # YaClipError hierarchy
-│   │   ├── workspace.py         # Workspace init, sequential purge engine
-│   │   └── logger.py            # Loguru setup
+│   │   ├── logger.py            # Loguru setup; InterceptHandler for stdlib logging
+│   │   ├── utils.py             # SystemUtils, AIUtils, cross-platform helpers
+│   │   └── workspace.py         # Workspace init, sequential purge engine
 │   ├── media/
+│   │   ├── audio.py             # FFmpeg audio extraction
 │   │   ├── downloader.py        # yt-dlp download logic, WSL cookie resolution
-│   │   └── ffmpeg_builder.py    # FFmpeg command construction and filter graph helpers
+│   │   ├── energy.py            # FFmpeg RMS pseudo-heatmap generator
+│   │   ├── ffmpeg_builder.py    # FFmpeg filter graph builder (Mode A/B/C/Donation)
+│   │   ├── renderer.py          # Clip export orchestrator (3-pass: regions → subs → encode)
+│   │   ├── slicer.py            # FFmpeg -c copy audio slicer
+│   │   └── subtitles.py         # .ass subtitle generator with word-by-word focus effect
 │   ├── ai/
-│   │   ├── api_client.py        # Cloud API wrappers (Google, OpenAI-compatible) with retry logic
-│   │   ├── stt_local.py         # faster-whisper local STT with language detection
-│   │   └── llm_local.py        # llama-cpp-python local highlight detection
+│   │   ├── api_client.py        # Retry decorator for cloud API calls
+│   │   ├── heatmap.py           # YouTube heatmap JSON parser + spike ranker
+│   │   ├── llm_cloud.py         # Cloud LLM (Google Gemini / OpenAI-compatible) highlight extraction
+│   │   ├── llm_local.py         # llama-cpp-python local highlight detection
+│   │   ├── pipeline.py          # AI orchestrator: hybrid/manual strategy, pre-ranking, dedup
+│   │   ├── prompts.py           # Content-aware system prompts, LANGUAGE_PROMPTS, strip_json_markdown
+│   │   ├── stt_cloud.py         # Cloud STT (Google Gemini / OpenAI Whisper API)
+│   │   └── stt_local.py         # faster-whisper local STT with VAD, word timestamps, hallucination filter
 │   ├── vision/
 │   │   ├── visual_analyzer.py        # YOLOv8n region engine: facecam/gameplay/mediashare + LLM text descriptor
 │   │   ├── content_type_detector.py  # Gaming HUD, face count, donation overlay signals → ContentType
 │   │   ├── face_tracker.py           # OpenCV/MediaPipe face detection, crop box, speaker-switch logic (Mode A)
-│   │   ├── layout_builder.py         # ContentType + VisualAnalyzer regions → FFmpeg layout assembly
+│   │   ├── layout_builder.py         # ContentType + VisualAnalyzer regions → FFmpeg layout spec
 │   │   └── overlay_detector.py       # Appearance/disappearance novelty detection (median baseline diff; cam-exclusion guards)
 │   └── interfaces/
-│       ├── cli.py               # Typer CLI commands (clip, workspace, config)
-│       ├── webui.py             # Gradio layout: Clipper, Review, Settings, Maintenance tabs
-│       └── components.py        # Reusable Gradio component factories
+│       ├── cli.py               # Typer CLI commands: clip, config, cache status/purge, serve (stub), clean-workspace (alias)
+│       ├── webui.py             # [PLANNED] Gradio layout: Clipper, Review & Render, Settings, Maintenance tabs
+│       └── components.py        # [PLANNED] Reusable Gradio component factories
 └── workspace/
-    ├── bin/                     # FFmpeg, yt-dlp binaries (auto-downloaded)
-    ├── fonts/                   # .ttf subtitle fonts
-    ├── models/                  # Local GGUF LLM and Whisper model files
-    ├── videos/                  # Raw yt-dlp downloads
-    ├── audios/                  # Extracted audio tracks
-    ├── subtitles/               # STT transcriptions and AI JSON clip proposals
-    └── tmp/                     # FFmpeg scratch workspace
+    ├── bin/                     # FFmpeg, Bun JS runtime (auto-downloaded on first boot)
+    ├── fonts/                   # .ttf subtitle fonts (Anton.ttf auto-downloaded)
+    ├── logs/                    # Loguru rotating log files (app.log)
+    ├── models/                  # Local GGUF LLM files; models/hf/ = HuggingFace Hub cache
+    ├── clips/                   # Final rendered vertical clips (never auto-purged)
+    ├── videos/                  # Raw yt-dlp downloads (3-day retention)
+    ├── audios/                  # Extracted audio tracks (3-day retention)
+    ├── subtitles/               # STT transcripts, AI JSON, word cache, heatmap data (3-day retention)
+    └── tmp/                     # FFmpeg scratch, audio slices, ASS files (1-day retention)
 ```
 
 ---

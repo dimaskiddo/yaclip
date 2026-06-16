@@ -42,8 +42,8 @@ class LayoutBuilder:
             analysis: VisualAnalyzer.analyze_window() result for the clip window
                 (facecam_box, gameplay_box, screen_inset_box, mediashare_present, persons...).
             face_data: FaceTracker smooth-pan crops — used only by Mode A (talking heads).
-            overlay_data: Optional colour-based donation boxes (Saweria/Trakteer) from
-                OverlayDetector, used as a MediaShare fallback when YOLO finds no screen inset.
+            overlay_data: Optional colour-based donation boxes from OverlayDetector,
+                used as a MediaShare fallback when YOLO finds no screen inset.
 
         Returns:
             A layout_spec dict consumed by FFmpegCommandBuilder.

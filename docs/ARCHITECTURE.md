@@ -126,7 +126,7 @@ This is the core intelligence layer. It runs once per video, immediately after d
 |---|---|---|
 | 1. Gaming (HUD **or** "Gaming" category) | Persistent HUD match **or** the saved `gaming_hint` (YouTube Gaming category) — the category alone routes to gaming so a small/sub-threshold HUD doesn't drop the stream to PODCAST | `GAMING_SOLO` or `GAMING_COLLAB` by persistent face count (≥2 ⇒ collab) |
 | 2. Multi-face analysis | Two+ distinct, spatially-separated, persistent face regions with alternating speech | `INTERVIEW` |
-| 3. Donation overlay sampling | Single face, no HUD, but donation alert signatures detected (Trakteer.ID, Saweria) | `JUST_CHAT` |
+| 3. Donation overlay sampling | Single face, no HUD, but donation alert signatures detected (Trakteer.ID, MediaShare) | `JUST_CHAT` |
 | 4. Default fallback | No signals matched above threshold | `PODCAST` |
 
 A confidence score is produced at each step. If all scores fall below `detection_confidence_threshold` (default: 0.6), the engine falls back to `PODCAST` and logs a warning. The detected `ContentType` is shown in the WebUI review panel so the user can override it before rendering.
@@ -252,11 +252,13 @@ Font resolved from `./workspace/fonts/`. Full styling configurable: `font_size` 
 
 ### 7. Multi-Interface Modularity
 
-**CLI** (`typer`, in `src/interfaces/cli.py`; `app.py` is entry/routing only): `clip <URL>` (download → AI selection → render, with `--clips/--duration/--language/--output-dir/--force` overrides that patch the config singleton for the run), `config` (dump validated config, keys masked), `cache status` / `cache purge [--dry-run]`, `serve` (WebUI stub). `test-pipeline` / `clean-workspace` are hidden back-compat aliases.
+**CLI** (`typer`, in `src/interfaces/cli.py`; `app.py` is entry/routing only): `clip <URL>` (download → AI selection → render, with `--clips/--duration/--language/--output-dir/--force/--debug` overrides that patch the config singleton for the run), `config` (dump validated config, keys masked), `cache status` / `cache purge [--dry-run]`, `serve` (WebUI stub — not yet implemented). `clean-workspace` is a hidden back-compat alias of `cache purge`.
+
+> **Alpha state:** The CLI (`clip`, `config`, `cache`, `serve`) is the currently implemented interface. The Review Gate (`require_review_before_render` config flag) is present in config but not yet enforced — rendering runs directly in the CLI path without an interactive review step.
 
 **WebUI parity (next phase, requirement):** every `config.yaml` field must be editable in the Gradio UI, with each control defaulting from `config.yaml` — config stays the single source of truth.
 
-**WebUI** (`gradio`): 4-tab dashboard:
+**WebUI** (`gradio`, planned — `src/interfaces/webui.py` and `components.py` not yet implemented): 4-tab dashboard:
 - **Clipper** — URL input, mode toggle (Auto/Manual), timestamp area (Manual), clip count + duration sliders (Auto), subtitle language selector.
 - **Review & Render** — Clip proposals table with ContentType display and override; per-clip approve/edit/delete; render trigger.
 - **Settings** — Live config view and overrides.
@@ -284,7 +286,7 @@ Single `config.yaml` at project root. All runtime behaviour is derived from conf
 | `ai_pipeline` | `src/ai/pipeline.py` | Cloud/local mode, provider, model names |
 | `downloader` | `src/media/downloader.py` | Resolution, format, cookies |
 | `clip_selection` | `src/ai/pipeline.py` | Mode (auto/manual), strategy, review gate, clip counts, durations |
-| `video_processing` | `src/vision/*`, `src/media/renderer.py` | Content type override, face tracking, overlays, subtitle config |
+| `video_processing` | `src/vision/*`, `src/media/renderer.py` | Content type override, device (`auto`/`cpu`/`cuda`), face tracking, overlays, subtitle config |
 | `workspace_cleanup` | `src/core/workspace.py` | Retention days, dry-run, protected dirs |
 
 **Hidden override key** (absent from default config): `dk_clipper_sys_prompt` — replaces the hardcoded system prompt when present.

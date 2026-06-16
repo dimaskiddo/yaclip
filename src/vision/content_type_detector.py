@@ -362,13 +362,13 @@ class ContentTypeDetector:
             return False
 
     def _check_donation_overlays(self, frames: list[np.ndarray]) -> bool:
-        """Sample for donation alerts (Saweria/Trakteer popup signatures)."""
+        """Sample for donation alert popup signatures (bright transient overlay rectangles)."""
         import cv2
         import numpy as np
 
-        # Check if any frames show sudden high-contrast rectangular contours in expected alert centers/corners
-        # Saweria uses bright green/orange colors, Trakteer uses red/pink.
-        # We can look for temporary colorful contours that are only present in a few frames.
+        # Check if any frames show sudden high-contrast rectangular contours in expected alert centers/corners.
+        # Donation alert UIs typically use saturated colours (red/pink, bright orange) in clean card shapes.
+        # We look for temporary colorful contours that are only present in a few frames.
         if len(frames) < 3:
             return False
 
@@ -376,12 +376,12 @@ class ContentTypeDetector:
         # but structured as clean rectangles.
         # As a simplified high-performance heuristic:
         # Check standard overlay regions (lower-third center or corners) for transient bright saturation.
-        # Let's check for HSV threshold masks representing typical Saweria orange/Trakteer red.
+        # HSV threshold masks cover two common alert colour families: red/pink and bright orange.
         matched_alerts = 0
         for frame in frames:
             hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-            # Trakteer Red range: H: 170-180 (or 0-10), S: 100-255, V: 100-255
-            # Saweria Orange range: H: 5-25, S: 100-255, V: 100-255
+            # Red/pink alert range: H: 170-180 (or 0-10), S: 100-255, V: 100-255
+            # Bright orange alert range: H: 5-25, S: 100-255, V: 100-255
             mask_red1 = cv2.inRange(
                 hsv, np.array([0, 100, 100]), np.array([10, 255, 255])
             )

@@ -159,7 +159,7 @@ class SubtitleConfig(BaseModel):
     bold: bool = Field(default=True)
     shadow: bool = Field(default=True)
     alignment: int = Field(default=2)  # accepts names like "bottom-center" (→ ASS numpad int)
-    margin_v: int = Field(default=760)  # pixels from the top of the 1920 canvas (~60% down)
+    margin_v: int = Field(default=760)  # bottom margin in px; for bottom-center alignment: 760px up from canvas bottom = ~60% down from top
 
     @field_validator("primary_color", "highlight_color", "outline_color", mode="before")
     @classmethod

@@ -1,4 +1,4 @@
-# ✂️ YaClip — AI Auto-Clipper for YouTube Shorts, Reels & TikTok
+# ✂️ Yet Another AI Auto-Clipper (YaClip) for YouTube Shorts, Reels & TikTok
 
 **YaClip** automatically turns long YouTube videos into short vertical clips, ready to post on YouTube Shorts, Instagram Reels, or TikTok. Just paste a YouTube link — YaClip downloads the video, finds the most engaging moments using AI, and exports polished 9:16 vertical clips with animated subtitles. No video editing skills required.
 
@@ -90,7 +90,7 @@ YaClip automatically detects what kind of video you're working with and adjusts 
 | **Gaming — Collab** | Gameplay visible, two or more webcams | Webcam 1 on top, gameplay in centre, Webcam 2 on bottom |
 | **Donation Alert** | A donation or media share popup appears during the clip | Webcam on top, donation popup on bottom |
 
-> Donation alert clips are handled automatically — any clip where a Trakteer, Saweria, or MediaShare popup appears will use the Donation Alert layout, no matter what the base video type is.
+> Donation alert clips are handled automatically — any clip where a Trakteer or MediaShare popup appears will use the Donation Alert layout, no matter what the base video type is.
 
 ---
 
@@ -338,14 +338,14 @@ docker run --rm \
   -v "$PWD/config.yaml:/app/config.yaml" \
   dimaskiddo/yaclip clip "https://www.youtube.com/watch?v=<id>"
 
-# 4. Or open the browser interface:
+# 4. Or open the browser interface (planned — stub only in this alpha):
 docker run --rm -p 7860:7860 \
   -v "$PWD/workspace:/app/workspace" \
   -v "$PWD/config.yaml:/app/config.yaml" \
   dimaskiddo/yaclip serve
 ```
 
-Then open `http://localhost:7860` in your browser.
+Then open `http://localhost:7860` in your browser. *(WebUI is not yet implemented — this will log a placeholder message.)*
 
 > Your downloaded videos, AI models, and finished clips are saved to the `workspace/` folder on your computer — not inside the container — so they are kept between runs.
 
@@ -353,9 +353,11 @@ Then open `http://localhost:7860` in your browser.
 
 ## 🕹️ How to Use YaClip
 
-### 🌐 Browser Interface
+### 🌐 Browser Interface *(planned — not available in this alpha)*
 
-Start the browser interface by running:
+> **Note:** The browser interface is designed and planned for the next phase. In the current alpha release, running `python app.py` without arguments starts a stub that logs a placeholder message. Use the Terminal Commands below to run clips.
+
+When the WebUI is implemented, it will start with:
 
 ```bash
 python app.py
@@ -365,7 +367,7 @@ Then open **`http://127.0.0.1:7860`** in your browser.
 
 > **WSL2 users:** open this URL in your **Windows** browser, not inside WSL.
 
-#### Tabs:
+#### Planned Tabs:
 *   **Clipper** — Paste a YouTube URL, choose how many clips you want, how long they should be, and what language the subtitles should be in. Switch to Manual mode if you want to enter your own timestamps instead of letting AI choose.
 *   **Review & Render** — Before anything is exported, YaClip shows you the proposed clips with their titles and timestamps. You can edit or delete any of them before clicking Render.
 *   **Settings** — Change any setting from the browser without editing the config file directly.

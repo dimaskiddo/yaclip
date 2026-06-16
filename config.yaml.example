@@ -63,8 +63,8 @@ video_processing:
   detection_confidence_threshold: 0.6  # Below this, detection falls back to PODCAST and logs a warning
   auto_face_tracking: true             # Smooth face-centered crop for all layout modes
   preserve_donation_overlays: true     # Master on/off for donation/MediaShare handling. true = auto-detect
-                                       #   popups, route clips to DONATION_OVERLAY layout, and PiP-composite
-                                       #   Trakteer/Saweria/MediaShare alerts. false = skip all donation scans
+                                       #   popups, route clips to DONATION_OVERLAY layout, and composite
+                                       #   Trakteer/MediaShare alerts. false = skip all donation scans
                                        #   (faster) and never auto-route to DONATION_OVERLAY.
   default_resolution: "1080p"
   region_detection:                    # YOLOv8n visual analysis: facecam / gameplay / mediashare regions
@@ -79,7 +79,7 @@ video_processing:
     collab_enabled: false              # subtitles on 3-stack GAMING_COLLAB (cramped) — off by default
     uppercase: true                    # render caption text in CAPITALS for readability
     language: "auto"                   # auto = detect from audio | ISO 639-1 code or name (34 languages)
-    stt_context: ""                    # optional vocab hint for STT accuracy: names/game/terms, e.g. "Trakteer, Saweria, Monument Valley"
+    stt_context: ""                    # optional vocab hint for STT accuracy: names/game/terms, e.g. "Trakteer, Monument Valley"
     font_file: "Anton.ttf"
     font_size: 80
     primary_color: "#FFFFFF"           # hex #RRGGBB (legacy ASS &HAABBGGRR still accepted); white text
@@ -89,7 +89,7 @@ video_processing:
     bold: true
     shadow: true
     alignment: bottom-center           # bottom-left | bottom-center | center | top-center | ... (or ASS int)
-    margin_v: 760                      # pixels from the top of the 1920 canvas (~60% down, off the bottom panel)
+    margin_v: 760                      # bottom margin in px (bottom-center alignment) — 760px up from canvas bottom = ~60% down from top
 
 workspace_cleanup:
   enabled: true
