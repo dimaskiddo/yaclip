@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import re
 import shutil
@@ -5,25 +7,25 @@ import sys
 import yt_dlp
 
 from pathlib import Path
-from typing import Dict, Optional
 from loguru import logger
 
 from src.core.config import load_config
 from src.core.utils import SystemUtils
-from src.core.workspace import DATA_DIR, TMP_DIR
+from src.core.workspace import DATA_DIR, TMP_DIR, active_pipeline_event
+from src.media.audio import AudioExtractor
 
 
 class YTDLLogger:
-    def debug(self, msg):
+    def debug(self, msg: str) -> None:
         pass  # Ignore debug to keep logs clean
 
-    def info(self, msg):
+    def info(self, msg: str) -> None:
         pass  # Ignore info to keep logs clean
 
-    def warning(self, msg):
+    def warning(self, msg: str) -> None:
         logger.warning(f"Downloader (yt-dlp): {msg}")
 
-    def error(self, msg):
+    def error(self, msg: str) -> None:
         logger.error(f"Downloader (yt-dlp): {msg}")
 
 
@@ -33,7 +35,7 @@ class VideoDownloader:
     def __init__(self) -> None:
         self.config = load_config()
 
-    def _resolve_wsl_cookies(self, browser: str) -> Optional[str]:
+    def _resolve_wsl_cookies(self, browser: str) -> str | None:
         """
         Resolve and copy Windows browser cookies into Linux ./workspace/tmp/ to bypass SQLite locks.
         Returns the fake profile directory path containing the copied cookies database.
@@ -93,7 +95,7 @@ class VideoDownloader:
             logger.error(f"Failed to copy cookie database: {e}")
             return None
 
-    def _extract_metadata(self, info: dict) -> Dict[str, object]:
+    def _extract_metadata(self, info: dict) -> dict[str, object]:
         """Pull lightweight game/show context fields from the yt-dlp info dict.
 
         YouTube exposes no stable 'game' field, so we capture the signals an LLM can use to
@@ -110,13 +112,12 @@ class VideoDownloader:
         }
 
     def download_video(
-        self, url: str, output_dir: str, progress_callback=None, force: bool = False
-    ) -> Dict[str, str]:
+        self, url: str, output_dir: str, progress_callback: object | None = None, force: bool = False
+    ) -> dict[str, str]:
         """
         Download a video and extract its audio track dynamically pulling settings
         from config.yaml.
         """
-        from src.core.workspace import active_pipeline_event
 
         active_pipeline_event.set()
         try:
@@ -150,7 +151,7 @@ class VideoDownloader:
             # Optional progress hook for CLI and Gradio UI
             download_occurred = [False]
 
-            def progress_hook(d):
+            def progress_hook(d: dict) -> None:
                 if d["status"] == "downloading":
                     download_occurred[0] = True
                     percent_str = d.get("_percent_str", "N/A").strip()
@@ -243,7 +244,6 @@ class VideoDownloader:
                     )
 
                     # Use our custom FFmpeg command to extract the audio
-                    from src.media.audio import AudioExtractor
 
                     audio_extractor = AudioExtractor()
                     final_audio_path = audio_extractor.extract_audio(

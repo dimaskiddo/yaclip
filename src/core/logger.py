@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sys
 import logging
 import warnings
@@ -6,12 +8,13 @@ from pathlib import Path
 from loguru import logger
 
 from src.core.config import load_config
+from src.core.workspace import LOGS_DIR
 
 
 class InterceptHandler(logging.Handler):
     """Intercept standard logging messages and route them to loguru."""
 
-    def emit(self, record):
+    def emit(self, record: logging.LogRecord) -> None:
         try:
             level = logger.level(record.levelname).name
         except ValueError:
@@ -40,7 +43,14 @@ def setup_logger() -> None:
         logging.getLogger(name).setLevel(logging.ERROR)
 
     # Route standard warnings into loguru
-    def showwarning(message, category, filename, lineno, file=None, line=None):
+    def showwarning(
+        message: Warning | str,
+        category: type[Warning],
+        filename: str,
+        lineno: int,
+        file: object = None,
+        line: str | None = None,
+    ) -> None:
         logger.warning(f"{category.__name__}: {message}")
 
     warnings.showwarning = showwarning
@@ -53,7 +63,6 @@ def setup_logger() -> None:
         rotation = log_config.rotation
         retention = log_config.retention
     except Exception:
-        from src.core.workspace import LOGS_DIR
         level = "INFO"
         file_path = str(LOGS_DIR / "app.log")
         rotation = "50 MB"

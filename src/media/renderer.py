@@ -3,11 +3,22 @@ from __future__ import annotations
 import gc
 import subprocess
 
+from collections.abc import Callable
 from pathlib import Path
 from loguru import logger
 
+from src.ai.stt_local import LocalSTTProvider, load_mediashare_cache, load_words_cache
 from src.core.config import load_config
-from src.core.constants import MIN_CLIP_SECONDS, ContentType
+from src.core.constants import (
+    GPU_ENCODER_FAILURE_SIGNS,
+    MIN_CLIP_SECONDS,
+    STACK2_PANEL_ASPECT,
+    STACK3_PANEL_ASPECT,
+    ContentType,
+)
+from src.core.utils import SystemUtils
+from src.core.workspace import AUDIOS_DIR, SUBTITLES_DIR, TMP_DIR
+from src.media.audio import AudioExtractor
 from src.media.ffmpeg_builder import FFmpegCommandBuilder
 from src.media.slicer import AudioSlicer
 from src.media.subtitles import SubtitleGenerator
@@ -16,7 +27,6 @@ from src.vision.face_tracker import FaceTracker
 from src.vision.layout_builder import LayoutBuilder
 from src.vision.overlay_detector import OverlayDetector
 from src.vision.visual_analyzer import VisualAnalyzer
-from src.core.workspace import AUDIOS_DIR, SUBTITLES_DIR, TMP_DIR
 
 
 class ClipRenderer:
@@ -94,6 +104,34 @@ class ClipRenderer:
             video_path, clip_proposals, clip_types, analyses, segments_per_clip, output_dir
         )
 
+    # ---------------------------------------------------------------- FFmpeg run
+
+    def _run_render_with_fallback(
+        self, build_cmd: Callable[[str], list[str]], encoder: str
+    ) -> None:
+        """Run the FFmpeg render; if a GPU encoder fails at runtime, rebuild with libx264 and retry.
+
+        ``build_cmd`` is a callable ``(encoder_name) -> cmd_list`` so the command can be rebuilt
+        cleanly for the CPU fallback (rather than scrubbing the GPU flags out of the array).
+        """
+        cmd = build_cmd(encoder)
+        logger.debug(f"FFmpeg render command: {' '.join(cmd)}")
+        try:
+            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            return
+        except subprocess.CalledProcessError as e:
+            stderr = e.stderr or ""
+            is_cpu = encoder.lower() in ("cpu", "libx264")
+            is_gpu_failure = any(s in stderr.lower() for s in GPU_ENCODER_FAILURE_SIGNS)
+            if is_cpu or not is_gpu_failure:
+                raise  # already CPU, or a genuine (non-hardware) FFmpeg error → handled by caller
+            logger.warning(
+                f"GPU encoder '{encoder}' failed — retrying this clip with CPU (libx264)."
+            )
+            cpu_cmd = build_cmd("cpu")
+            subprocess.run(cpu_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            logger.info("CPU fallback render succeeded.")
+
     # ------------------------------------------------------------- Content Type
 
     def _resolve_base_content_type(self, video_path: Path) -> ContentType:
@@ -154,8 +192,6 @@ class ClipRenderer:
         self, video_path: Path, clips: list[dict], clip_types: list[ContentType]
     ) -> list[dict]:
         """Run VisualAnalyzer on each clip window; YOLO loaded once and freed after."""
-        from src.core.constants import STACK2_PANEL_ASPECT, STACK3_PANEL_ASPECT
-        from src.ai.stt_local import load_mediashare_cache
 
         # Use the static centred crop (_motion_region) by default track_gameplay=False
         follow = self.config.video_processing.region_detection.gameplay_follow_motion
@@ -245,7 +281,6 @@ class ClipRenderer:
         subtitles are disabled (globally, or GAMING_COLLAB when ``collab_enabled`` is false) are
         skipped to save compute.
         """
-        from src.ai.stt_local import load_words_cache
 
         sub_cfg = self.config.video_processing.subtitles
         results: list[list[dict]] = [[] for _ in clips]
@@ -298,15 +333,11 @@ class ClipRenderer:
             logger.warning("No audio track available; pending clips will have no subtitles.")
             return
 
-        from src.ai.stt_local import LocalSTTProvider
-
         provider = LocalSTTProvider()
         audio_ext = self.config.downloader.audio_format
         model = None
         try:
             from faster_whisper import WhisperModel
-
-            from src.core.utils import SystemUtils
 
             device = SystemUtils.resolve_device(self.config.ai_pipeline.stt.local.device)
             size = provider.model_size
@@ -377,8 +408,6 @@ class ClipRenderer:
         if audio_path.exists():
             return audio_path
         try:
-            from src.media.audio import AudioExtractor
-
             AudioExtractor().extract_audio(str(video_path), force=False)
         except Exception as e:
             logger.warning(f"Could not extract audio track: {e}")
@@ -455,25 +484,22 @@ class ClipRenderer:
                 )
                 sub_arg = ass_path if has_subs else None
 
-                cmd = self.ffmpeg_builder.build_render_command(
-                    video_path,
-                    start_t,
-                    duration,
-                    layout_spec,
-                    sub_arg,
-                    output_path,
-                    audio_path=audio_path,
-                )
+                encoder = self.config.video_processing.video_encoder
+
+                def _build(enc: str) -> list[str]:
+                    return self.ffmpeg_builder.build_render_command(
+                        video_path,
+                        start_t,
+                        duration,
+                        layout_spec,
+                        sub_arg,
+                        output_path,
+                        audio_path=audio_path,
+                        video_encoder=enc,
+                    )
 
                 logger.info(f"Encoding clip: {safe_title} ({duration:.1f}s)...")
-                logger.debug(f"FFmpeg render command: {' '.join(cmd)}")
-                subprocess.run(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    check=True,
-                )
+                self._run_render_with_fallback(_build, encoder)
 
                 logger.info(f"Successfully rendered: {output_path.name}")
                 rendered.append(output_path)

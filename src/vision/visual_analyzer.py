@@ -1,11 +1,7 @@
 from __future__ import annotations
 
 import gc
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import numpy as np
+import numpy as np
 
 from pathlib import Path
 from loguru import logger
@@ -22,13 +18,8 @@ from src.core.constants import (
     PERSON_COUNT_CONF_MIN,
     STACK2_PANEL_ASPECT,
 )
-from src.core.utils import SystemUtils
+from src.core.utils import SystemUtils, make_even
 from src.core.workspace import MODELS_DIR
-
-
-def _make_even(value: int) -> int:
-    """Round down to the nearest even integer (FFmpeg crop/scale need even dims)."""
-    return value if value % 2 == 0 else value - 1
 
 
 class VisualAnalyzer:
@@ -49,7 +40,7 @@ class VisualAnalyzer:
 
     # ------------------------------------------------------------------ Model
 
-    def _load_model(self):  # type: ignore[no-untyped-def]
+    def _load_model(self) -> object:
         """Lazy-load the YOLOv8 model, routing weights into the portable workspace."""
         if self._model is not None:
             return self._model
@@ -232,7 +223,6 @@ class VisualAnalyzer:
         middle 80% of the video) so the diff captures real per-frame change — not global shift.
         """
         import cv2
-        import numpy as np
 
         if not self.cfg.enabled:
             # Model disabled — return neutral values; caller treats gaming as unconfirmed.
@@ -408,7 +398,6 @@ class VisualAnalyzer:
         spatially separated. Returns the cam boxes (largest first), or [] when the model is disabled.
         """
         import cv2
-        import numpy as np
 
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
@@ -476,9 +465,9 @@ class VisualAnalyzer:
 
     def _empty_analysis(self, width: int = 1920, height: int = 1080) -> dict:
         """Neutral analysis when no frames/model are available."""
-        crop_h = _make_even(height)
-        crop_w = _make_even(min(width, int(round(height * STACK2_PANEL_ASPECT))))
-        center = {"x": _make_even((width - crop_w) // 2), "y": 0, "w": crop_w, "h": crop_h}
+        crop_h = make_even(height)
+        crop_w = make_even(min(width, int(round(height * STACK2_PANEL_ASPECT))))
+        center = {"x": make_even((width - crop_w) // 2), "y": 0, "w": crop_w, "h": crop_h}
         return {
             "video_width": width,
             "video_height": height,
@@ -582,18 +571,18 @@ class VisualAnalyzer:
         """
         zoom = max(1.0, float(self.cfg.gameplay_zoom))
         base_w = min(width, int(round(height * aspect)))
-        crop_w = _make_even(int(base_w / zoom))
-        crop_h = _make_even(min(height, int(round(crop_w / aspect))))
+        crop_w = make_even(int(base_w / zoom))
+        crop_h = make_even(min(height, int(round(crop_w / aspect))))
 
         bottom_tops = [int(b[1]) for b in (cams or []) if (b[1] + b[3] / 2.0) > 2 * height / 3.0]
         if bottom_tops and min(bottom_tops) >= 0.45 * height:
             cam_top = min(bottom_tops)
             if crop_h > cam_top:  # shrink so the whole crop fits above the cam band
-                crop_h = _make_even(cam_top)
-                crop_w = _make_even(min(width, int(round(crop_h * aspect))))
-            crop_y = _make_even(max(0, cam_top - crop_h))
+                crop_h = make_even(cam_top)
+                crop_w = make_even(min(width, int(round(crop_h * aspect))))
+            crop_y = make_even(max(0, cam_top - crop_h))
         else:
-            crop_y = _make_even(max(0, (height - crop_h) // 2))
+            crop_y = make_even(max(0, (height - crop_h) // 2))
         return crop_w, crop_h, crop_y
 
     def _gameplay_pan(
@@ -616,12 +605,11 @@ class VisualAnalyzer:
         Returns the keyframe track, a representative static box, and the mean motion level.
         """
         import cv2
-        import numpy as np
 
         # Zoomed panel-aspect crop; vertically biased above the bottom cam band for collab.
         cams = [b for b in (exclude_boxes or []) if b is not None]
         crop_w, crop_h, crop_y = self._gameplay_crop_geom(cams, width, height, aspect)
-        center_x = _make_even((width - crop_w) // 2)
+        center_x = make_even((width - crop_w) // 2)
         fallback = {"x": center_x, "y": crop_y, "w": crop_w, "h": crop_h}
 
         cap = cv2.VideoCapture(str(video_path))
@@ -706,7 +694,7 @@ class VisualAnalyzer:
                 track.append(
                     {
                         "timestamp": (idx - s_frame) / fps,
-                        "crop_x": _make_even(int(left)),
+                        "crop_x": make_even(int(left)),
                         "crop_y": crop_y,
                         "crop_w": crop_w,
                         "crop_h": crop_h,
@@ -723,7 +711,7 @@ class VisualAnalyzer:
         return track, repr_box, motion_level
 
     def _sample_frames(
-        self, cap, start_time: float, end_time: float
+        self, cap: object, start_time: float, end_time: float
     ) -> list[np.ndarray]:
         """Sample up to ``sample_frames`` frames evenly across the window."""
         import cv2
@@ -807,13 +795,12 @@ class VisualAnalyzer:
         num_frames: int,
     ) -> list[dict]:
         """Cluster detections across frames into persistent regions (sorted by area desc)."""
-        import numpy as np
 
         diag = float(np.sqrt(width**2 + height**2))
         thr = 0.15 * diag
         clusters: list[list[tuple[float, float, float, float]]] = []
 
-        def center(b):  # type: ignore[no-untyped-def]
+        def center(b: tuple[float, float, float, float]) -> tuple[float, float]:
             return (b[0] + b[2] / 2, b[1] + b[3] / 2)
 
         for box in boxes:
@@ -850,7 +837,6 @@ class VisualAnalyzer:
         persistent person by corner-proximity so a corner webcam wins over an in-frame
         game character, while a single central speaker is still selected.
         """
-        import numpy as np
 
         candidates = [p for p in persons if p["persistence"] >= 0.5] or persons
         if not candidates:
@@ -868,7 +854,7 @@ class VisualAnalyzer:
         corners = [(0, 0), (width, 0), (0, height), (width, height)]
         diag = float(np.sqrt(width**2 + height**2))
 
-        def corner_score(box):  # type: ignore[no-untyped-def]
+        def corner_score(box: tuple[float, float, float, float]) -> float:
             cx, cy = box[0] + box[2] / 2, box[1] + box[3] / 2
             nearest = min(float(np.hypot(cx - cxn, cy - cyn)) for cxn, cyn in corners)
             return 1.0 - (nearest / diag)  # higher = closer to a corner
@@ -887,7 +873,6 @@ class VisualAnalyzer:
     ) -> tuple[dict, float]:
         """Zoomed panel-aspect crop centred on the highest-motion (gameplay) region + motion level."""
         import cv2
-        import numpy as np
 
         # Match _gameplay_pan's zoomed crop + bottom-cam-band bias so the static fallback frames the
         # same way as the panning path.
@@ -917,7 +902,7 @@ class VisualAnalyzer:
             cols = np.arange(small_w, dtype=np.float32)
             cx = float((motion.sum(axis=0) * cols).sum() / motion.sum()) * scale_x
 
-        crop_x = _make_even(int(max(0, min(cx - crop_w / 2.0, width - crop_w))))
+        crop_x = make_even(int(max(0, min(cx - crop_w / 2.0, width - crop_w))))
         return {"x": crop_x, "y": crop_y, "w": crop_w, "h": crop_h}, motion_level
 
     def _build_descriptor(self, a: dict) -> str:

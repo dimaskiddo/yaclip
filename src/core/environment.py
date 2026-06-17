@@ -1,18 +1,17 @@
 from __future__ import annotations
 
+import ctypes
 import importlib.util
 import os
 import shutil
 import sys
 
 from pathlib import Path
+from loguru import logger
 
+from src.core.constants import MEDIAPIPE_GL_LIBS
 from src.core.exceptions import DetectionError
 from src.core.workspace import BIN_DIR, MODELS_DIR
-
-# MediaPipe's prebuilt native binding is link-time bound to these GL/EGL libraries and
-# fails to dlopen without them, even for CPU-only detection. There is no headless wheel.
-_MEDIAPIPE_GL_LIBS = ("libEGL.so.1", "libGLESv2.so.2")
 
 
 def _has_usable_gpu() -> bool:
@@ -66,8 +65,6 @@ def guard_triton_segfault() -> None:
       triton is safe to use). This branch is conservative: /dev/dxg on WSL is
       *not* treated as a real CUDA GPU (see _has_usable_gpu).
     """
-    from loguru import logger
-
     if importlib.util.find_spec("triton") is None:
         # CPU torch build: triton not installed, nothing to do.
         return
@@ -130,7 +127,7 @@ def _gl_install_hint() -> str:
         return "sudo apk add mesa-egl mesa-gles"
     if any(name in ids for name in ("opensuse", "suse")):
         return "sudo zypper install -y Mesa-libEGL1 Mesa-libGLESv2-2"
-    return f"install your distro's packages providing {' and '.join(_MEDIAPIPE_GL_LIBS)}"
+    return f"install your distro's packages providing {' and '.join(MEDIAPIPE_GL_LIBS)}"
 
 
 def ensure_vision_runtime() -> None:
@@ -143,10 +140,8 @@ def ensure_vision_runtime() -> None:
     if not sys.platform.startswith("linux"):
         return
 
-    import ctypes
-
     missing = []
-    for lib in _MEDIAPIPE_GL_LIBS:
+    for lib in MEDIAPIPE_GL_LIBS:
         try:
             ctypes.CDLL(lib)
         except OSError:

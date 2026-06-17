@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import numpy as np
+import json
+import numpy as np
 
 from pathlib import Path
 from loguru import logger
@@ -15,7 +13,8 @@ from src.core.constants import (
     GAMEPLAY_MIN_NONPERSON_MOTION,
     GAMEPLAY_MIN_OPEN_AREA_FRAC,
 )
-from src.core.workspace import MODELS_DIR
+from src.core.utils import SystemUtils
+from src.core.workspace import DATA_DIR, MODELS_DIR
 
 
 class ContentTypeDetector:
@@ -218,7 +217,6 @@ class ContentTypeDetector:
     def _compute_hud_score(self, frames: list[np.ndarray]) -> float:
         """Detect static graphic UI elements (HUDs) by temporal variance & average frame spatial gradient."""
         import cv2
-        import numpy as np
 
         if not frames:
             return 0.0
@@ -260,7 +258,6 @@ class ContentTypeDetector:
         Returns a per-frame list of (x, y, w, h) boxes for all detected persons,
         consumed by ``_count_persistent_faces``.
         """
-        from src.core.utils import SystemUtils
 
         cfg = self.config.video_processing.region_detection
         model_path = MODELS_DIR / cfg.model_name
@@ -305,7 +302,6 @@ class ContentTypeDetector:
         separated from it. This prevents a transient MediaShare face or a small in-game
         character face from flipping GAMING_SOLO into GAMING_COLLAB.
         """
-        import numpy as np
         clusters: list[list[tuple[float, float, float, float]]] = []
 
         def box_distance(
@@ -380,10 +376,6 @@ class ContentTypeDetector:
 
     def _metadata_gaming_hint(self, video_path: Path) -> bool:
         """True if the saved YouTube metadata marks this video as Gaming content."""
-        import json
-
-        from src.core.workspace import DATA_DIR
-
         meta_path = DATA_DIR / f"{video_path.stem}_metadata.json"
         if not meta_path.exists():
             return False
@@ -415,7 +407,6 @@ class ContentTypeDetector:
     def _check_donation_overlays(self, frames: list[np.ndarray]) -> bool:
         """Sample for donation alert popup signatures (bright transient overlay rectangles)."""
         import cv2
-        import numpy as np
 
         # Check if any frames show sudden high-contrast rectangular contours in expected alert centers/corners.
         # Donation alert UIs typically use saturated colours (red/pink, bright orange) in clean card shapes.

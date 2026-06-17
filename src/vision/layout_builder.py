@@ -15,11 +15,7 @@ from src.core.constants import (
     ContentType,
     LayoutMode,
 )
-
-
-def _make_even(value: int) -> int:
-    """Round down to the nearest even integer (FFmpeg crop/scale require even dims)."""
-    return value if value % 2 == 0 else value - 1
+from src.core.utils import make_even
 
 
 class LayoutBuilder:
@@ -114,10 +110,10 @@ class LayoutBuilder:
     ) -> list[dict]:
         """Synthesize a single static 9:16 crop centred on the facecam for Mode A rendering."""
         box = analysis.get("facecam_box")
-        crop_w = _make_even(min(width, int(round(height * (9.0 / 16.0)))))
-        crop_h = _make_even(height)
+        crop_w = make_even(min(width, int(round(height * (9.0 / 16.0)))))
+        crop_h = make_even(height)
         cx = (box[0] + box[2] / 2) if box else width / 2
-        crop_x = _make_even(int(max(0, min(cx - crop_w / 2, width - crop_w))))
+        crop_x = make_even(int(max(0, min(cx - crop_w / 2, width - crop_w))))
         return [
             {"timestamp": 0.0, "crop_x": crop_x, "crop_y": 0, "crop_w": crop_w, "crop_h": crop_h}
         ]
@@ -328,10 +324,10 @@ class LayoutBuilder:
 
     def _center_crop(self, width: int, height: int, aspect: float) -> dict:
         """Static centre crop pre-shaped to a panel aspect."""
-        crop_h = _make_even(height)
-        crop_w = _make_even(min(width, int(round(height * aspect))))
-        crop_x = _make_even((width - crop_w) // 2)
-        crop_y = _make_even((height - crop_h) // 2)
+        crop_h = make_even(height)
+        crop_w = make_even(min(width, int(round(height * aspect))))
+        crop_x = make_even((width - crop_w) // 2)
+        crop_y = make_even((height - crop_h) // 2)
         return {"x": crop_x, "y": crop_y, "w": crop_w, "h": crop_h}
 
     def _expand_box_to_aspect(
@@ -353,8 +349,8 @@ class LayoutBuilder:
         else:
             new_h = new_w / aspect
 
-        crop_w = _make_even(int(new_w))
-        crop_h = _make_even(int(new_h))
-        crop_x = _make_even(int(max(0, min(cx - crop_w / 2.0, width - crop_w))))
-        crop_y = _make_even(int(max(0, min(cy - crop_h / 2.0, height - crop_h))))
+        crop_w = make_even(int(new_w))
+        crop_h = make_even(int(new_h))
+        crop_x = make_even(int(max(0, min(cx - crop_w / 2.0, width - crop_w))))
+        crop_y = make_even(int(max(0, min(cy - crop_h / 2.0, height - crop_h))))
         return {"x": crop_x, "y": crop_y, "w": crop_w, "h": crop_h}

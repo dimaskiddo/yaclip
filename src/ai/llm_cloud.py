@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import Dict, List
 from loguru import logger
 
+from src.ai.api_client import retry_api_call
 from src.ai.prompts import get_system_prompt
-from src.core.utils import AIUtils
 from src.core.config import load_config
 from src.core.exceptions import AIProviderError
+from src.core.utils import AIUtils
 
 
 class CloudLLMProvider:
@@ -33,7 +33,7 @@ class CloudLLMProvider:
 
     def _analyze_transcript_openai(
         self, transcript: str, content_type: str = "PODCAST", target_duration: int = 60
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Uses OpenAI to analyze transcript and extract highlights."""
         try:
             from openai import OpenAI
@@ -50,10 +50,9 @@ class CloudLLMProvider:
             f"Transcript:\n{transcript}\n\nPlease analyze and return the JSON array."
         )
 
-        from src.ai.api_client import retry_api_call
 
         @retry_api_call(max_retries=3)
-        def _call_openai_chat():
+        def _call_openai_chat() -> object:
             return client.chat.completions.create(
                 model=self.model_name,
                 messages=[
@@ -80,7 +79,7 @@ class CloudLLMProvider:
 
     def _analyze_transcript_gemini(
         self, transcript: str, content_type: str = "PODCAST", target_duration: int = 60
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Uses Gemini to analyze transcript and extract highlights."""
         try:
             import google.generativeai as genai
@@ -91,10 +90,9 @@ class CloudLLMProvider:
         genai.configure(api_key=self.api_key)
         logger.info("Sending transcript to Gemini for clip selection...")
 
-        from src.ai.api_client import retry_api_call
 
         @retry_api_call(max_retries=3)
-        def _generate(prompt):
+        def _generate(prompt: str) -> object:
             model = genai.GenerativeModel(model_name=self.model_name)
             return model.generate_content(prompt)
 
@@ -127,7 +125,7 @@ class CloudLLMProvider:
         target_clips: int,
         content_type: str = "PODCAST",
         target_duration: int = 60,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Uses OpenAI to compare and select the best clips from candidates in a single batched call."""
         try:
             from openai import OpenAI
@@ -160,10 +158,9 @@ class CloudLLMProvider:
             "Format the response ONLY as a valid JSON array, with no other text or markdown wrappers."
         )
 
-        from src.ai.api_client import retry_api_call
 
         @retry_api_call(max_retries=3)
-        def _call_openai_chat():
+        def _call_openai_chat() -> object:
             return client.chat.completions.create(
                 model=self.model_name,
                 messages=[
@@ -194,7 +191,7 @@ class CloudLLMProvider:
         target_clips: int,
         content_type: str = "PODCAST",
         target_duration: int = 60,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Uses Gemini to compare and select the best clips from candidates in a single batched call."""
         try:
             import google.generativeai as genai
@@ -205,10 +202,9 @@ class CloudLLMProvider:
         genai.configure(api_key=self.api_key)
         logger.info("Sending all candidate clips to Gemini for batch selection...")
 
-        from src.ai.api_client import retry_api_call
 
         @retry_api_call(max_retries=3)
-        def _generate(prompt):
+        def _generate(prompt: str) -> object:
             model = genai.GenerativeModel(model_name=self.model_name)
             return model.generate_content(prompt)
 
@@ -252,7 +248,7 @@ class CloudLLMProvider:
 
     def analyze_transcript(
         self, transcript: str, content_type: str = "PODCAST", target_duration: int = 60
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Analyzes transcript using configured cloud provider and extracts highlights."""
         if self.provider == "google":
             return self._analyze_transcript_gemini(
@@ -273,7 +269,7 @@ class CloudLLMProvider:
         target_clips: int,
         content_type: str = "PODCAST",
         target_duration: int = 60,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Compares and selects clips from candidates using configured cloud provider."""
         if self.provider == "google":
             return self._analyze_batch_gemini(

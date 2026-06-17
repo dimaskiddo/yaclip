@@ -12,7 +12,10 @@
 from __future__ import annotations
 
 import json
+import time
+
 import typer
+import yaml
 
 from pathlib import Path
 from loguru import logger
@@ -169,7 +172,6 @@ def clip(
 @cli.command("config")
 def show_config() -> None:
     """Print the validated configuration (API keys masked)."""
-    import yaml
 
     data = load_config().model_dump()
 
@@ -188,7 +190,6 @@ def show_config() -> None:
 @cache_app.command("status")
 def cache_status() -> None:
     """Show per-directory size, file count, and oldest file for the workspace cache."""
-    import time
 
     targets = {
         "videos": VIDEOS_DIR,

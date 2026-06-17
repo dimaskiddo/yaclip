@@ -147,6 +147,37 @@ MIN_SHOT_SECONDS: float = 2.0
 # no switching on a laugh or a pause.  Below the median scales the gate to the clip's loudness.
 VOICE_ACTIVITY_FLOOR_FACTOR: float = 0.5
 
+# Local (windowed) audio-visual coherence — the moment-to-moment speaker test.  At each voiced
+# step the recent mouth-motion window is Pearson-correlated with the recent audio-RMS window over
+# this many seconds.  A face is an eligible speaker only when its local coherence ≥ COHERENCE_MIN
+# (and its activity ≥ LIP_ACTIVITY_MIN).  If NO visible face is eligible (e.g. the talker's mouth
+# is occluded by a mic), the crop HOLDS the current speaker instead of jumping to a visible
+# non-speaker / smiler.  Larger window = steadier but slower to react.
+AV_SYNC_WINDOW_SECONDS: float = 1.0
+COHERENCE_MIN: float = 0.25
+
+# Rule-of-thirds headroom: shift the crop center up by this fraction of the face-box height so the
+# subject's eyes sit in the upper third rather than dead center.  Kept modest because the PODCAST
+# crop is full source height (a large offset would push the chin out of frame).
+HEADROOM_FACTOR: float = 0.18
+
+# Face-identity matching across detection steps: a face matches an existing track when their boxes
+# overlap by at least this IoU.  Scales with face size (unlike a fixed pixel distance); the legacy
+# center-distance test is kept only as a fallback when no box overlaps.
+IOU_MATCH_MIN: float = 0.3
+
+# Gentle EMA panning (PODCAST): the final per-frame crop center glides toward its target by this
+# fraction each frame.  Within a held shot the target is constant so the crop stays put (no drift);
+# on a speaker change it eases over ~1 s instead of hard-cutting.  Higher = snappier.
+PAN_SMOOTHING_FACTOR: float = 0.12
+
+# Haar-cascade fast tracking (opt-in `video_processing.fast_mode`): a lightweight CPU-only PODCAST
+# tracker that follows the largest frontal face — no MediaPipe, no audio.  Frames are downscaled for
+# speed, then detected with OpenCV's default frontal-face cascade.
+HAAR_DOWNSCALE: float = 0.5       # grayscale resize factor before detection (speed)
+HAAR_SCALE_FACTOR: float = 1.1    # cascade image-pyramid step
+HAAR_MIN_NEIGHBORS: int = 5       # higher = fewer false positives, more missed faces
+
 # Mode C 3-stack panels (GAMING_COLLAB) — facecam / gameplay / collab, each 1080x640.
 STACK3_PANEL_W: int = 1080
 STACK3_PANEL_H: int = 640
@@ -163,3 +194,24 @@ COCO_CLASS_TV: int = 62             # → screen / MediaShare inset
 COCO_SCREEN_CLASSES: frozenset[int] = frozenset(
     {COCO_CLASS_TV, COCO_CLASS_LAPTOP, COCO_CLASS_CELL_PHONE, COCO_CLASS_BOOK}
 )
+
+# Audio RMS analysis (energy heatmap + face-tracker audio-visual sync).  Mono 8 kHz PCM is plenty
+# for loudness measurement and keeps the FFmpeg decode cheap.
+RMS_SAMPLE_RATE: int = 8000
+
+# MediaPipe FaceMesh inner-lip landmark indices used to compute the Mouth-Aspect-Ratio.
+# Vertical pairs (upper, lower) sample the opening at three points; the width pair are the mouth
+# corners.  MAR = mean vertical opening / mouth width.
+MAR_VERTICAL_PAIRS: tuple[tuple[int, int], ...] = ((13, 14), (81, 178), (311, 402))
+MAR_WIDTH_PAIR: tuple[int, int] = (78, 308)
+
+# FFmpeg stderr substrings (lower-cased match) that indicate a hardware-encoder / driver failure
+# rather than a syntax error.  Any hit triggers the automatic libx264 fallback in ClipRenderer.
+GPU_ENCODER_FAILURE_SIGNS: tuple[str, ...] = (
+    "nvenc", "qsv", "cuvid", "vaapi", "videotoolbox", "cannot load",
+    "device not found", "initialization failed for codec", "driver", "opencl",
+    "no capable devices", "function not implemented",
+)
+
+# Native GL libraries MediaPipe needs present on headless Linux/WSL (environment preflight).
+MEDIAPIPE_GL_LIBS: tuple[str, ...] = ("libEGL.so.1", "libGLESv2.so.2")

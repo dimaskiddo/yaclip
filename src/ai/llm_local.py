@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import gc
 
-from typing import TYPE_CHECKING, Dict, List
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from llama_cpp import Llama
@@ -38,7 +38,7 @@ class LocalLLMProvider:
         content_type: str = "PODCAST",
         target_duration: int = 60,
         llm: Llama | None = None,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Uses local Llama model to analyze transcript and extract highlights."""
         try:
             from llama_cpp import Llama
@@ -94,15 +94,13 @@ class LocalLLMProvider:
         content_type: str = "PODCAST",
         target_duration: int = 60,
         llm: Llama | None = None,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Uses local Llama model to compare and select the best clips from candidates in a single batched call."""
         try:
             from llama_cpp import Llama
         except ImportError as e:
             logger.error("llama-cpp-python is not installed.")
             raise ImportError("llama-cpp-python package missing.") from e
-
-        from src.ai.prompts import get_system_prompt
 
         base_sys_prompt = get_system_prompt(
             content_type=content_type, target_duration=target_duration
@@ -167,7 +165,7 @@ class LocalLLMProvider:
         content_type: str = "PODCAST",
         target_duration: int = 60,
         llm: Llama | None = None,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Analyzes transcript using local Llama model to extract highlights."""
         try:
             return self._analyze_transcript_llama(
@@ -185,7 +183,7 @@ class LocalLLMProvider:
         content_type: str = "PODCAST",
         target_duration: int = 60,
         llm: Llama | None = None,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Compares and selects clips from candidates using local Llama model."""
         try:
             return self._analyze_batch_llama(

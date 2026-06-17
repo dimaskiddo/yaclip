@@ -59,6 +59,12 @@ clip_selection:
 video_processing:
   output_dir: "./workspace/clips"
   device: "auto"                       # auto | cpu | cuda
+  video_encoder: "auto"                # auto | cpu | nvenc | qsv | videotoolbox — FFmpeg H.264 encoder.
+                                       #   auto = nvenc if CUDA else cpu (libx264). GPU encoders that
+                                       #   fail at runtime auto-fall back to libx264, so auto is safe.
+  fast_mode: false                     # true = low-spec PODCAST tracking via OpenCV Haar largest-face
+                                       #   (no MediaPipe/audio, no multi-speaker). Does not affect
+                                       #   content-type detection or gaming/just-chat layouts.
   content_type_override: "auto"        # auto | PODCAST | JUST_CHAT | GAMING_SOLO | GAMING_COLLAB | DONATION_OVERLAY
   detection_confidence_threshold: 0.6  # Below this, detection falls back to PODCAST and logs a warning
   auto_face_tracking: true             # Smooth face-centered crop for all layout modes
@@ -77,7 +83,7 @@ video_processing:
     device: "auto"                     # auto | cpu | cuda
     model_name: "yolov8n.pt"           # Ultralytics COCO nano model (auto-downloaded to workspace/models/)
     sample_frames: 4                   # Frames sampled per candidate/clip window (sparse = fast)
-    gameplay_follow_motion: false      # false = static centred crop | true = animated motion-following pan
+    gameplay_follow_motion: true       # true = animated motion-following pan | false = static centred crop
     gameplay_zoom: 1.25                # >1 zooms the gameplay panel tighter (1.25 = 25% closer, crops the ticker out)
   subtitles:
     enabled: true

@@ -1,26 +1,32 @@
+from __future__ import annotations
+
+import concurrent.futures
 import gc
 import json
 import time
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 from loguru import logger
 
+from src.ai.api_client import retry_api_call
 from src.ai.heatmap import HeatmapAnalyzer
 from src.ai.llm_cloud import CloudLLMProvider
 from src.ai.llm_local import LocalLLMProvider
+from src.ai.prompts import get_system_prompt, strip_json_markdown
 from src.ai.stt_cloud import CloudSTTProvider
 from src.ai.stt_local import (
     LocalSTTProvider,
+    save_mediashare_cache,
     save_words_cache,
     segments_to_transcript,
 )
-from src.core.workspace import active_pipeline_event
 from src.core.config import load_config
 from src.core.constants import CANDIDATE_WINDOW_BUFFER, MIN_CLIP_SECONDS, ContentType
+from src.core.utils import AIUtils, SystemUtils
+from src.core.workspace import DATA_DIR, TMP_DIR, active_pipeline_event
 from src.media.energy import AudioEnergyAnalyzer
 from src.media.slicer import AudioSlicer
-from src.core.workspace import DATA_DIR, TMP_DIR
 
 
 class AIPipeline:
@@ -59,7 +65,7 @@ class AIPipeline:
         content_type: str,
         target_duration: int,
         target_clips: int,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Runs a single unified Gemini call that handles both STT and LLM analysis."""
         try:
             import google.generativeai as genai
@@ -75,14 +81,12 @@ class AIPipeline:
         genai.configure(api_key=api_key)
         logger.info("Starting combined Gemini transcription and AI clip selection...")
 
-        from src.ai.api_client import retry_api_call
-
         @retry_api_call(max_retries=3)
-        def _upload():
+        def _upload() -> object:
             return genai.upload_file(path=audio_path)
 
         @retry_api_call(max_retries=3)
-        def _generate(uploaded_file, system_prompt, user_prompt):
+        def _generate(uploaded_file: object, system_prompt: str, user_prompt: str) -> object:
             model = genai.GenerativeModel(
                 model_name=model_name, system_instruction=system_prompt
             )
@@ -101,7 +105,6 @@ class AIPipeline:
             if uploaded_file.state.name == "FAILED":
                 raise RuntimeError("Gemini failed to process the uploaded file.")
 
-            from src.ai.prompts import get_system_prompt, strip_json_markdown
 
             base_system_prompt = get_system_prompt(
                 content_type=content_type, target_duration=target_duration
@@ -156,7 +159,7 @@ class AIPipeline:
                     logger.warning(f"Failed to delete file {uploaded_file.name}: {e}")
 
     def run_stt_transcription(
-        self, audio_path: str, force: bool = False, whisper_model=None, cache_dir=None
+        self, audio_path: str, force: bool = False, whisper_model: object | None = None, cache_dir: str | Path | None = None
     ) -> str:
         """Helper to run STT transcription based on config, automatically falling back if requested."""
         stt_cfg = self.config.ai_pipeline.stt
@@ -181,8 +184,8 @@ class AIPipeline:
         return local_provider.transcribe(audio_path, force=force, model=whisper_model, cache_dir=cache_dir)
 
     def run_llm_analysis(
-        self, transcript: str, content_type: str, target_duration: int, llama_model=None
-    ) -> List[Dict[str, Any]]:
+        self, transcript: str, content_type: str, target_duration: int, llama_model: object | None = None
+    ) -> list[dict[str, Any]]:
         """Helper to run LLM transcript analysis based on config, automatically falling back if requested."""
         llm_cfg = self.config.ai_pipeline.llm
         provider = llm_cfg.provider.lower()
@@ -220,8 +223,8 @@ class AIPipeline:
         target_clips: int,
         content_type: str,
         target_duration: int,
-        llama_model=None,
-    ) -> List[Dict[str, Any]]:
+        llama_model: object | None = None,
+    ) -> list[dict[str, Any]]:
         """Helper to run batched LLM candidate comparisons and selection based on config."""
         llm_cfg = self.config.ai_pipeline.llm
         provider = llm_cfg.provider.lower()
@@ -315,7 +318,7 @@ class AIPipeline:
         video_path: str | None = None,
         force: bool = False,
         detected_type: ContentType | None = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Main AI Orchestrator. Evaluates config to route between Cloud and Local logic.
         Protects execution using the active_pipeline_event safety guard.
@@ -431,7 +434,6 @@ class AIPipeline:
 
             # Step 1: Pre-slice top candidates concurrently
             sliced_chunks = []
-            import concurrent.futures
 
             # Size each candidate window to the TARGET clip length (default + margin) + buffer around
             # the spike centre — wide enough for the LLM to pick a [default, default+margin] clip and
@@ -441,7 +443,7 @@ class AIPipeline:
             )
             half_window = clip_ceiling / 2.0 + CANDIDATE_WINDOW_BUFFER
 
-            def _slice_chunk(i_spike):
+            def _slice_chunk(i_spike: tuple[int, dict]) -> tuple | None:
                 i, spike = i_spike
                 centre = (float(spike["start_time"]) + float(spike["end_time"])) / 2.0
                 s_start = max(0.0, centre - half_window)
@@ -484,7 +486,6 @@ class AIPipeline:
                 try:
                     from faster_whisper import WhisperModel
 
-                    from src.core.utils import SystemUtils
 
                     whisper_model_size = self.config.ai_pipeline.stt.local.model_size
                     device_config = SystemUtils.resolve_device(
@@ -536,7 +537,7 @@ class AIPipeline:
                     for s in segs
                 ]
 
-            def _transcribe_chunk(data):
+            def _transcribe_chunk(data: tuple) -> tuple | None:
                 i, spike, chunk_path, s_start, s_end = data
                 logger.info(
                     f"Transcribing candidate {i + 1}/{len(sliced_chunks)} for AI clip selection..."
@@ -596,7 +597,7 @@ class AIPipeline:
             # Step 2b: Visual analysis on the SAME candidate windows (audio + vision aligned).
             # Produces a text descriptor per candidate so a (possibly non-multimodal) LLM can
             # weigh on-screen events. YOLO is loaded once and freed before the LLM loads.
-            visual_by_index: Dict[int, str] = {}
+            visual_by_index: dict[int, str] = {}
             region_enabled = self.config.video_processing.region_detection.enabled
             if video_path and region_enabled and transcribed_slices:
                 from src.vision.visual_analyzer import VisualAnalyzer
@@ -627,7 +628,6 @@ class AIPipeline:
                 # Persist donation scan results alongside the word-timings cache so the renderer
                 # can look them up per-clip without re-scanning.
                 if mediashare_cache_entries:
-                    from src.ai.stt_local import save_mediashare_cache
                     save_mediashare_cache(video_id, mediashare_cache_entries)
 
             # Step 3: Run LLM analysis on all transcripts (Batch LLM Call)
@@ -670,7 +670,6 @@ class AIPipeline:
                     try:
                         from llama_cpp import Llama
 
-                        from src.core.utils import AIUtils
 
                         llm_model_name = self.config.ai_pipeline.llm.local.model_name
                         resolved_path = AIUtils.resolve_llm_model_path(llm_model_name)

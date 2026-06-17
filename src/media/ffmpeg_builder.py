@@ -5,7 +5,7 @@ from pathlib import Path
 from src.core.config import load_config
 from src.core.constants import STACK2_PANEL_H, STACK2_PANEL_W, LayoutMode
 from src.core.utils import SystemUtils
-from src.core.workspace import BIN_DIR, FONTS_DIR
+from src.core.workspace import FONTS_DIR
 
 
 class FFmpegCommandBuilder:
@@ -13,7 +13,7 @@ class FFmpegCommandBuilder:
 
     def __init__(self) -> None:
         self.config = load_config()
-        self.ffmpeg_path = self._resolve_ffmpeg_path()
+        self.ffmpeg_path = SystemUtils.get_ffmpeg_path()
 
     def build_render_command(
         self,
@@ -24,6 +24,7 @@ class FFmpegCommandBuilder:
         subtitle_ass_path: Path | None,
         output_path: Path,
         audio_path: Path | None = None,
+        video_encoder: str | None = None,
     ) -> list[str]:
         """Generate the FFmpeg command line arguments list.
 
@@ -35,6 +36,8 @@ class FFmpegCommandBuilder:
             subtitle_ass_path: Optional path to .ass subtitle file.
             output_path: Destination path for the rendered video.
             audio_path: Optional path to the separate audio track file.
+            video_encoder: Encoder override (auto|cpu|nvenc|qsv|videotoolbox).  None → read from
+                config.  The renderer passes "cpu" here to rebuild after a GPU-encoder failure.
 
         Returns:
             A list of command strings to execute via subprocess.
@@ -95,25 +98,21 @@ class FFmpegCommandBuilder:
         else:
             cmd.extend(["-map", "0:a"])
 
-        # Platform-standard H.264/AAC encode accepted by YouTube Shorts, Reels, TikTok, Threads:
+        # Platform-standard H.264/AAC encode accepted by YouTube Shorts, Reels, TikTok, Threads.
+        # The video codec + rate-control flags vary per encoder (see _video_encoder_args); the
+        # shared flags below are encoder-independent:
         #   high profile + level 4.1 + yuv420p   → broad decoder compatibility
-        #   veryfast / CRF 20                     → small files, good quality (balanced on low-spec)
         #   -r 30 -g 60                           → constant 30 fps, 2s GOP (clean keyframes)
         #   -movflags +faststart                  → moov atom up front (streaming upload/preview)
         #   -ar 48000 -ac 2                       → standard 48 kHz stereo AAC-LC
         # The filter graph already emits 1080x1920 with setsar=1 (square pixels → DAR 9:16).
+        cmd.extend(self._video_encoder_args(video_encoder))
         cmd.extend(
             [
-                "-c:v",
-                "libx264",
                 "-profile:v",
                 "high",
                 "-level",
                 "4.1",
-                "-preset",
-                "veryfast",
-                "-crf",
-                "20",
                 "-pix_fmt",
                 "yuv420p",
                 "-r",
@@ -122,8 +121,6 @@ class FFmpegCommandBuilder:
                 "60",
                 "-movflags",
                 "+faststart",
-                "-threads",
-                "2",
                 "-c:a",
                 "aac",
                 "-b:a",
@@ -139,13 +136,29 @@ class FFmpegCommandBuilder:
 
         return cmd
 
-    def _resolve_ffmpeg_path(self) -> str:
-        """Locates FFmpeg executable in workspace/bin/ or fallback to system path."""
-        workspace_bin = Path(str(BIN_DIR / "ffmpeg"))
-        if workspace_bin.exists():
-            return str(workspace_bin.resolve())
-        # Fallback to system ffmpeg
-        return "ffmpeg"
+    def _resolve_encoder(self, video_encoder: str | None) -> str:
+        """Resolve the encoder name: explicit override → config → 'auto' probe (nvenc if CUDA)."""
+        encoder = (video_encoder or self.config.video_processing.video_encoder or "cpu").lower()
+        if encoder == "auto":
+            return "nvenc" if SystemUtils.resolve_device("auto") == "cuda" else "cpu"
+        return encoder
+
+    def _video_encoder_args(self, video_encoder: str | None) -> list[str]:
+        """Return the ``-c:v`` + rate-control flags for the selected encoder.
+
+        cpu (libx264) is the default and the guaranteed fallback target.  GPU encoders use their
+        own rate-control flags (nvenc has no -crf).  Unknown names degrade to libx264.
+        """
+        encoder = self._resolve_encoder(video_encoder)
+        if encoder == "nvenc":
+            # NVENC: constant-quality VBR (no -crf); -threads is ignored by the GPU encoder.
+            return ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "20"]
+        if encoder == "qsv":
+            return ["-c:v", "h264_qsv", "-preset", "veryfast", "-global_quality", "20"]
+        if encoder == "videotoolbox":
+            return ["-c:v", "h264_videotoolbox", "-q:v", "60"]
+        # cpu / libx264 (default) — also the fallback after a GPU-encoder failure.
+        return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-threads", "2"]
 
     def _get_face_crop_filter(
         self, crops: list[dict], video_w: int, video_h: int, interpolate: bool = True
@@ -213,9 +226,14 @@ class FFmpegCommandBuilder:
     def _build_mode_a_filters(
         self, spec: dict, subtitle_ass_path: Path | None
     ) -> list[str]:
-        """Build filters for Mode A - Single 9:16 Vertical with static speaker cuts."""
+        """Build filters for Mode A - Single 9:16 Vertical with gentle EMA speaker pans.
+
+        The crop track is already EMA-smoothed in the face tracker (static while a speaker holds,
+        gliding on a speaker change), so the interpolating filter renders that glide smoothly
+        rather than quantizing it into ~60 stepwise jumps.
+        """
         face_crop = self._get_face_crop_filter(
-            spec["crops"], spec["video_width"], spec["video_height"], interpolate=False
+            spec["crops"], spec["video_width"], spec["video_height"], interpolate=True
         )
         v_filter = f"[0:v]setpts=PTS-STARTPTS,{face_crop},scale={spec['target_width']}:{spec['target_height']},format=yuv420p,setsar=1"
         v_filter = self._append_subtitles_filter(v_filter, subtitle_ass_path)

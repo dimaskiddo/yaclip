@@ -1,11 +1,13 @@
+from __future__ import annotations
+
 import math
 import struct
 import subprocess
 
-from typing import Dict, List
 from loguru import logger
 
 from src.core.config import load_config
+from src.core.constants import RMS_SAMPLE_RATE
 from src.core.utils import SystemUtils
 
 
@@ -15,14 +17,11 @@ class AudioEnergyAnalyzer:
     def __init__(self) -> None:
         self.config = load_config()
 
-    # Shared PCM sample rate for all RMS analysis (mono, 8 kHz is plenty for loudness).
-    _RMS_SAMPLE_RATE = 8000
-
     def _stream_rms(
         self,
-        cmd: list,
+        cmd: list[str],
         chunk_duration_sec: float,
-    ) -> List[float]:
+    ) -> list[float]:
         """Run an FFmpeg command emitting raw s16le mono PCM on stdout and return one
         RMS value per ``chunk_duration_sec`` chunk.  Shared by ``analyze_audio_energy``
         (whole-file heatmap) and ``rms_envelope`` (windowed, aligned to detection steps)."""
@@ -34,10 +33,10 @@ class AudioEnergyAnalyzer:
             logger.error(f"Failed to start audio analysis process: {e}")
             return []
 
-        chunk_size = int(self._RMS_SAMPLE_RATE * chunk_duration_sec * 2)  # 2 bytes/sample
+        chunk_size = int(RMS_SAMPLE_RATE * chunk_duration_sec * 2)  # 2 bytes/sample
         chunk_size = max(2, chunk_size - (chunk_size % 2))  # keep whole 16-bit samples
 
-        rms_values: List[float] = []
+        rms_values: list[float] = []
         while True:
             data = process.stdout.read(chunk_size)
             if not data:
@@ -56,7 +55,7 @@ class AudioEnergyAnalyzer:
         start: float,
         end: float,
         step_seconds: float,
-    ) -> List[float]:
+    ) -> list[float]:
         """Return a per-step RMS loudness envelope for the ``[start, end]`` window of a
         media file (audio or video container — FFmpeg extracts the audio with ``-vn``).
 
@@ -76,7 +75,7 @@ class AudioEnergyAnalyzer:
             "-vn",
             "-f", "s16le",
             "-acodec", "pcm_s16le",
-            "-ar", str(self._RMS_SAMPLE_RATE),
+            "-ar", str(RMS_SAMPLE_RATE),
             "-ac", "1",
             "pipe:1",
             "-loglevel", "quiet",
@@ -85,7 +84,7 @@ class AudioEnergyAnalyzer:
 
     def analyze_audio_energy(
         self, audio_path: str, chunk_duration_sec: float = 1.0
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         Generates a pseudo-heatmap by calculating RMS energy of audio chunks.
         Returns standard clip objects based on the loudest spikes.
@@ -102,7 +101,7 @@ class AudioEnergyAnalyzer:
             "-acodec",
             "pcm_s16le",
             "-ar",
-            str(self._RMS_SAMPLE_RATE),
+            str(RMS_SAMPLE_RATE),
             "-ac",
             "1",
             "pipe:1",

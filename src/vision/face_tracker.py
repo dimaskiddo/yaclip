@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import urllib.request
+import numpy as np
+
 from pathlib import Path
 from typing import TYPE_CHECKING
-
-import numpy as np
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -12,16 +12,26 @@ if TYPE_CHECKING:
 
 from src.core.config import load_config
 from src.core.constants import (
+    AV_SYNC_WINDOW_SECONDS,
     COCO_CLASS_PERSON,
+    COHERENCE_MIN,
     ContentType,
     FACE_COUNT_MARGIN,
     FACE_LANDMARKER_MAX_FACES,
     GROUP_FRAMING_FIT_FACTOR,
     GROUP_MAX_GAP_FACTOR,
     GROUP_SPEAKER_ID,
+    HAAR_DOWNSCALE,
+    HAAR_MIN_NEIGHBORS,
+    HAAR_SCALE_FACTOR,
+    HEADROOM_FACTOR,
+    IOU_MATCH_MIN,
     LIP_ACTIVITY_MIN,
     LIP_ACTIVITY_WINDOW_SECONDS,
+    MAR_VERTICAL_PAIRS,
+    MAR_WIDTH_PAIR,
     MIN_SHOT_SECONDS,
+    PAN_SMOOTHING_FACTOR,
     PODCAST_DETECTION_FPS,
     SPEAKER_HOLD_SECONDS,
     SPEAKER_SWITCH_MARGIN,
@@ -40,6 +50,8 @@ class FaceTracker:
     def __init__(self) -> None:
         self.config = load_config()
         self.device = self.config.video_processing.device.lower()
+        # Low-spec opt-in: Haar largest-face tracking instead of MediaPipe + audio (PODCAST only).
+        self.fast_mode = bool(self.config.video_processing.fast_mode)
 
     def track_clip(
         self,
@@ -88,9 +100,13 @@ class FaceTracker:
             f"Tracking faces in clip: {start_time:.2f}s to {end_time:.2f}s ({clip_frame_count} frames)"
         )
 
+        # Fast mode (opt-in, PODCAST only): skip MediaPipe + audio entirely and use a fast Haar
+        # largest-face crop.  Other content types are unaffected (they never reach the PODCAST path).
+        fast = self.fast_mode and content_type == ContentType.PODCAST
+
         # Downsample detection to save CPU/GPU.  PODCAST samples faster so active-speaker
         # detection can resolve syllable-rate (~3-5 Hz) mouth movement; other types use 5 fps.
-        sample_fps = PODCAST_DETECTION_FPS if content_type == ContentType.PODCAST else 5
+        sample_fps = PODCAST_DETECTION_FPS if (content_type == ContentType.PODCAST and not fast) else 5
         detection_interval = max(1, int(fps / sample_fps))
 
         raw_detections: list[
@@ -101,7 +117,11 @@ class FaceTracker:
         # identify and cut to the active speaker when 2+ faces are present.  All other types
         # use YOLO person detection (no lip landmarks needed; simpler crop).
         audio_rms: list[float] = []
-        if content_type == ContentType.PODCAST:
+        if fast:
+            raw_detections = self._track_haar_fast(
+                cap, start_frame, end_frame, detection_interval, width, height
+            )
+        elif content_type == ContentType.PODCAST:
             raw_detections = self._track_speaker_mesh(
                 cap, start_frame, end_frame, detection_interval, width, height,
                 person_count=person_count,
@@ -125,7 +145,7 @@ class FaceTracker:
         # Interpolate detections frame-by-frame
         crops = self._generate_smooth_crops(
             raw_detections, start_frame, end_frame, fps, width, height, content_type,
-            audio_rms=audio_rms, detection_interval=detection_interval,
+            audio_rms=audio_rms, detection_interval=detection_interval, fast_mode=fast,
         )
         return crops
 
@@ -191,6 +211,49 @@ class FaceTracker:
                             "score": float(box.conf[0]),
                         }
                     )
+            detections.append({"frame_idx": idx, "faces": faces})
+
+        return detections
+
+    def _track_haar_fast(
+        self,
+        cap: cv2.VideoCapture,
+        start_frame: int,
+        end_frame: int,
+        interval: int,
+        width: int,
+        height: int,
+    ) -> list[dict]:
+        """Fast CPU-only PODCAST tracking via OpenCV Haar cascade (opt-in ``fast_mode``).
+
+        Detects frontal faces on a downscaled grayscale frame and keeps the largest one — no
+        MediaPipe, no audio, no active-speaker logic.  Returns the standard detection shape so the
+        single-face crop path can consume it.  Trades multi-speaker accuracy for ~10x speed.
+        """
+        import cv2
+
+        cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        )
+        inv = 1.0 / HAAR_DOWNSCALE
+        detections = []
+        for idx in range(start_frame, end_frame, interval):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            small = cv2.resize(gray, (0, 0), fx=HAAR_DOWNSCALE, fy=HAAR_DOWNSCALE)
+            found = cascade.detectMultiScale(
+                small, scaleFactor=HAAR_SCALE_FACTOR, minNeighbors=HAAR_MIN_NEIGHBORS
+            )
+
+            faces = []
+            if len(found) > 0:
+                # Keep the largest face and scale its box back to full resolution.
+                x, y, w, h = max(found, key=lambda b: int(b[2]) * int(b[3]))
+                faces.append({"box": (x * inv, y * inv, w * inv, h * inv)})
             detections.append({"frame_idx": idx, "faces": faces})
 
         return detections
@@ -277,54 +340,57 @@ class FaceTracker:
 
         return detections
 
-    # FaceMesh landmark indices for the inner lip (vertical opening) and mouth corners (width).
-    _MAR_VERTICAL_PAIRS = ((13, 14), (81, 178), (311, 402))
-    _MAR_WIDTH_PAIR = (78, 308)
-
     @staticmethod
-    def _mouth_aspect_ratio(landmarks) -> float:
+    def _mouth_aspect_ratio(landmarks: list) -> float:
         """Mouth-Aspect-Ratio = mean vertical inner-lip opening / mouth width.
 
         Robust speaking signal: a wide smile barely changes the ratio (width grows with the
         opening), while speech drives the vertical opening up and down.  Returns 0.0 if the
-        mouth width is degenerate.
+        mouth width is degenerate.  Landmark indices come from ``MAR_VERTICAL_PAIRS`` /
+        ``MAR_WIDTH_PAIR`` (constants).
         """
         def _dist(a: int, b: int) -> float:
             pa, pb = landmarks[a], landmarks[b]
             return float(np.hypot(pa.x - pb.x, pa.y - pb.y))
 
-        width = _dist(*FaceTracker._MAR_WIDTH_PAIR)
+        width = _dist(*MAR_WIDTH_PAIR)
         if width <= 1e-6:
             return 0.0
-        vertical = sum(_dist(a, b) for a, b in FaceTracker._MAR_VERTICAL_PAIRS) / len(
-            FaceTracker._MAR_VERTICAL_PAIRS
-        )
+        vertical = sum(_dist(a, b) for a, b in MAR_VERTICAL_PAIRS) / len(MAR_VERTICAL_PAIRS)
         return vertical / width
 
     def _map_faces_across_steps(self, detections: list[dict], width: int) -> list[dict]:
-        """Assign each detected face a stable integer id across steps by center proximity.
+        """Assign each detected face a stable integer id across steps.
 
+        Matches primarily by IoU (box overlap — scales with face size), falling back to a
+        center-distance test when no track overlaps (a face that moved between sparse steps).
         Returns one entry per step: ``{"frame_idx": int, "faces": [(fid, box, mar), ...]}``.
         """
-        face_ids: list[tuple[float, float]] = []  # fid → rolling average (x, y) center
+        track_boxes: list[tuple] = []  # fid → last seen (x, y, w, h)
         steps: list[dict] = []
         for step in detections:
             mapped: list[tuple[int, tuple, float]] = []
             for face in step["faces"]:
                 box = face["box"]
                 fc = (box[0] + box[2] / 2, box[1] + box[3] / 2)
-                fid = -1
-                for j, pos in enumerate(face_ids):
-                    if np.hypot(fc[0] - pos[0], fc[1] - pos[1]) < 0.12 * width:
-                        fid = j
-                        face_ids[j] = (
-                            0.8 * pos[0] + 0.2 * fc[0],
-                            0.8 * pos[1] + 0.2 * fc[1],
-                        )
-                        break
+                # Best IoU match first.
+                fid, best_iou = -1, IOU_MATCH_MIN
+                for j, prev in enumerate(track_boxes):
+                    iou = self._iou(box, prev)
+                    if iou >= best_iou:
+                        fid, best_iou = j, iou
+                # Fallback: nearest center within 12% of frame width.
                 if fid == -1:
-                    fid = len(face_ids)
-                    face_ids.append(fc)
+                    for j, prev in enumerate(track_boxes):
+                        pcx, pcy = prev[0] + prev[2] / 2, prev[1] + prev[3] / 2
+                        if np.hypot(fc[0] - pcx, fc[1] - pcy) < 0.12 * width:
+                            fid = j
+                            break
+                if fid == -1:
+                    fid = len(track_boxes)
+                    track_boxes.append(box)
+                else:
+                    track_boxes[fid] = box  # update track to the latest box
                 mapped.append((fid, box, float(face.get("mar", 0.0))))
             steps.append({"frame_idx": step["frame_idx"], "faces": mapped})
         return steps
@@ -353,13 +419,39 @@ class FaceTracker:
         return [i < len(audio_rms) and audio_rms[i] >= thr for i in range(n)]
 
     @staticmethod
+    def _pearson(a: list[float], b: list[float]) -> float:
+        """Pearson correlation of two equal-length series, clamped to [0, 1].
+
+        Returns 0.0 for fewer than 3 points or a flat (zero-variance) series — i.e. "no positive
+        correlation" — so a mouth that does not track the audio is never credited.
+        """
+        if len(a) < 3 or len(b) < 3:
+            return 0.0
+        a_arr, b_arr = np.asarray(a), np.asarray(b)
+        if a_arr.std() < 1e-9 or b_arr.std() < 1e-9:
+            return 0.0
+        return max(0.0, float(np.corrcoef(a_arr, b_arr)[0, 1]))
+
+    @staticmethod
+    def _iou(box_a: tuple, box_b: tuple) -> float:
+        """Intersection-over-Union of two ``(x, y, w, h)`` boxes."""
+        ax, ay, aw, ah = box_a
+        bx, by, bw, bh = box_b
+        ix1, iy1 = max(ax, bx), max(ay, by)
+        ix2, iy2 = min(ax + aw, bx + bw), min(ay + ah, by + bh)
+        iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+        inter = iw * ih
+        union = aw * ah + bw * bh - inter
+        return inter / union if union > 0 else 0.0
+
+    @staticmethod
     def _audio_correlation_weight(
         motion: list[float], audio_rms: list[float], voiced: list[bool]
     ) -> float:
-        """Pearson correlation of a face's mouth motion with audio loudness over voiced steps.
+        """Clip-level prior: correlation of a face's mouth motion with audio over all voiced steps.
 
-        High when the mouth moves in time with the audio (the real speaker); ~0 for a silent
-        smiler/fidgeter; negative correlations are clamped to 0.  Neutral (1.0) when no audio.
+        Used only as a mild tiebreak (a chronic non-speaker / persistent smiler scores low across
+        the whole clip).  Neutral (1.0) when there is no audio.
         """
         if not audio_rms:
             return 1.0
@@ -371,10 +463,7 @@ class FaceTracker:
                 a.append(audio_rms[i])
         if len(m) < 3:
             return 1.0
-        m_arr, a_arr = np.asarray(m), np.asarray(a)
-        if m_arr.std() < 1e-9 or a_arr.std() < 1e-9:
-            return 0.0
-        return max(0.0, float(np.corrcoef(m_arr, a_arr)[0, 1]))
+        return FaceTracker._pearson(m, a)
 
     @staticmethod
     def _should_group_two_shot(steps: list[dict], crop_w: int) -> bool:
@@ -410,11 +499,12 @@ class FaceTracker:
                     step_centers.append({**step_centers[-1], "frame_idx": s["frame_idx"]})
                 continue
             _fid, box, _mar = faces[0]
+            # Rule-of-thirds: lift the center so the eyes sit in the upper third of the frame.
             step_centers.append(
                 {
                     "frame_idx": s["frame_idx"],
                     "target_x": int(box[0] + box[2] / 2),
-                    "target_y": int(box[1] + box[3] / 2),
+                    "target_y": int(box[1] + box[3] / 2 - box[3] * HEADROOM_FACTOR),
                     "speaker_id": 0,
                 }
             )
@@ -456,9 +546,23 @@ class FaceTracker:
         # Stable, clip-level two-shot decision.
         group = self._should_group_two_shot(steps, crop_w)
 
+        have_audio = bool(audio_rms)
         activity_window = max(2, round(LIP_ACTIVITY_WINDOW_SECONDS * steps_per_second))
+        sync_window = max(3, round(AV_SYNC_WINDOW_SECONDS * steps_per_second))
         step_centers: list[dict] = []
         active: int | None = None
+
+        def _emit(frame_idx: int, box: tuple, speaker_id: int, face_h: float) -> None:
+            # Rule-of-thirds: lift the center so the eyes sit in the upper third of the frame.
+            cy = box[1] + box[3] / 2 - face_h * HEADROOM_FACTOR
+            step_centers.append(
+                {
+                    "frame_idx": frame_idx,
+                    "target_x": int(box[0] + box[2] / 2),
+                    "target_y": int(cy),
+                    "speaker_id": speaker_id,
+                }
+            )
 
         for i, s in enumerate(steps):
             frame_idx = s["frame_idx"]
@@ -472,11 +576,12 @@ class FaceTracker:
             if group:
                 ranges = [(b[0], b[0] + b[2]) for _, b, _ in faces]
                 cys = [b[1] + b[3] / 2 for _, b, _ in faces]
+                mean_h = sum(b[3] for _, b, _ in faces) / len(faces)
                 step_centers.append(
                     {
                         "frame_idx": frame_idx,
                         "target_x": int((min(r[0] for r in ranges) + max(r[1] for r in ranges)) / 2),
-                        "target_y": int(sum(cys) / len(cys)),
+                        "target_y": int(sum(cys) / len(cys) - mean_h * HEADROOM_FACTOR),
                         "speaker_id": GROUP_SPEAKER_ID,
                     }
                 )
@@ -491,33 +596,45 @@ class FaceTracker:
                 vals = [v for v in mar_series[fid][lo : i + 1] if v is not None]
                 activity[fid] = float(np.std(vals)) if len(vals) >= 2 else 0.0
 
-            # Score = visual activity × audio-correlation weight (floored so a clearly moving
-            # mouth still wins when audio is absent or correlation is weak).
-            score = {fid: activity[fid] * max(weights.get(fid, 1.0), 0.1) for fid in visible}
+            # Local audio-visual coherence: does this mouth track the audio *right now*?
+            slo = max(0, i - sync_window + 1)
+            hi = min(i + 1, len(audio_rms)) if have_audio else i + 1
+            coherence: dict[int, float] = {}
+            for fid in visible:
+                if have_audio and hi - slo >= 3:
+                    coherence[fid] = self._pearson(motion[fid][slo:hi], audio_rms[slo:hi])
+                else:
+                    coherence[fid] = 1.0  # no audio → coherence not used as a gate
 
-            if active not in visible:
-                # Current speaker off screen → take the best-scoring visible face.
-                active = max(visible, key=lambda f: score[f])
-            elif voiced[i]:
-                # Only switch during voiced steps (hold through silence/pauses), and only when
-                # the challenger clearly beats the current speaker (hysteresis + activity floor).
-                best = max(visible, key=lambda f: score[f])
-                if (
-                    best != active
-                    and activity[best] >= LIP_ACTIVITY_MIN
-                    and score[best] > score[active] * SPEAKER_SWITCH_MARGIN
-                ):
+            # Eligible speaker = clearly speaking AND (when audio present) tracking the audio.
+            eligible = [
+                fid
+                for fid in visible
+                if activity[fid] >= LIP_ACTIVITY_MIN
+                and (not have_audio or coherence[fid] >= COHERENCE_MIN)
+            ]
+            # Ranking score: activity × local coherence × mild clip-level prior.
+            score = {
+                fid: activity[fid] * coherence[fid] * max(weights.get(fid, 1.0), 0.2)
+                for fid in visible
+            }
+
+            if active is None or active not in visible:
+                # No valid current speaker on screen — pick the best eligible, else the most
+                # prominent (largest) visible face as a safe default (never the empty center).
+                if eligible:
+                    active = max(eligible, key=lambda f: score[f])
+                else:
+                    active = max(visible, key=lambda f: visible[f][2] * visible[f][3])
+            elif voiced[i] and eligible:
+                # Switch only on voiced steps to an eligible challenger that clearly beats the
+                # current speaker.  If NO face is eligible (e.g. the talker's mouth is behind a
+                # mic), we fall through and HOLD the current speaker — never jump to a smiler.
+                best = max(eligible, key=lambda f: score[f])
+                if best != active and score[best] > score.get(active, 0.0) * SPEAKER_SWITCH_MARGIN:
                     active = best
 
-            b = visible[active]
-            step_centers.append(
-                {
-                    "frame_idx": frame_idx,
-                    "target_x": int(b[0] + b[2] / 2),
-                    "target_y": int(b[1] + b[3] / 2),
-                    "speaker_id": active,
-                }
-            )
+            _emit(frame_idx, visible[active], active, visible[active][3])
 
         return step_centers
 
@@ -532,6 +649,7 @@ class FaceTracker:
         content_type: ContentType,
         audio_rms: list[float] | None = None,
         detection_interval: int = 1,
+        fast_mode: bool = False,
     ) -> list[dict]:
         """Smooth raw face bounding boxes and output dynamic crop boxes frame-by-frame.
 
@@ -539,7 +657,8 @@ class FaceTracker:
         When present it gates active-speaker switching to voiced moments and weights each
         face by how well its mouth movement correlates with the audio.  ``detection_interval``
         is the frame stride between detection steps (used to convert hold/window seconds to
-        a number of steps).
+        a number of steps).  ``fast_mode`` (Haar PODCAST tracking) forces the single largest-face
+        crop path — no audio-visual active-speaker logic.
         """
         if not detections:
             # Fallback to static center crops
@@ -575,8 +694,10 @@ class FaceTracker:
         # Detection steps occur every ``detection_interval`` frames → convert seconds to steps.
         steps_per_second = fps / max(1, detection_interval)
 
-        # We compute the target face center for each detection step.
-        if content_type == ContentType.PODCAST:
+        # We compute the target face center for each detection step.  Fast mode (Haar) and all
+        # non-PODCAST types use the single largest-face path; full PODCAST uses audio-visual
+        # active-speaker selection.
+        if content_type == ContentType.PODCAST and not fast_mode:
             step_centers = self._podcast_step_centers(
                 detections, width, height, crop_w, audio_rms or [], steps_per_second
             )
@@ -712,6 +833,17 @@ class FaceTracker:
                     "crop_h": crop_h,
                 }
             )
+
+        # PODCAST: gentle EMA pan so a speaker change eases over ~1 s instead of hard-cutting.
+        # Within a held shot the target is constant, so the EMA converges and stays put (no drift).
+        if content_type == ContentType.PODCAST and crops:
+            sx = float(crops[0]["crop_x"])
+            sy = float(crops[0]["crop_y"])
+            for c in crops:
+                sx += (c["crop_x"] - sx) * PAN_SMOOTHING_FACTOR
+                sy += (c["crop_y"] - sy) * PAN_SMOOTHING_FACTOR
+                c["crop_x"] = int(sx)
+                c["crop_y"] = int(sy)
 
         return crops
 

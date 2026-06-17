@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import io
 import os
+import platform
 import shutil
 import threading
 import urllib.request
+import zipfile
 
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -84,10 +87,6 @@ def ensure_workspace_integrity() -> None:
     if bun_missing:
         logger.info("Downloading Bun JavaScript runtime to workspace/bin...")
         try:
-            import io
-            import platform
-            import zipfile
-
             system = platform.system().lower()
             machine = platform.machine().lower()
 

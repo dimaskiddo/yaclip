@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import numpy as np
+import numpy as np
 
 from pathlib import Path
 from loguru import logger
@@ -75,7 +72,6 @@ class OverlayDetector:
             return []
 
         import cv2
-        import numpy as np
 
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
@@ -242,7 +238,6 @@ class OverlayDetector:
         height: int,
     ) -> list[dict]:
         """Group per-frame detections into contiguous presence intervals (clip-relative times)."""
-        import numpy as np
 
         if not active_frames:
             return []

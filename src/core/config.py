@@ -184,6 +184,14 @@ class RegionDetectionConfig(BaseModel):
 class VideoProcessingConfig(BaseModel):
     output_dir: str = Field(default=str(CLIPS_DIR))
     device: str = Field(default="auto")
+    # FFmpeg video encoder: auto | cpu | nvenc | qsv | videotoolbox.  "auto" uses nvenc when CUDA is
+    # present, else cpu (libx264).  GPU encoders that fail at runtime automatically fall back to
+    # libx264 (see renderer._run_render_with_fallback), so "auto" is safe as the default.
+    video_encoder: str = Field(default="auto")
+    # Low-spec opt-in: when true, PODCAST clips are tracked with a fast OpenCV Haar-cascade
+    # largest-face crop instead of the heavier MediaPipe + audio active-speaker pipeline.  Trades
+    # multi-speaker accuracy for speed.  Does NOT affect content-type detection or Mode B/C.
+    fast_mode: bool = Field(default=False)
     content_type_override: str = Field(default="auto")
     detection_confidence_threshold: float = Field(default=0.6)
     auto_face_tracking: bool = Field(default=True)

@@ -1,13 +1,21 @@
+from __future__ import annotations
+
+import json
 import os
 import platform
 import subprocess
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 from loguru import logger
 
 from src.core.exceptions import AIProviderError
 from src.core.workspace import BIN_DIR
+
+
+def make_even(value: int) -> int:
+    """Round down to the nearest even integer (FFmpeg crop/scale dimensions must be even)."""
+    return value if value % 2 == 0 else value - 1
 
 
 class SystemUtils:
@@ -27,7 +35,7 @@ class SystemUtils:
         return False
 
     @staticmethod
-    def get_windows_username() -> Optional[str]:
+    def get_windows_username() -> str | None:
         """Execute Windows cmd to get the host username when running in WSL."""
         try:
             result = subprocess.run(
@@ -162,9 +170,10 @@ class AIUtils:
             return model_path
 
     @staticmethod
-    def parse_json_array(response_text: str) -> List[Dict[str, Any]]:
+    def parse_json_array(response_text: str) -> list[dict[str, Any]]:
         """Strips markdown and parses the response into a JSON array, ensuring it's valid."""
-        import json
+        # prompts is imported lazily here: core → ai is a backwards layer dependency, so keep it
+        # out of the module-level import graph to avoid a cycle.
         from src.ai.prompts import strip_json_markdown
 
         clean_text = strip_json_markdown(response_text)

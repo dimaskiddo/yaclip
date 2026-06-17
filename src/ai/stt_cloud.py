@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 from loguru import logger
 
+from src.ai.api_client import retry_api_call
 from src.ai.prompts import get_language_prompt
 from src.core.config import load_config
 from src.core.exceptions import AIProviderError
@@ -47,10 +48,8 @@ class CloudSTTProvider:
 
         language = self.config.video_processing.subtitles.language
 
-        from src.ai.api_client import retry_api_call
-
         @retry_api_call(max_retries=3)
-        def _call_openai_stt(audio_file):
+        def _call_openai_stt(audio_file: object) -> object:
             kwargs = {
                 "model": self.model_name,
                 "file": audio_file,
@@ -103,14 +102,12 @@ class CloudSTTProvider:
         genai.configure(api_key=self.api_key)
         logger.info("Starting cloud transcription with Gemini...")
 
-        from src.ai.api_client import retry_api_call
-
         @retry_api_call(max_retries=3)
-        def _upload():
+        def _upload() -> object:
             return genai.upload_file(path=audio_path)
 
         @retry_api_call(max_retries=3)
-        def _generate(uploaded_file, prompt):
+        def _generate(uploaded_file: object, prompt: str) -> object:
             model = genai.GenerativeModel(model_name=self.model_name)
             return model.generate_content([uploaded_file, prompt])
 
