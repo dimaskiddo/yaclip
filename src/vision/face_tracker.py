@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import urllib.request
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+import numpy as np
+from loguru import logger
 
 if TYPE_CHECKING:
     import cv2
-
-from pathlib import Path
-from loguru import logger
 
 from src.core.config import load_config
 from src.core.constants import (
@@ -14,8 +16,21 @@ from src.core.constants import (
     ContentType,
     FACE_COUNT_MARGIN,
     FACE_LANDMARKER_MAX_FACES,
+    GROUP_FRAMING_FIT_FACTOR,
+    GROUP_MAX_GAP_FACTOR,
+    GROUP_SPEAKER_ID,
+    LIP_ACTIVITY_MIN,
+    LIP_ACTIVITY_WINDOW_SECONDS,
+    MIN_SHOT_SECONDS,
+    PODCAST_DETECTION_FPS,
     SPEAKER_HOLD_SECONDS,
+    SPEAKER_SWITCH_MARGIN,
+    STACK2_PANEL_ASPECT,
+    STACK3_PANEL_ASPECT,
+    VOICE_ACTIVITY_FLOOR_FACTOR,
 )
+from src.core.utils import SystemUtils
+from src.media.energy import AudioEnergyAnalyzer
 from src.core.workspace import MODELS_DIR
 
 
@@ -73,8 +88,10 @@ class FaceTracker:
             f"Tracking faces in clip: {start_time:.2f}s to {end_time:.2f}s ({clip_frame_count} frames)"
         )
 
-        # We will downsample detection to 5 fps to save CPU/GPU resources
-        detection_interval = max(1, int(fps / 5))
+        # Downsample detection to save CPU/GPU.  PODCAST samples faster so active-speaker
+        # detection can resolve syllable-rate (~3-5 Hz) mouth movement; other types use 5 fps.
+        sample_fps = PODCAST_DETECTION_FPS if content_type == ContentType.PODCAST else 5
+        detection_interval = max(1, int(fps / sample_fps))
 
         raw_detections: list[
             dict
@@ -83,11 +100,21 @@ class FaceTracker:
         # PODCAST uses MediaPipe FaceLandmarker (lip-landmark speaker detection) so it can
         # identify and cut to the active speaker when 2+ faces are present.  All other types
         # use YOLO person detection (no lip landmarks needed; simpler crop).
+        audio_rms: list[float] = []
         if content_type == ContentType.PODCAST:
             raw_detections = self._track_speaker_mesh(
                 cap, start_frame, end_frame, detection_interval, width, height,
                 person_count=person_count,
             )
+            # Audio-visual sync: per-detection-step loudness envelope for the clip window.
+            # Aligns 1:1 with the detection steps (step_seconds = detection_interval / fps).
+            try:
+                audio_rms = AudioEnergyAnalyzer().rms_envelope(
+                    str(video_path), start_time, end_time, detection_interval / fps
+                )
+            except Exception as e:
+                logger.warning(f"Audio envelope unavailable, using visual-only speaker detection: {e}")
+                audio_rms = []
         else:
             raw_detections = self._track_standard_detection(
                 cap, start_frame, end_frame, detection_interval, width, height
@@ -97,13 +124,12 @@ class FaceTracker:
 
         # Interpolate detections frame-by-frame
         crops = self._generate_smooth_crops(
-            raw_detections, start_frame, end_frame, fps, width, height, content_type
+            raw_detections, start_frame, end_frame, fps, width, height, content_type,
+            audio_rms=audio_rms, detection_interval=detection_interval,
         )
         return crops
 
     def _download_model(self, url: str, path: Path) -> None:
-        import urllib.request
-
         path.parent.mkdir(parents=True, exist_ok=True)
         logger.info("Downloading speaker-tracking model...")
         urllib.request.urlretrieve(url, str(path))
@@ -123,7 +149,6 @@ class FaceTracker:
         model as VisualAnalyzer — no separate model download needed.
         """
         import cv2
-        from src.core.utils import SystemUtils
 
         cfg = self.config.video_processing.region_detection
         model_path = MODELS_DIR / cfg.model_name
@@ -192,7 +217,6 @@ class FaceTracker:
         headroom so partially-visible or angled faces are never missed.
         """
         import cv2
-        import numpy as np
         import mediapipe as mp
         from mediapipe.tasks import python
         from mediapipe.tasks.python import vision
@@ -242,18 +266,260 @@ class FaceTracker:
                             (ymax - ymin) * height,
                         )
 
-                        # Extract inner lip landmarks for speaker activity
-                        # Landmark 13 is inner upper lip, 14 is inner lower lip
-                        lip_top = landmarks[13]
-                        lip_bot = landmarks[14]
-                        lip_dist = np.sqrt(
-                            (lip_top.x - lip_bot.x) ** 2 + (lip_top.y - lip_bot.y) ** 2
-                        )
+                        # Mouth-Aspect-Ratio (MAR) for speaker activity: mean vertical inner-lip
+                        # opening / mouth width.  A smile widens the mouth (width ↑, vertical ~flat)
+                        # → low MAR; speech opens vertically → high, oscillating MAR.  The ratio is
+                        # intrinsically face-size-normalised, so no extra box-height scaling needed.
+                        mar = self._mouth_aspect_ratio(landmarks)
 
-                        faces.append({"box": box, "lip_distance": float(lip_dist)})
+                        faces.append({"box": box, "mar": float(mar)})
                 detections.append({"frame_idx": idx, "faces": faces})
 
         return detections
+
+    # FaceMesh landmark indices for the inner lip (vertical opening) and mouth corners (width).
+    _MAR_VERTICAL_PAIRS = ((13, 14), (81, 178), (311, 402))
+    _MAR_WIDTH_PAIR = (78, 308)
+
+    @staticmethod
+    def _mouth_aspect_ratio(landmarks) -> float:
+        """Mouth-Aspect-Ratio = mean vertical inner-lip opening / mouth width.
+
+        Robust speaking signal: a wide smile barely changes the ratio (width grows with the
+        opening), while speech drives the vertical opening up and down.  Returns 0.0 if the
+        mouth width is degenerate.
+        """
+        def _dist(a: int, b: int) -> float:
+            pa, pb = landmarks[a], landmarks[b]
+            return float(np.hypot(pa.x - pb.x, pa.y - pb.y))
+
+        width = _dist(*FaceTracker._MAR_WIDTH_PAIR)
+        if width <= 1e-6:
+            return 0.0
+        vertical = sum(_dist(a, b) for a, b in FaceTracker._MAR_VERTICAL_PAIRS) / len(
+            FaceTracker._MAR_VERTICAL_PAIRS
+        )
+        return vertical / width
+
+    def _map_faces_across_steps(self, detections: list[dict], width: int) -> list[dict]:
+        """Assign each detected face a stable integer id across steps by center proximity.
+
+        Returns one entry per step: ``{"frame_idx": int, "faces": [(fid, box, mar), ...]}``.
+        """
+        face_ids: list[tuple[float, float]] = []  # fid → rolling average (x, y) center
+        steps: list[dict] = []
+        for step in detections:
+            mapped: list[tuple[int, tuple, float]] = []
+            for face in step["faces"]:
+                box = face["box"]
+                fc = (box[0] + box[2] / 2, box[1] + box[3] / 2)
+                fid = -1
+                for j, pos in enumerate(face_ids):
+                    if np.hypot(fc[0] - pos[0], fc[1] - pos[1]) < 0.12 * width:
+                        fid = j
+                        face_ids[j] = (
+                            0.8 * pos[0] + 0.2 * fc[0],
+                            0.8 * pos[1] + 0.2 * fc[1],
+                        )
+                        break
+                if fid == -1:
+                    fid = len(face_ids)
+                    face_ids.append(fc)
+                mapped.append((fid, box, float(face.get("mar", 0.0))))
+            steps.append({"frame_idx": step["frame_idx"], "faces": mapped})
+        return steps
+
+    @staticmethod
+    def _mar_motion(series: list) -> list[float]:
+        """Per-step mouth motion = |ΔMAR| between consecutive *visible* samples (0 otherwise)."""
+        motion = [0.0] * len(series)
+        prev = None
+        for i, v in enumerate(series):
+            if v is not None and prev is not None:
+                motion[i] = abs(v - prev)
+            if v is not None:
+                prev = v
+        return motion
+
+    @staticmethod
+    def _voiced_mask(audio_rms: list[float], n: int) -> list[bool]:
+        """Boolean per-step mask of voiced (above-threshold) audio.  All-True when no audio."""
+        if not audio_rms:
+            return [True] * n
+        positive = [r for r in audio_rms if r > 0]
+        if not positive:
+            return [True] * n
+        thr = float(np.median(positive)) * VOICE_ACTIVITY_FLOOR_FACTOR
+        return [i < len(audio_rms) and audio_rms[i] >= thr for i in range(n)]
+
+    @staticmethod
+    def _audio_correlation_weight(
+        motion: list[float], audio_rms: list[float], voiced: list[bool]
+    ) -> float:
+        """Pearson correlation of a face's mouth motion with audio loudness over voiced steps.
+
+        High when the mouth moves in time with the audio (the real speaker); ~0 for a silent
+        smiler/fidgeter; negative correlations are clamped to 0.  Neutral (1.0) when no audio.
+        """
+        if not audio_rms:
+            return 1.0
+        m: list[float] = []
+        a: list[float] = []
+        for i in range(min(len(motion), len(audio_rms))):
+            if voiced[i]:
+                m.append(motion[i])
+                a.append(audio_rms[i])
+        if len(m) < 3:
+            return 1.0
+        m_arr, a_arr = np.asarray(m), np.asarray(a)
+        if m_arr.std() < 1e-9 or a_arr.std() < 1e-9:
+            return 0.0
+        return max(0.0, float(np.corrcoef(m_arr, a_arr)[0, 1]))
+
+    @staticmethod
+    def _should_group_two_shot(steps: list[dict], crop_w: int) -> bool:
+        """Clip-level two-shot decision: group both faces into one static crop only when they
+        are consistently adjacent.  Uses the median over multi-face steps of (a) total span and
+        (b) the largest gap between adjacent faces.  The gap test prevents framing the empty
+        table between two far-apart people.
+        """
+        spans: list[float] = []
+        gaps: list[float] = []
+        for s in steps:
+            faces = s["faces"]
+            if len(faces) < 2:
+                continue
+            ranges = sorted((b[0], b[0] + b[2]) for _, b, _ in faces)
+            spans.append(ranges[-1][1] - ranges[0][0])
+            gaps.append(max(ranges[k][0] - ranges[k - 1][1] for k in range(1, len(ranges))))
+        # Require two-face shots to dominate before committing to a two-shot for the whole clip.
+        if not spans or len(spans) < max(1, int(len(steps) * 0.3)):
+            return False
+        return (
+            float(np.median(spans)) <= crop_w * GROUP_FRAMING_FIT_FACTOR
+            and float(np.median(gaps)) <= crop_w * GROUP_MAX_GAP_FACTOR
+        )
+
+    def _single_face_step_centers(self, detections: list[dict], width: int) -> list[dict]:
+        """Non-PODCAST: track the first (usually only) detected face per step."""
+        step_centers: list[dict] = []
+        for s in self._map_faces_across_steps(detections, width):
+            faces = s["faces"]
+            if not faces:
+                if step_centers:
+                    step_centers.append({**step_centers[-1], "frame_idx": s["frame_idx"]})
+                continue
+            _fid, box, _mar = faces[0]
+            step_centers.append(
+                {
+                    "frame_idx": s["frame_idx"],
+                    "target_x": int(box[0] + box[2] / 2),
+                    "target_y": int(box[1] + box[3] / 2),
+                    "speaker_id": 0,
+                }
+            )
+        return step_centers
+
+    def _podcast_step_centers(
+        self,
+        detections: list[dict],
+        width: int,
+        height: int,
+        crop_w: int,
+        audio_rms: list[float],
+        steps_per_second: float,
+    ) -> list[dict]:
+        """PODCAST per-step targets: stable two-shot when faces are adjacent, otherwise
+        audio-visual active-speaker cuts (mouth-motion gated by audio + weighted by how well
+        each mouth correlates with the loudness)."""
+        steps = self._map_faces_across_steps(detections, width)
+        n = len(steps)
+        if n == 0:
+            return []
+
+        all_fids = sorted({fid for s in steps for fid, _, _ in s["faces"]})
+
+        # Per-face MAR time series (None where the face is not visible) and mouth-motion series.
+        mar_series: dict[int, list] = {fid: [None] * n for fid in all_fids}
+        for i, s in enumerate(steps):
+            for fid, _box, mar in s["faces"]:
+                mar_series[fid][i] = mar
+        motion = {fid: self._mar_motion(mar_series[fid]) for fid in all_fids}
+
+        # Audio-visual sync: voiced gate + per-face correlation weight.
+        voiced = self._voiced_mask(audio_rms, n)
+        weights = {
+            fid: self._audio_correlation_weight(motion[fid], audio_rms, voiced)
+            for fid in all_fids
+        }
+
+        # Stable, clip-level two-shot decision.
+        group = self._should_group_two_shot(steps, crop_w)
+
+        activity_window = max(2, round(LIP_ACTIVITY_WINDOW_SECONDS * steps_per_second))
+        step_centers: list[dict] = []
+        active: int | None = None
+
+        for i, s in enumerate(steps):
+            frame_idx = s["frame_idx"]
+            faces = s["faces"]
+            if not faces:
+                # Carry forward the last target so the crop never snaps to the empty center.
+                if step_centers:
+                    step_centers.append({**step_centers[-1], "frame_idx": frame_idx})
+                continue
+
+            if group:
+                ranges = [(b[0], b[0] + b[2]) for _, b, _ in faces]
+                cys = [b[1] + b[3] / 2 for _, b, _ in faces]
+                step_centers.append(
+                    {
+                        "frame_idx": frame_idx,
+                        "target_x": int((min(r[0] for r in ranges) + max(r[1] for r in ranges)) / 2),
+                        "target_y": int(sum(cys) / len(cys)),
+                        "speaker_id": GROUP_SPEAKER_ID,
+                    }
+                )
+                continue
+
+            visible = {fid: b for fid, b, _ in faces}
+
+            # Per-step visual activity = std-dev of MAR over the trailing window.
+            activity: dict[int, float] = {}
+            lo = max(0, i - activity_window + 1)
+            for fid in visible:
+                vals = [v for v in mar_series[fid][lo : i + 1] if v is not None]
+                activity[fid] = float(np.std(vals)) if len(vals) >= 2 else 0.0
+
+            # Score = visual activity × audio-correlation weight (floored so a clearly moving
+            # mouth still wins when audio is absent or correlation is weak).
+            score = {fid: activity[fid] * max(weights.get(fid, 1.0), 0.1) for fid in visible}
+
+            if active not in visible:
+                # Current speaker off screen → take the best-scoring visible face.
+                active = max(visible, key=lambda f: score[f])
+            elif voiced[i]:
+                # Only switch during voiced steps (hold through silence/pauses), and only when
+                # the challenger clearly beats the current speaker (hysteresis + activity floor).
+                best = max(visible, key=lambda f: score[f])
+                if (
+                    best != active
+                    and activity[best] >= LIP_ACTIVITY_MIN
+                    and score[best] > score[active] * SPEAKER_SWITCH_MARGIN
+                ):
+                    active = best
+
+            b = visible[active]
+            step_centers.append(
+                {
+                    "frame_idx": frame_idx,
+                    "target_x": int(b[0] + b[2] / 2),
+                    "target_y": int(b[1] + b[3] / 2),
+                    "speaker_id": active,
+                }
+            )
+
+        return step_centers
 
     def _generate_smooth_crops(
         self,
@@ -264,9 +530,17 @@ class FaceTracker:
         width: int,
         height: int,
         content_type: ContentType,
+        audio_rms: list[float] | None = None,
+        detection_interval: int = 1,
     ) -> list[dict]:
-        """Smooth raw face bounding boxes and output dynamic crop boxes frame-by-frame."""
-        import numpy as np
+        """Smooth raw face bounding boxes and output dynamic crop boxes frame-by-frame.
+
+        ``audio_rms`` is an optional per-detection-step loudness envelope (PODCAST only).
+        When present it gates active-speaker switching to voiced moments and weights each
+        face by how well its mouth movement correlates with the audio.  ``detection_interval``
+        is the frame stride between detection steps (used to convert hold/window seconds to
+        a number of steps).
+        """
         if not detections:
             # Fallback to static center crops
             return self._generate_fallback_crops(
@@ -276,8 +550,6 @@ class FaceTracker:
         # Target crop dimensions depend on content type.
         # Facecam crop is pre-shaped to the destination panel aspect so the downstream
         # scale (1080x960 for 2-stack, 1080x640 for collab) adds zero distortion.
-        from src.core.constants import STACK2_PANEL_ASPECT, STACK3_PANEL_ASPECT
-
         if content_type == ContentType.PODCAST:
             # 9:16 full-height vertical pillar
             crop_w = int(height * (9.0 / 16.0))
@@ -300,111 +572,16 @@ class FaceTracker:
         if crop_h % 2 != 0:
             crop_h -= 1
 
-        # We will compute the target face center for each step frame
-        step_centers = []
+        # Detection steps occur every ``detection_interval`` frames → convert seconds to steps.
+        steps_per_second = fps / max(1, detection_interval)
 
-        # For PODCAST mode, we also track speaker activity when 2+ faces are present.
-        # EMA of per-face lip distance — responsive from frame 1, no warm-up window.
-        active_speaker_idx = 0
-        speaker_lip_ema: dict[int, float] = {}
-        _LIP_EMA_ALPHA = 0.35  # higher = faster reaction to new lip movement
-
-        # We need to map face bounding boxes to consistent speaker IDs
-        face_ids: list[tuple[float, float]] = []  # list of average x,y centers
-
-        for step in detections:
-            frame_idx = step["frame_idx"]
-            faces = step["faces"]
-
-            if not faces:
-                # Keep previous center if none found
-                step_centers.append(
-                    {
-                        "frame_idx": frame_idx,
-                        "target_x": width // 2,
-                        "target_y": height // 2,
-                        "speaker_id": -1,
-                    }
-                )
-                continue
-
-            # Map faces to consistent IDs
-            mapped_faces = []
-            for face in faces:
-                box = face["box"]
-                face_center = (box[0] + box[2] / 2, box[1] + box[3] / 2)
-
-                # Find matching face ID
-                face_id = -1
-                for fid, pos in enumerate(face_ids):
-                    dist = np.sqrt(
-                        (face_center[0] - pos[0]) ** 2 + (face_center[1] - pos[1]) ** 2
-                    )
-                    if dist < 0.12 * width:
-                        face_id = fid
-                        # Update rolling position
-                        face_ids[fid] = (
-                            0.8 * pos[0] + 0.2 * face_center[0],
-                            0.8 * pos[1] + 0.2 * face_center[1],
-                        )
-                        break
-
-                if face_id == -1:
-                    face_id = len(face_ids)
-                    face_ids.append(face_center)
-
-                mapped_faces.append((face_id, face))
-
-            # Determine who is speaking in PODCAST mode (2+ faces: follow active speaker)
-            if content_type == ContentType.PODCAST:
-                # Update per-face EMA of lip distance
-                visible_fids = set()
-                for fid, face in mapped_faces:
-                    visible_fids.add(fid)
-                    lip_dist = face.get("lip_distance", 0.0)
-                    if fid not in speaker_lip_ema:
-                        speaker_lip_ema[fid] = lip_dist
-                    else:
-                        speaker_lip_ema[fid] = (
-                            _LIP_EMA_ALPHA * lip_dist
-                            + (1 - _LIP_EMA_ALPHA) * speaker_lip_ema[fid]
-                        )
-
-                # Active speaker = highest current EMA among visible faces
-                max_activity = -1.0
-                for fid, ema_val in speaker_lip_ema.items():
-                    if fid in visible_fids and ema_val > max_activity:
-                        max_activity = ema_val
-                        active_speaker_idx = fid
-
-                # Find the active speaker face in current frame
-                target_face = None
-                for fid, face in mapped_faces:
-                    if fid == active_speaker_idx:
-                        target_face = face
-                        break
-
-                # If active speaker not visible in this frame, use first face
-                if not target_face and mapped_faces:
-                    target_face = mapped_faces[0][1]
-            else:
-                # For non-interview, just track the first face (usually the only streamer/host)
-                target_face = mapped_faces[0][1]
-
-            if target_face:
-                box = target_face["box"]
-                fx = box[0] + box[2] / 2
-                fy = box[1] + box[3] / 2
-                step_centers.append(
-                    {
-                        "frame_idx": frame_idx,
-                        "target_x": int(fx),
-                        "target_y": int(fy),
-                        "speaker_id": active_speaker_idx
-                        if content_type == ContentType.PODCAST
-                        else 0,
-                    }
-                )
+        # We compute the target face center for each detection step.
+        if content_type == ContentType.PODCAST:
+            step_centers = self._podcast_step_centers(
+                detections, width, height, crop_w, audio_rms or [], steps_per_second
+            )
+        else:
+            step_centers = self._single_face_step_centers(detections, width)
 
         # ── Static-cut crop: no camera pan, no EMA glide ─────────────────────────────────
         # Build committed speaker segments with debounce:
@@ -414,13 +591,14 @@ class FaceTracker:
         #     a new speaker is a hard frame cut — zero viewer dizziness.
         # For non-PODCAST (single face tracked) the step_centers list all share speaker_id 0
         # → one segment → fully static center crop.
-        import numpy as np
-
-        hold_steps = max(1, int(SPEAKER_HOLD_SECONDS * fps / max(1, int(fps / 5))))
+        hold_steps = max(1, int(SPEAKER_HOLD_SECONDS * steps_per_second))
+        # Minimum number of detection steps before a subject switch is allowed.
+        # Prevents dizzy rapid alternation even when the per-step speaker signal is noisy.
+        min_shot_steps = max(1, int(MIN_SHOT_SECONDS * steps_per_second))
 
         # --- Phase 1: debounced segment boundaries ----------------------------------------
-        # Each entry: {"speaker_id", "frame_idx", "target_x", "target_y"}
-        segments: list[dict] = []  # {"speaker_id", "start_f", "end_f", "cx", "cy"}
+        # Each segment: {"speaker_id", "start_f", "end_f", "cx", "cy"}
+        segments: list[dict] = []
 
         if not step_centers:
             # No detections at all → static center fallback (handled by caller).
@@ -429,13 +607,28 @@ class FaceTracker:
         committed_sid = step_centers[0]["speaker_id"]
         pending_sid = committed_sid
         pending_count = 0
+        committed_steps = 0  # steps on the current committed subject (enforces MIN_SHOT_SECONDS)
         seg_xs: list[float] = []
         seg_ys: list[float] = []
         seg_start = start_frame
+        # Fallback center from the previous closed segment — used when a new segment has no
+        # accumulated coords (avoids snapping to frame center / empty table).
+        last_seg_cx: float | None = None
+        last_seg_cy: float | None = None
 
-        def _close_segment(sid: int, xs: list, ys: list, sf: int, ef: int) -> dict:
-            cx = float(np.median(xs)) if xs else width / 2.0
-            cy = float(np.median(ys)) if ys else height / 2.0
+        def _close_segment(
+            sid: int,
+            xs: list,
+            ys: list,
+            sf: int,
+            ef: int,
+            fallback_cx: float | None = None,
+            fallback_cy: float | None = None,
+        ) -> dict:
+            default_cx = fallback_cx if fallback_cx is not None else width / 2.0
+            default_cy = fallback_cy if fallback_cy is not None else height / 2.0
+            cx = float(np.median(xs)) if xs else default_cx
+            cy = float(np.median(ys)) if ys else default_cy
             # Clamp center so the crop box stays inside the frame.
             cx = max(crop_w / 2.0, min(cx, width - crop_w / 2.0))
             cy = max(crop_h / 2.0, min(cy, height - crop_h / 2.0))
@@ -446,35 +639,44 @@ class FaceTracker:
             tx = float(sc["target_x"])
             ty = float(sc["target_y"])
             if sid == committed_sid:
-                # Still the committed speaker — accumulate.
+                # Still the committed subject — accumulate and reset pending.
                 pending_sid = sid
                 pending_count = 0
                 seg_xs.append(tx)
                 seg_ys.append(ty)
+                committed_steps += 1
             else:
-                if sid == pending_sid:
-                    pending_count += 1
+                # Different subject detected.  Only allow a switch once the minimum shot
+                # length has been held — this is the main anti-dizziness gate.
+                if committed_steps >= min_shot_steps:
+                    if sid == pending_sid:
+                        pending_count += 1
+                    else:
+                        pending_sid = sid
+                        pending_count = 1
+                    # Commit the switch only after the debounce hold threshold is met.
+                    if pending_count >= hold_steps:
+                        seg = _close_segment(
+                            committed_sid, seg_xs, seg_ys, seg_start,
+                            sc["frame_idx"], last_seg_cx, last_seg_cy
+                        )
+                        segments.append(seg)
+                        last_seg_cx, last_seg_cy = seg["cx"], seg["cy"]
+                        committed_sid = sid
+                        pending_count = 0
+                        committed_steps = 1
+                        seg_start = sc["frame_idx"]
+                        seg_xs = [tx]
+                        seg_ys = [ty]
                 else:
-                    pending_sid = sid
-                    pending_count = 1
-                # Commit the switch only after hold threshold is met.
-                if pending_count >= hold_steps:
-                    # Close current segment up to this step's frame.
-                    segments.append(
-                        _close_segment(committed_sid, seg_xs, seg_ys, seg_start, sc["frame_idx"])
-                    )
-                    committed_sid = sid
-                    pending_count = 0
-                    seg_start = sc["frame_idx"]
-                    seg_xs = [tx]
-                    seg_ys = [ty]
-                # While waiting for hold, still accumulate coords for pending speaker
-                # so if it commits we already have a good median.
+                    # Min-shot not yet satisfied — hold current subject.
+                    committed_steps += 1
 
         # Close the final open segment.
-        segments.append(
-            _close_segment(committed_sid, seg_xs, seg_ys, seg_start, end_frame)
+        seg = _close_segment(
+            committed_sid, seg_xs, seg_ys, seg_start, end_frame, last_seg_cx, last_seg_cy
         )
+        segments.append(seg)
 
         # --- Phase 2: emit one static crop box per frame ----------------------------------
         # Build frame→segment index for O(n) lookup.

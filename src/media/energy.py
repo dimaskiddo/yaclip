@@ -15,6 +15,74 @@ class AudioEnergyAnalyzer:
     def __init__(self) -> None:
         self.config = load_config()
 
+    # Shared PCM sample rate for all RMS analysis (mono, 8 kHz is plenty for loudness).
+    _RMS_SAMPLE_RATE = 8000
+
+    def _stream_rms(
+        self,
+        cmd: list,
+        chunk_duration_sec: float,
+    ) -> List[float]:
+        """Run an FFmpeg command emitting raw s16le mono PCM on stdout and return one
+        RMS value per ``chunk_duration_sec`` chunk.  Shared by ``analyze_audio_energy``
+        (whole-file heatmap) and ``rms_envelope`` (windowed, aligned to detection steps)."""
+        try:
+            process = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+        except Exception as e:
+            logger.error(f"Failed to start audio analysis process: {e}")
+            return []
+
+        chunk_size = int(self._RMS_SAMPLE_RATE * chunk_duration_sec * 2)  # 2 bytes/sample
+        chunk_size = max(2, chunk_size - (chunk_size % 2))  # keep whole 16-bit samples
+
+        rms_values: List[float] = []
+        while True:
+            data = process.stdout.read(chunk_size)
+            if not data:
+                break
+            samples = struct.unpack(f"<{len(data) // 2}h", data)
+            if not samples:
+                break
+            rms_values.append(math.sqrt(sum(s * s for s in samples) / len(samples)))
+
+        process.wait()
+        return rms_values
+
+    def rms_envelope(
+        self,
+        media_path: str,
+        start: float,
+        end: float,
+        step_seconds: float,
+    ) -> List[float]:
+        """Return a per-step RMS loudness envelope for the ``[start, end]`` window of a
+        media file (audio or video container — FFmpeg extracts the audio with ``-vn``).
+
+        Used by the face tracker for audio-visual active-speaker detection: each value
+        aligns to one detection step (``step_seconds = detection_interval / fps``), so the
+        envelope index maps 1:1 to the visual detection index.
+        """
+        if end <= start or step_seconds <= 0:
+            return []
+
+        ffmpeg_cmd = SystemUtils.get_ffmpeg_path()
+        cmd = [
+            ffmpeg_cmd,
+            "-ss", f"{start:.3f}",
+            "-to", f"{end:.3f}",
+            "-i", media_path,
+            "-vn",
+            "-f", "s16le",
+            "-acodec", "pcm_s16le",
+            "-ar", str(self._RMS_SAMPLE_RATE),
+            "-ac", "1",
+            "pipe:1",
+            "-loglevel", "quiet",
+        ]
+        return self._stream_rms(cmd, step_seconds)
+
     def analyze_audio_energy(
         self, audio_path: str, chunk_duration_sec: float = 1.0
     ) -> List[Dict]:
@@ -34,7 +102,7 @@ class AudioEnergyAnalyzer:
             "-acodec",
             "pcm_s16le",
             "-ar",
-            "8000",
+            str(self._RMS_SAMPLE_RATE),
             "-ac",
             "1",
             "pipe:1",
@@ -42,35 +110,12 @@ class AudioEnergyAnalyzer:
             "quiet",
         ]
 
-        try:
-            process = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
-        except Exception as e:
-            logger.error(f"Failed to start audio analysis process: {e}")
-            return []
+        rms_values = self._stream_rms(cmd, chunk_duration_sec)
 
-        sample_rate = 8000
-        chunk_size = int(sample_rate * chunk_duration_sec * 2)  # 2 bytes per sample
-
-        energies = []
-        timestamp = 0.0
-
-        while True:
-            data = process.stdout.read(chunk_size)
-            if not data:
-                break
-
-            samples = struct.unpack(f"<{len(data) // 2}h", data)
-            if not samples:
-                break
-
-            # Compute RMS
-            rms = math.sqrt(sum(s * s for s in samples) / len(samples))
-            energies.append({"time": timestamp, "rms": rms})
-            timestamp += chunk_duration_sec
-
-        process.wait()
+        energies = [
+            {"time": i * chunk_duration_sec, "rms": rms}
+            for i, rms in enumerate(rms_values)
+        ]
 
         if not energies:
             logger.warning("No audio energy data extracted.")

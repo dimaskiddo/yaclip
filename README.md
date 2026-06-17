@@ -83,7 +83,7 @@ YaClip automatically detects what kind of video you're working with and adjusts 
 
 | Video Type | What it looks like | Vertical layout |
 |---|---|---|
-| **Podcast / Panel** | One speaker OR multiple people taking turns talking (no gameplay) | Full-screen vertical; when 2+ faces, camera **cuts** to whoever is speaking — static crop, no pan, no glide. All simultaneously-visible people are counted and tracked. |
+| **Podcast / Panel** | One speaker OR multiple people taking turns talking (no gameplay) | Full-screen vertical; when 2+ faces: **frames both together** if they sit close enough (no cuts); if too far apart, **cuts** to whoever is actually speaking — matched against the audio so a smiling/reacting person isn't framed by mistake (minimum 2 s hold, no pan, no glide). All simultaneously-visible people counted and tracked. |
 | **Just Chatting** | Single streamer, no gameplay, may have donation alerts | Webcam on top, stream content on bottom |
 | **Gaming — Solo** | Gameplay confirmed on screen, one webcam in corner | Webcam on top, **static gameplay crop** on bottom (centred on the action, no pan) |
 | **Gaming — Collab** | Gameplay confirmed, two or more webcams | Webcam 1 on top, **static gameplay crop** in centre, Webcam 2 on bottom |

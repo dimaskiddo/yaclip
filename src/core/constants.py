@@ -104,13 +104,48 @@ FACE_LANDMARKER_MAX_FACES: int = 8
 # Safety margin added to the YOLO person count before sizing the FaceLandmarker.
 # If YOLO sees 4 people, capacity is set to 6 — headroom for partially-visible faces.
 FACE_COUNT_MARGIN: int = 2
+
 # Minimum consecutive detection steps a new speaker must hold before the crop commits to
 # them (debounce).  Prevents a single mis-detected frame from triggering a cut.
-SPEAKER_HOLD_SECONDS: float = 1.0
+SPEAKER_HOLD_SECONDS: float = 2.0
 # Minimum YOLO box confidence for counting simultaneous persons in a single frame.
 # Boxes below this threshold are excluded from the face_count used to size num_faces.
 # Does NOT affect facecam-picking or gameplay exclusion (those use persistent clusters).
 PERSON_COUNT_CONF_MIN: float = 0.5
+
+# PODCAST detection sampling rate (frames per second of video sampled for face/lip tracking).
+# Higher than the default 5 fps because active-speaker detection needs to resolve syllable-rate
+# (~3-5 Hz) mouth oscillation — 10 fps clears the Nyquist limit.  Non-PODCAST stays at 5 fps.
+PODCAST_DETECTION_FPS: int = 10
+
+# PODCAST two-shot group framing (decided ONCE per clip from the typical two-face geometry).
+# Group both faces into one static crop only when BOTH hold:
+#   - total face span ≤ GROUP_FRAMING_FIT_FACTOR × crop_w (both faces physically fit), AND
+#   - inter-face gap (right edge of left face → left edge of right face) ≤ GROUP_MAX_GAP_FACTOR
+#     × crop_w (faces are adjacent, so the crop center lands ON the faces — never the empty
+#     table between far-apart people).
+GROUP_FRAMING_FIT_FACTOR: float = 0.9
+GROUP_MAX_GAP_FACTOR: float = 0.25
+# Stable pseudo speaker-id for a committed two-shot (group) segment.  The segment builder
+# treats this id as a single stable subject so it does not cut within the two-shot.
+GROUP_SPEAKER_ID: int = -2
+
+# PODCAST active-speaker detection via Mouth-Aspect-Ratio (MAR) movement + audio-visual sync.
+# MAR = mean vertical inner-lip opening / mouth width (a smile widens but does not open → low MAR;
+# speech opens vertically → high, oscillating MAR).  Activity = std-dev of MAR over this window.
+LIP_ACTIVITY_WINDOW_SECONDS: float = 0.8
+# Absolute floor on MAR activity below which a face is treated as silent (not a switch candidate).
+LIP_ACTIVITY_MIN: float = 0.003
+# Hysteresis ratio: a challenger face must have activity > current speaker's × this factor
+# before the crop switches to them.  Suppresses jitter when two faces have similar activity.
+SPEAKER_SWITCH_MARGIN: float = 1.5
+# Minimum time (seconds) the crop must stay on a subject (speaker or group) before any
+# switch is allowed.  The primary anti-dizziness lever for the single-speaker cut path.
+MIN_SHOT_SECONDS: float = 2.0
+# Audio-visual sync: a detection step counts as "voiced" when its audio RMS ≥ this factor ×
+# the clip's median RMS.  During unvoiced steps (silence/pauses) the active speaker is held —
+# no switching on a laugh or a pause.  Below the median scales the gate to the clip's loudness.
+VOICE_ACTIVITY_FLOOR_FACTOR: float = 0.5
 
 # Mode C 3-stack panels (GAMING_COLLAB) — facecam / gameplay / collab, each 1080x640.
 STACK3_PANEL_W: int = 1080
