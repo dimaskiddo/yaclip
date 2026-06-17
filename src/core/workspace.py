@@ -19,7 +19,8 @@ MODELS_DIR = WORKSPACE_DIR / "models"
 HF_DIR = MODELS_DIR / "hf"
 AUDIOS_DIR = WORKSPACE_DIR / "audios"
 VIDEOS_DIR = WORKSPACE_DIR / "videos"
-SUBTITLES_DIR = WORKSPACE_DIR / "subtitles"
+SUBTITLES_DIR = WORKSPACE_DIR / "subtitles"  # .ass subtitle files only
+DATA_DIR = WORKSPACE_DIR / "data"            # STT transcripts + AI/cache JSON
 CLIPS_DIR = WORKSPACE_DIR / "clips"
 LOGS_DIR = WORKSPACE_DIR / "logs"
 TMP_DIR = WORKSPACE_DIR / "tmp"
@@ -40,6 +41,7 @@ def ensure_workspace_integrity() -> None:
             VIDEOS_DIR,
             AUDIOS_DIR,
             SUBTITLES_DIR,
+            DATA_DIR,
             TMP_DIR,
             CLIPS_DIR,
             LOGS_DIR,
@@ -168,6 +170,7 @@ def run_purge_cycle(force: bool = False, specific_target: str | None = None) -> 
         ("videos", retention.videos, False),
         ("audios", retention.audios, False),
         ("subtitles", retention.subtitles, False),
+        ("data", retention.data, False),
         ("tmp", retention.tmp, True),
         ("clips", -1, False),  # -1 means never auto-delete unless forced
         ("logs", -1, False),   # Handled by loguru's own retention policy

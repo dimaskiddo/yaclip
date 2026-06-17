@@ -16,16 +16,16 @@ from src.vision.face_tracker import FaceTracker
 from src.vision.layout_builder import LayoutBuilder
 from src.vision.overlay_detector import OverlayDetector
 from src.vision.visual_analyzer import VisualAnalyzer
-from src.core.workspace import AUDIOS_DIR, TMP_DIR
+from src.core.workspace import AUDIOS_DIR, SUBTITLES_DIR, TMP_DIR
 
 
 class ClipRenderer:
     """Orchestrates region analysis, subtitle transcription, layout, and FFmpeg rendering.
 
     Runs as three memory-safe passes so heavy models never coexist in RAM:
-      1. Regions  — YOLOv8n VisualAnalyzer per clip, then released.
+      1. Regions   — YOLOv8n VisualAnalyzer per clip, then released.
       2. Subtitles — faster-whisper word-level transcription per clip, then released.
-      3. Render   — layout + .ass + FFmpeg encode per clip.
+      3. Render    — layout + .ass + FFmpeg encode per clip.
     """
 
     def __init__(self) -> None:
@@ -94,7 +94,7 @@ class ClipRenderer:
             video_path, clip_proposals, clip_types, analyses, segments_per_clip, output_dir
         )
 
-    # ------------------------------------------------------------- content type
+    # ------------------------------------------------------------- Content Type
 
     def _resolve_base_content_type(self, video_path: Path) -> ContentType:
         override = self.config.video_processing.content_type_override
@@ -127,21 +127,28 @@ class ClipRenderer:
         """
         if not self.config.video_processing.preserve_donation_overlays:
             return clip_types
+
+        # Build exclusion set from config (skip unknown names defensively).
+        exclude_types: set[ContentType] = set()
+        for name in self.config.video_processing.donation_overlay_exclude_types:
+            try:
+                exclude_types.add(ContentType(name))
+            except ValueError:
+                logger.warning(f"donation_overlay_exclude_types: unknown content type '{name}' — skipped.")
+
         out = list(clip_types)
         for idx, analysis in enumerate(analyses):
             if "content_type" in clips[idx]:
                 continue
-            # Collab videos always keep the 3-stack — the donation popup does not replace a panel.
-            if out[idx] == ContentType.GAMING_COLLAB:
+            # Skip types excluded from donation routing (configurable; default: PODCAST, GAMING_COLLAB).
+            if out[idx] in exclude_types:
                 continue
             if analysis.get("mediashare_present"):
                 out[idx] = ContentType.DONATION_OVERLAY
-                logger.info(
-                    f"Clip {idx + 1}: donation overlay detected → DONATION_OVERLAY layout."
-                )
+                logger.info(f"Clip {idx + 1}: donation overlay detected — switching to donation layout.")
         return out
 
-    # ----------------------------------------------------------------- pass 1
+    # ----------------------------------------------------------------- Pass 1
 
     def _analyze_regions(
         self, video_path: Path, clips: list[dict], clip_types: list[ContentType]
@@ -150,7 +157,7 @@ class ClipRenderer:
         from src.core.constants import STACK2_PANEL_ASPECT, STACK3_PANEL_ASPECT
         from src.ai.stt_local import load_mediashare_cache
 
-        # Gameplay follow-motion is opt-in; default is a static centred zoom-out (no track).
+        # Use the static centred crop (_motion_region) by default track_gameplay=False
         follow = self.config.video_processing.region_detection.gameplay_follow_motion
         analyzer = VisualAnalyzer()
         analyses: list[dict] = []
@@ -180,10 +187,8 @@ class ClipRenderer:
                     ms_cache, clip["start_time"], clip["end_time"]
                 )
                 if mediashare_cached is not None:
-                    logger.info(
-                        f"Clip {idx + 1}: reusing saved donation scan result "
-                        f"(mediashare_present={mediashare_cached[0]}); skipping rescan."
-                    )
+                    found = "overlay found" if mediashare_cached[0] else "no overlay"
+                    logger.info(f"Clip {idx + 1}: reusing earlier donation scan ({found}).")
 
                 analyses.append(
                     analyzer.analyze_window(
@@ -227,7 +232,7 @@ class ClipRenderer:
             box = tuple(box)  # JSON deserialises as list; callers expect tuple
         return (bool(best.get("mediashare_present", False)), box)
 
-    # ----------------------------------------------------------------- pass 2
+    # ----------------------------------------------------------------- Pass 2
 
     def _transcribe_subtitles(
         self, video_path: Path, clips: list[dict], clip_types: list[ContentType]
@@ -379,7 +384,7 @@ class ClipRenderer:
             logger.warning(f"Could not extract audio track: {e}")
         return audio_path if audio_path.exists() else None
 
-    # ----------------------------------------------------------------- pass 3
+    # ----------------------------------------------------------------- Pass 3
 
     def _render_pass(
         self,
@@ -409,11 +414,17 @@ class ClipRenderer:
             )
 
             try:
-                # Mode A needs smooth face-pan crops; Mode B/C use static analyzer regions.
+                # Mode A needs face-landmark crops (static cut to active speaker).
+                # Pass the max YOLO person count across all clips so the FaceLandmarker
+                # capacity (num_faces) is sized once for the whole video — no pre-scan.
                 face_data: list[dict] = []
-                if content_type in (ContentType.PODCAST, ContentType.INTERVIEW):
+                if content_type == ContentType.PODCAST:
+                    video_person_count = max(
+                        (a.get("face_count", 0) for a in analyses), default=0
+                    )
                     face_data = self.tracker.track_clip(
-                        video_path, start_t, end_t, content_type
+                        video_path, start_t, end_t, content_type,
+                        person_count=video_person_count,
                     )
 
                 # overlay_data feeds layout_builder._mediashare_box as a colour-box fallback.
@@ -438,7 +449,7 @@ class ClipRenderer:
                     content_type, analyses[idx], face_data, overlay_data
                 )
 
-                ass_path = TMP_DIR / f"subs_{safe_title}_{start_t:.1f}.ass"
+                ass_path = SUBTITLES_DIR / f"subs_{safe_title}_{start_t:.1f}.ass"
                 has_subs = self.subtitle_gen.generate_ass(
                     segments_per_clip[idx], ass_path, clip_start=start_t
                 )

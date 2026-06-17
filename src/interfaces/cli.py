@@ -24,6 +24,7 @@ from src.core.utils import SystemUtils
 from src.core.workspace import (
     AUDIOS_DIR,
     CLIPS_DIR,
+    DATA_DIR,
     SUBTITLES_DIR,
     TMP_DIR,
     VIDEOS_DIR,
@@ -99,8 +100,8 @@ def _run_pipeline(url: str, force: bool, debug: bool) -> None:
         )
 
         video_id = Path(audio_path).stem
-        SUBTITLES_DIR.mkdir(parents=True, exist_ok=True)
-        out_json = SUBTITLES_DIR / f"{video_id}.json"
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        out_json = DATA_DIR / f"{video_id}.json"
         out_json.write_text(json.dumps(clips, indent=2), encoding="utf-8")
         logger.info(f"Saved AI highlight results to {SystemUtils.display_path(out_json)}")
 
@@ -193,6 +194,7 @@ def cache_status() -> None:
         "videos": VIDEOS_DIR,
         "audios": AUDIOS_DIR,
         "subtitles": SUBTITLES_DIR,
+        "data": DATA_DIR,
         "clips": CLIPS_DIR,
         "tmp": TMP_DIR,
     }

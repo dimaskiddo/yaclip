@@ -9,7 +9,12 @@ from pathlib import Path
 from loguru import logger
 
 from src.core.config import load_config
-from src.core.constants import ContentType
+from src.core.constants import (
+    ContentType,
+    COCO_CLASS_PERSON,
+    GAMEPLAY_MIN_NONPERSON_MOTION,
+    GAMEPLAY_MIN_OPEN_AREA_FRAC,
+)
 from src.core.workspace import MODELS_DIR
 
 
@@ -61,10 +66,15 @@ class ContentTypeDetector:
             f"Game HUD scan — score: {hud_score:.4f}, detected: {has_hud}, gaming category hint: {gaming_hint}"
         )
 
-        # 4. Count persistent face regions
+        # 4. Count persons.
+        # max_simultaneous = highest number of people visible in any one sampled frame — the honest
+        # "how many are on screen at once"; used for the user-facing log.
+        # num_faces (persistent clusters) is kept for the SOLO/COLLAB/PODCAST classification gate
+        # only; cross-frame clustering rejects transient game characters via persistence + size guards.
         faces_per_frame = self._detect_faces_across_frames(frames)
+        max_simultaneous = max((len(ff) for ff in faces_per_frame), default=0)
         num_faces = self._count_persistent_faces(faces_per_frame, w, h)
-        logger.info(f"Detected {num_faces} persistent face(s) in video.")
+        logger.info(f"Person detection: {max_simultaneous} person(s) found in video.")
 
         # 5. Check for donation overlays (colour heuristic + YOLO screen-inset signal)
         has_donation_alerts = self._check_donation_overlays(frames)
@@ -76,42 +86,85 @@ class ContentTypeDetector:
             has_donation_alerts = has_donation_alerts or self._region_mediashare_signal(
                 video_path, sampled[0][0], sampled[-1][0]
             )
-        logger.info(f"Donation alert detection result: {has_donation_alerts}")
+        if has_donation_alerts:
+            logger.info("Donation alerts detected in video.")
+        else:
+            logger.info("No donation alerts detected in video.")
 
         # 6. Apply Decision Tree
+        #
+        # Gaming classification requires CONFIRMED gameplay (an animated non-person screen region).
+        # A gaming HUD score or YouTube "Gaming" category raises suspicion but is not proof alone —
+        # podcast studio sets can produce false HUD readings.  We use VisualAnalyzer to measure:
+        #   • open_area_frac   — fraction of the frame NOT occupied by person boxes (small → people
+        #                        fill the frame, leaving no room for a game screen)
+        #   • non_person_motion — mean frame-diff outside person boxes (static borders → not a game)
+        # Both conditions must hold for gameplay_present to be True.  The HUD / category signals
+        # corroborate but are not sufficient on their own.
         confidence = 0.8  # Base confidence
         detected_type = ContentType.PODCAST
 
-        # A visible gaming HUD OR a "Gaming" category (gaming_hint) routes to the gaming branch — the
-        # metadata category is a strong, reliable signal, so a sub-threshold HUD no longer drops a
-        # genuine gaming stream to PODCAST. Face count then splits SOLO vs COLLAB.
-        is_gaming = has_hud or gaming_hint
-        if is_gaming:
-            # MediaPipe misses small corner webcams, so confirm SOLO vs COLLAB with the YOLO facecam
-            # detector (robust for corner cams). Take the max so either signal can establish a collab.
-            cam_count = num_faces
-            if self.config.video_processing.region_detection.enabled:
-                try:
-                    from src.vision.visual_analyzer import VisualAnalyzer
+        gameplay_present = False
+        if self.config.video_processing.region_detection.enabled:
+            try:
+                from src.vision.visual_analyzer import VisualAnalyzer
 
-                    analyzer = VisualAnalyzer()
-                    try:
-                        cam_count = max(cam_count, len(analyzer.detect_facecams(video_path)))
-                    finally:
-                        analyzer.release()
-                except Exception as e:
-                    logger.warning(f"Webcam count via object detection failed: {e}")
-            logger.info(f"Total webcams detected for gaming content: {cam_count}")
-            detected_type = (
-                ContentType.GAMING_COLLAB if cam_count >= 2 else ContentType.GAMING_SOLO
-            )
-        else:
-            if num_faces >= 2:
-                detected_type = ContentType.INTERVIEW
-            elif has_donation_alerts:
-                detected_type = ContentType.JUST_CHAT
+                analyzer = VisualAnalyzer()
+                try:
+                    gp = analyzer.detect_gameplay_presence(video_path)
+                    gameplay_present = (
+                        gp["open_area_frac"] >= GAMEPLAY_MIN_OPEN_AREA_FRAC
+                        and (
+                            gp["non_person_motion"] >= GAMEPLAY_MIN_NONPERSON_MOTION
+                            or gaming_hint
+                            or has_hud
+                        )
+                    )
+                    logger.debug(
+                        f"Gameplay gate — open_area: {gp['open_area_frac']:.2f}, "
+                        f"motion: {gp['non_person_motion']:.2f}, "
+                        f"hud: {has_hud}, hint: {gaming_hint}, confirmed: {gameplay_present}"
+                    )
+                    # While the analyzer is warm, also run the SOLO/COLLAB cam count if needed.
+                    if gameplay_present:
+                        cam_count = num_faces
+                        try:
+                            cam_count = max(
+                                cam_count, len(analyzer.detect_facecams(video_path))
+                            )
+                        except Exception as e:
+                            logger.warning(f"Webcam count via object detection failed: {e}")
+                        logger.info(f"Gaming content: {cam_count} webcam(s) detected — {'collaborative' if cam_count >= 2 else 'solo'} stream.")
+                        detected_type = (
+                            ContentType.GAMING_COLLAB
+                            if cam_count >= 2
+                            else ContentType.GAMING_SOLO
+                        )
+                finally:
+                    analyzer.release()
+            except Exception as e:
+                logger.warning(f"Gameplay presence probe failed: {e}. Assuming no gameplay.")
+                gameplay_present = False
+
+        if not gameplay_present:
+            # Fallback to the HUD / gaming hint alone only when region detection is disabled.
+            if not self.config.video_processing.region_detection.enabled and (
+                has_hud or gaming_hint
+            ):
+                cam_count = num_faces
+                logger.info(f"Region detection disabled — using HUD/gaming hint as fallback signal ({cam_count} webcam(s) found).")
+                detected_type = (
+                    ContentType.GAMING_COLLAB if cam_count >= 2 else ContentType.GAMING_SOLO
+                )
             else:
-                detected_type = ContentType.PODCAST
+                if num_faces >= 2:
+                    # Two or more persistent faces with no gameplay → talking-heads / panel / podcast.
+                    detected_type = ContentType.PODCAST
+                elif has_donation_alerts:
+                    # Single self-talking streamer with donation overlay activity.
+                    detected_type = ContentType.JUST_CHAT
+                else:
+                    detected_type = ContentType.PODCAST
 
         # Check threshold
         threshold = self.config.video_processing.detection_confidence_threshold
@@ -122,7 +175,7 @@ class ContentTypeDetector:
             )
             return ContentType.PODCAST
 
-        logger.info(f"Video type detected: {detected_type}")
+        logger.info(f"Content type detected: {detected_type.value}.")
         return detected_type
 
     def _sample_frames(
@@ -202,44 +255,42 @@ class ContentTypeDetector:
     def _detect_faces_across_frames(
         self, frames: list[np.ndarray]
     ) -> list[list[tuple[float, float, float, float]]]:
-        """Detect face rectangles per frame using MediaPipe FaceDetector Tasks API."""
-        import urllib.request
+        """Detect person regions per frame using YOLOv8.
 
-        import cv2
-        import mediapipe as mp
-        from mediapipe.tasks import python
-        from mediapipe.tasks.python import vision
+        Returns a per-frame list of (x, y, w, h) boxes for all detected persons,
+        consumed by ``_count_persistent_faces``.
+        """
+        from src.core.utils import SystemUtils
 
-        model_path = MODELS_DIR / "face_detector.tflite"
-        if not model_path.exists():
-            model_path.parent.mkdir(parents=True, exist_ok=True)
-            url = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
-            logger.info(f"Downloading MediaPipe FaceDetector model: {url}")
-            urllib.request.urlretrieve(url, str(model_path))
+        cfg = self.config.video_processing.region_detection
+        model_path = MODELS_DIR / cfg.model_name
+        model_path.parent.mkdir(parents=True, exist_ok=True)
 
-        base_options = python.BaseOptions(model_asset_path=str(model_path))
-        options = vision.FaceDetectorOptions(
-            base_options=base_options, running_mode=vision.RunningMode.IMAGE
-        )
+        try:
+            from ultralytics import YOLO
+        except ImportError:
+            logger.warning("Object detection unavailable — person count will default to 1.")
+            return [[] for _ in frames]
 
-        all_faces = []
-        with vision.FaceDetector.create_from_options(options) as detector:
-            for frame in frames:
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-                res = detector.detect(mp_image)
-                faces = []
-                if res.detections:
-                    for det in res.detections:
-                        bbox = det.bounding_box
-                        xmin = max(0, bbox.origin_x)
-                        ymin = max(0, bbox.origin_y)
-                        w = bbox.width
-                        h = bbox.height
-                        faces.append((float(xmin), float(ymin), float(w), float(h)))
-                all_faces.append(faces)
+        target = str(model_path) if model_path.exists() else cfg.model_name
 
-        return all_faces
+        logger.info("Loading object detection model...")
+        model = YOLO(target)
+        device = SystemUtils.resolve_device(cfg.device)
+
+        all_persons = []
+        for frame in frames:
+            results = model.predict(frame, verbose=False, device=device)
+            persons = []
+            for res in results:
+                for box in res.boxes:
+                    if int(box.cls[0]) != COCO_CLASS_PERSON:
+                        continue
+                    x1, y1, x2, y2 = (float(v) for v in box.xyxy[0])
+                    persons.append((max(0.0, x1), max(0.0, y1), x2 - x1, y2 - y1))
+            all_persons.append(persons)
+
+        return all_persons
 
     def _count_persistent_faces(
         self,
@@ -281,7 +332,7 @@ class ContentTypeDetector:
 
         num_sampled_frames = max(1, len(faces_per_frame))
         if not any(faces_per_frame):
-            logger.info("No faces detected in any sampled video frames.")
+            logger.info("No people detected in video samples.")
             return 0
 
         # Summarise each cluster: persistence ratio, average box, area.
@@ -331,9 +382,9 @@ class ContentTypeDetector:
         """True if the saved YouTube metadata marks this video as Gaming content."""
         import json
 
-        from src.core.workspace import SUBTITLES_DIR
+        from src.core.workspace import DATA_DIR
 
-        meta_path = SUBTITLES_DIR / f"{video_path.stem}_metadata.json"
+        meta_path = DATA_DIR / f"{video_path.stem}_metadata.json"
         if not meta_path.exists():
             return False
         try:

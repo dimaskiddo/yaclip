@@ -4,7 +4,7 @@
 
 YaClip is a modular Python 3 application that downloads long-form YouTube videos, automatically detects the most engaging moments, and renders them as 9:16 vertical clips for **YouTube Shorts, Instagram Reels, and TikTok**. It runs entirely within a virtual environment with a self-contained portable asset cache, optimized for cross-platform portability (Windows, macOS, Linux, WSL) and low-to-medium spec hardware.
 
-The application understands five video-level **content types** — `PODCAST`, `INTERVIEW`, `JUST_CHAT`, `GAMING_SOLO`, `GAMING_COLLAB` — plus a sixth **per-clip** type, `DONATION_OVERLAY`, to which any clip containing a mediashare/donation popup is promoted at render time. Each applies a unique layout and face-tracking strategy. Content type is detected automatically from video frames and audio cues; the user can override detection in `config.yaml` or from the WebUI review panel.
+The application understands four video-level **content types** — `PODCAST`, `JUST_CHAT`, `GAMING_SOLO`, `GAMING_COLLAB` — plus a fifth **per-clip** type, `DONATION_OVERLAY`, to which any clip containing a mediashare/donation popup is promoted at render time. Each applies a unique layout and face-tracking strategy. Content type is detected automatically from video frames and audio cues; the user can override detection in `config.yaml` or from the WebUI review panel.
 
 ---
 
@@ -105,14 +105,15 @@ All runtime assets live inside `./workspace/` within the project root. The OS te
 | `models/hf/` | HuggingFace Hub cache (`HF_HOME` env var set here; all HF downloads land here automatically) |
 | `videos/` | Raw yt-dlp downloads (`{video_id}.mp4`) |
 | `audios/` | Extracted audio tracks (`{video_id}.aac`) |
-| `subtitles/` | Full-video STT transcripts (`.txt`), AI clip results (`.json`), per-candidate word cache (`{id}_words.json`, reused for subtitles), heatmap data (`.json`) — 3-day retention |
-| `tmp/` | Scratch space: audio slices (`{video_id}_slice_N.aac`), slice STT transcripts for debugging (`.txt`), WSL cookie copies, ASS subtitle files — 1-day retention |
+| `subtitles/` | `.ass` subtitle files for rendered clips — 3-day retention |
+| `data/` | STT transcripts (`.txt`), AI clip results (`.json`), per-candidate word cache (`{id}_words.json`), mediashare scan cache, heatmap data, video metadata — 3-day retention |
+| `tmp/` | Scratch space: audio slices (`{video_id}_slice_N.aac`), slice STT transcripts for debugging (`.txt`), WSL cookie copies — 1-day retention |
 
 **Workspace Integrity** (`src/core/workspace.py`): On every boot, checks each directory and auto-downloads any missing binary (FFmpeg via `static-ffmpeg`), Bun JS runtime, or subtitle font. Injects `./workspace/bin` into `PATH` and sets `HF_HOME=./workspace/models/hf/` so all HuggingFace Hub model downloads are routed to the workspace automatically — no `cache_dir` parameter is needed.
 
 **HuggingFace Model Downloads** (`src/core/utils.py → AIUtils.resolve_llm_model_path`): GGUF models are resolved via `hf_hub_download(repo_id, filename)`. The `HF_HOME` env var ensures all downloads land in `./workspace/models/hf/`. No system-level cache directories are used.
 
-**Sequential Purge**: A cleanup check runs sequentially at startup for CLI commands like `test-pipeline` and `serve`. Purgeable directories: `videos/` (3d), `audios/` (3d), `subtitles/` (3d), `tmp/` (1d), `clips/` (-1, never auto-purge). Protected: `bin/`, `fonts/`, `models/`.
+**Sequential Purge**: A cleanup check runs sequentially at startup for CLI commands like `test-pipeline` and `serve`. Purgeable directories: `videos/` (3d), `audios/` (3d), `subtitles/` (3d), `data/` (3d), `tmp/` (1d), `clips/` (-1, never auto-purge). Protected: `bin/`, `fonts/`, `models/`.
 
 ---
 
@@ -124,10 +125,11 @@ This is the core intelligence layer. It runs once per video, immediately after d
 
 | Step | Signal | Result |
 |---|---|---|
-| 1. Gaming (HUD **or** "Gaming" category) | Persistent HUD match **or** the saved `gaming_hint` (YouTube Gaming category) — the category alone routes to gaming so a small/sub-threshold HUD doesn't drop the stream to PODCAST | `GAMING_SOLO` or `GAMING_COLLAB` by persistent face count (≥2 ⇒ collab) |
-| 2. Multi-face analysis | Two+ distinct, spatially-separated, persistent face regions with alternating speech | `INTERVIEW` |
-| 3. Donation overlay sampling | Single face, no HUD, but donation alert signatures detected (Trakteer.ID, MediaShare) | `JUST_CHAT` |
-| 4. Default fallback | No signals matched above threshold | `PODCAST` |
+| 1. Config override | `content_type_override ≠ "auto"` | Configured value (skips all detection) |
+| 2. Gameplay gate | `open_area_frac ≥ 0.45` (room for a game screen) **AND** (`non_person_motion ≥ 4.0` **OR** HUD score high **OR** "Gaming" YouTube category) — a podcast studio set may produce a false HUD but fails the open-area guard | `GAMING_SOLO` or `GAMING_COLLAB` by YOLO facecam count (≥2 ⇒ COLLAB) |
+| 3. Multi-face analysis | Two+ distinct, persistent, spatially-separated face regions (no gameplay confirmed) | `PODCAST` (active-speaker tracking enabled) |
+| 4. Donation overlay sampling | Single face, no gameplay, donation alert signatures detected (Trakteer.ID, MediaShare) | `JUST_CHAT` |
+| 5. Default fallback | No signals matched above threshold | `PODCAST` |
 
 A confidence score is produced at each step. If all scores fall below `detection_confidence_threshold` (default: 0.6), the engine falls back to `PODCAST` and logs a warning. The detected `ContentType` is shown in the WebUI review panel so the user can override it before rendering.
 
@@ -135,14 +137,13 @@ A confidence score is produced at each step. If all scores fall below `detection
 
 | ContentType | Layout Mode | Face Switching | Donation Handling |
 |---|---|---|---|
-| `PODCAST` | Mode A — Single Vertical | No | promoted per-clip |
-| `INTERVIEW` | Mode A — Single Vertical + Speaker Switch | Yes | promoted per-clip |
+| `PODCAST` | Mode A — Single Vertical | Yes — active speaker when 2+ faces | **excluded by default** (pre-recorded; configurable) |
 | `JUST_CHAT` | Mode B — Stacked Split-Screen | No | promoted per-clip |
 | `GAMING_SOLO` | Mode B — Stacked Split-Screen | No | promoted per-clip |
-| `GAMING_COLLAB` | Mode C — Multi-Face Collab Stack | No | **stays 3-stack** (donation promotion skipped) |
+| `GAMING_COLLAB` | Mode C — Multi-Face Collab Stack | No | **excluded by default** (popup must not displace a panel; configurable) |
 | `DONATION_OVERLAY` | Mode B geometry — facecam top + popup bottom | No | **this is the donation layout** |
 
-**Per-clip donation promotion** (`renderer.ClipRenderer._apply_donation_override`): after per-clip region analysis (Pass 1), any clip with `mediashare_present` is promoted from its base type to `DONATION_OVERLAY` and routed to a facecam + popup 2-stack — regardless of the video's base type. Gated by `preserve_donation_overlays`; an explicit per-clip `content_type` (review edit) is never overridden. This makes `DONATION_OVERLAY` the single, consistent home for donation compositing — Modes A/B/C no longer embed donations.
+**Per-clip donation promotion** (`renderer.ClipRenderer._apply_donation_override`): after per-clip region analysis (Pass 1), any clip with `mediashare_present` is promoted from its base type to `DONATION_OVERLAY` and routed to a facecam + popup 2-stack. Gated by `preserve_donation_overlays`; an explicit per-clip `content_type` (review edit) is never overridden. Types listed in `video_processing.donation_overlay_exclude_types` (default: `["PODCAST", "GAMING_COLLAB"]`) are never promoted — `PODCAST` because it is pre-recorded content with no live donation widgets, `GAMING_COLLAB` because the popup must not replace one of the three collab panels. This list is user-configurable. `DONATION_OVERLAY` is the single, consistent home for donation compositing — Modes A/B/C no longer embed donations.
 
 ---
 
@@ -172,7 +173,7 @@ STT and LLM are configured independently via `ai_pipeline.stt` and `ai_pipeline.
 
 **Memory safety (both local):** STT and LLM models never coexist in RAM. Strict sequential: `Load STT → Transcribe → del → gc.collect() → Load LLM → Analyze → del → gc.collect()`.
 
-**Content-Aware Prompting** (`src/ai/prompts.py`): Every LLM call receives a system prompt injected with `ContentType`, `target_clips`, and `target_duration`. Content-specific criteria are embedded: punchy complete thoughts for Podcast/Interview, reaction moments for Just Chat, clutch plays and donation reactions for Gaming. Transcript lines carry `[start - end]` timestamps, and the prompt **anchors clip boundaries to whole lines** (start/end = first/last line edges, no mid-sentence cuts) and **ranks candidates by a HOOK/PAYOFF/STANDALONE/ENERGY rubric**. See AGENTS.md §10 for the full prompt template.
+**Content-Aware Prompting** (`src/ai/prompts.py`): Every LLM call receives a system prompt injected with `ContentType`, `target_clips`, and `target_duration`. Content-specific criteria are embedded: punchy complete thoughts for Podcast, reaction moments for Just Chat, clutch plays and donation reactions for Gaming. Transcript lines carry `[start - end]` timestamps, and the prompt **anchors clip boundaries to whole lines** (start/end = first/last line edges, no mid-sentence cuts) and **ranks candidates by a HOOK/PAYOFF/STANDALONE/ENERGY rubric**. See AGENTS.md §10 for the full prompt template.
 
 **Pre-Slicing Optimization & Candidate Pre-Ranking** (key performance innovation):
 1. Extract YouTube "Most Replayed" heatmap saved by yt-dlp during download.
@@ -190,7 +191,7 @@ STT and LLM are configured independently via `ai_pipeline.stt` and `ai_pipeline.
 
 **Auto Mode** (`clip_selection.mode: "auto"`): AI pipeline proposes timestamps. Three strategies via `clip_selection.auto_strategy`:
 - `"heatmap"` — YouTube replay spike data only. Fast, no AI call.
-- `"ai"` — Full transcript analysis by LLM. Best for Podcast/Interview/Just Chat.
+- `"ai"` — Full transcript analysis by LLM. Best for Podcast/Just Chat.
 - `"hybrid"` — Heatmap identifies candidate windows; AI ranks and titles them. Recommended default.
 
 For `"heatmap"` and `"hybrid"`: spikes are ranked by score and pre-filtered to `target_clips × candidate_multiplier` before any STT or LLM work begins. All candidates are transcribed, then sent in a **single batched LLM call** asking for the best `target_clips`. This means the LLM compares candidates against each other rather than scoring each in isolation, and STT/LLM cost scales with the candidate pool, not the total spike count.
@@ -211,15 +212,15 @@ Uses `opencv-python-headless` (no display server — safe for WSL/headless).
 |---|---|
 | `visual_analyzer.py` | YOLOv8n region engine. Samples a window's frames → `facecam_box`, `gameplay_box`, `screen_inset_box` (MediaShare), person count, motion level, and an LLM text descriptor. Shared by selection, layout, and detection |
 | `content_type_detector.py` | Samples video frames; HUD heuristic + VisualAnalyzer signals → `ContentType` enum value |
-| `face_tracker.py` | Mode A only — tracks face regions per frame; 9:16 crop box with damped smooth panning; speaker-switch transitions for INTERVIEW |
-| `layout_builder.py` | Consumes `ContentType` + VisualAnalyzer regions; produces the FFmpeg layout spec (Mode B/C use static analyzer crops; Mode A uses face-tracker pan) |
+| `face_tracker.py` | Mode A only — tracks face regions per frame; 9:16 static crop centered on the active speaker; speaker-switch is a hard cut (no pan) for PODCAST (2+ faces) |
+| `layout_builder.py` | Consumes `ContentType` + VisualAnalyzer regions; produces the FFmpeg layout spec (Mode B/C use static analyzer crops; Mode A uses face-tracker static-cut crops) |
 | `overlay_detector.py` | Appearance/disappearance novelty detection: samples ~2 fps, builds a median baseline, detects transient regions via `absdiff` threshold + morphology; cam-exclusion, ticker-exclusion, fullwidth-exclusion, aspect, and a **box-centre jitter gate** (rejects drifting/moving novelty so gameplay motion is not mistaken for a static donation card) prevent false positives |
 
 **Subtitle wiring:** the renderer needs word-level timestamps for the `.ass` karaoke (a 3-pass, memory-safe flow: YOLO regions → whisper words → FFmpeg encode, each model freed before the next loads). On the **local STT** path it **reuses the pipeline's per-candidate word cache** (`{video_id}_words.json`) — each pipeline candidate is already transcribed with `word_timestamps=True`, so the renderer slices those words to the clip range and **skips its Whisper pass entirely** when every clip is a cache hit. Cache miss / cloud STT / manual mode falls back to re-transcribing the clip locally, guaranteeing captions regardless of the selection provider.
 
 **Layout Mode critical rules:**
-- **Mode A (PODCAST, INTERVIEW):** Single 9:16 crop. Face tracker centers on the active speaker. INTERVIEW sub-mode uses speaker diarization or lip-movement detection to identify who is speaking and applies a smooth 0.3–0.5s eased pan transition when the speaker changes.
-- **Mode B (GAMING_SOLO, JUST_CHAT):** 2-stack layout, two equal 1080×960 panels (total 1080×1920). **Top = Facecam (always fits)** — the cam box is expanded ~1.45× and shaped to the panel aspect, then crop-filled into the panel **sharp, prominent (cam ≈69% of panel height), with no blur and no left/right bars** (mild upscale when the cam is small). **Bottom = Gameplay:** a **centered panel-aspect gameplay crop** zoomed by `gameplay_zoom` (default 1.25×, crops the bottom ticker out) with a static-first, velocity-capped gentle pan. Donations are **not** shown here — a clip with a popup is promoted to `DONATION_OVERLAY`. No third black/subtitle-pad zone.
+- **Mode A (PODCAST):** Single 9:16 crop. `face_count` = maximum YOLO person boxes visible in **any single sampled frame** (confidence ≥ `PERSON_COUNT_CONF_MIN`), so 4 people simultaneously on screen counts as 4. The FaceLandmarker capacity (`num_faces`) is sized from `face_count` + `FACE_COUNT_MARGIN` (default +2), clamped to `FACE_LANDMARKER_MAX_FACES` (default 8). An EMA of lip distance per face (alpha=0.35) identifies the current speaker. The crop **statically centers** on the active speaker; when the speaker changes and holds for `SPEAKER_HOLD_SECONDS` (default 1 s), the crop **cuts** to that speaker's face position (no pan, no glide — `_get_face_crop_filter(interpolate=False)` emits a stepwise constant FFmpeg `crop=` expression). Single-face clips hold a static center on that face.
+- **Mode B (GAMING_SOLO, JUST_CHAT):** 2-stack layout, two equal 1080×960 panels (total 1080×1920). **Top = Facecam (always fits)** — the cam box is expanded ~1.45× and shaped to the panel aspect, then crop-filled into the panel **sharp, prominent (cam ≈69% of panel height), with no blur and no left/right bars** (mild upscale when the cam is small). **Bottom = Gameplay:** a **fully static, centered panel-aspect gameplay crop** zoomed by `gameplay_zoom` (default 1.25×, crops the bottom ticker out) — no panning. The crop is computed once by `_motion_region` (motion-centroid–centered, cam-band-aware) and held constant for the clip. Donations are **not** shown here — a clip with a popup is promoted to `DONATION_OVERLAY`. No third black/subtitle-pad zone.
 - **`DONATION_OVERLAY` (per-clip):** reuses the Mode B 2-stack geometry — **Top = Facecam** (same always-fits rule, the streamer reaction), **Bottom = the donation/mediashare popup** (forced, expanded to panel aspect, blurred-background fill). The only place donations are composited. Falls back to the gameplay bottom if forced but no popup box is found.
 - **Mode C (GAMING_COLLAB):** Three-region stack — Primary Facecam Top → Gameplay Center → Collab Face(s) Bottom. No donation compositing.
 

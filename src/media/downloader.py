@@ -10,7 +10,7 @@ from loguru import logger
 
 from src.core.config import load_config
 from src.core.utils import SystemUtils
-from src.core.workspace import SUBTITLES_DIR, TMP_DIR
+from src.core.workspace import DATA_DIR, TMP_DIR
 
 
 class YTDLLogger:
@@ -222,9 +222,7 @@ class VideoDownloader:
                     # Extract and save Heatmap data if available
                     heatmap_data = info.get("heatmap")
                     if heatmap_data:
-                        heatmap_path = Path(
-                            str(SUBTITLES_DIR / f"{video_id}_heatmap_youtube.json")
-                        )
+                        heatmap_path = DATA_DIR / f"{video_id}_heatmap_youtube.json"
                         heatmap_path.parent.mkdir(parents=True, exist_ok=True)
                         heatmap_path.write_text(
                             json.dumps(heatmap_data, indent=2), encoding="utf-8"
@@ -235,7 +233,7 @@ class VideoDownloader:
 
                     # Capture lightweight metadata (game/show context for the LLM).
                     metadata = self._extract_metadata(info)
-                    meta_path = SUBTITLES_DIR / f"{video_id}_metadata.json"
+                    meta_path = DATA_DIR / f"{video_id}_metadata.json"
                     meta_path.parent.mkdir(parents=True, exist_ok=True)
                     meta_path.write_text(
                         json.dumps(metadata, indent=2), encoding="utf-8"

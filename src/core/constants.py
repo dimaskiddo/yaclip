@@ -5,7 +5,6 @@ from enum import Enum
 
 class ContentType(str, Enum):
     PODCAST = "PODCAST"
-    INTERVIEW = "INTERVIEW"
     JUST_CHAT = "JUST_CHAT"
     GAMING_SOLO = "GAMING_SOLO"
     GAMING_COLLAB = "GAMING_COLLAB"
@@ -77,6 +76,13 @@ STACK2_PANEL_ASPECT: float = STACK2_PANEL_W / STACK2_PANEL_H  # 1.125
 # 1.45 → cam ≈69%.
 FACECAM_FIT_FACTOR: float = 1.45
 
+# Gameplay-gate thresholds (ContentTypeDetector): gaming classification requires BOTH conditions.
+# Raise GAMEPLAY_MIN_NONPERSON_MOTION if static gaming menus trigger a false positive;
+# lower GAMEPLAY_MIN_OPEN_AREA_FRAC if close-up gaming streams with little visible screen
+# are missed.
+GAMEPLAY_MIN_NONPERSON_MOTION: float = 4.0  # mean frame-diff in non-person cells ("moderate" boundary)
+GAMEPLAY_MIN_OPEN_AREA_FRAC: float = 0.45   # fraction of coarse grid not covered by persons
+
 # Streamer-facecam detection (YOLO persons) for GAMING_SOLO vs GAMING_COLLAB and the Mode C collab
 # pick. A real webcam inset is cam-sized (a fraction of the frame, not a tiny in-game character nor a
 # full-frame talking head), persistent across sampled frames, and sits near a frame edge/corner — an
@@ -88,6 +94,23 @@ FACECAM_MIN_PERSISTENCE: float = 0.40  # must appear in >= 40% of sampled frames
 # game character, high for a webcam hugging any border/corner. Above this = a real cam position.
 FACECAM_EDGE_SCORE_MIN: float = 0.45
 FACECAM_MIN_SEP_FRAC: float = 0.15     # two cams must be separated by > this × frame diagonal
+
+# Face-landmarker capacity for PODCAST speaker tracking.
+# num_faces is set from the YOLO person count (analysis["face_count"]) + FACE_COUNT_MARGIN,
+# clamped to FACE_LANDMARKER_MAX_FACES.  The margin absorbs YOLO under-counts on partially
+# visible or angled faces.  Raise FACE_LANDMARKER_MAX_FACES if you routinely clip panels
+# with more than 8 speakers.
+FACE_LANDMARKER_MAX_FACES: int = 8
+# Safety margin added to the YOLO person count before sizing the FaceLandmarker.
+# If YOLO sees 4 people, capacity is set to 6 — headroom for partially-visible faces.
+FACE_COUNT_MARGIN: int = 2
+# Minimum consecutive detection steps a new speaker must hold before the crop commits to
+# them (debounce).  Prevents a single mis-detected frame from triggering a cut.
+SPEAKER_HOLD_SECONDS: float = 1.0
+# Minimum YOLO box confidence for counting simultaneous persons in a single frame.
+# Boxes below this threshold are excluded from the face_count used to size num_faces.
+# Does NOT affect facecam-picking or gameplay exclusion (those use persistent clusters).
+PERSON_COUNT_CONF_MIN: float = 0.5
 
 # Mode C 3-stack panels (GAMING_COLLAB) — facecam / gameplay / collab, each 1080x640.
 STACK3_PANEL_W: int = 1080

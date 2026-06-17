@@ -148,9 +148,19 @@ class FFmpegCommandBuilder:
         return "ffmpeg"
 
     def _get_face_crop_filter(
-        self, crops: list[dict], video_w: int, video_h: int
+        self, crops: list[dict], video_w: int, video_h: int, interpolate: bool = True
     ) -> str:
-        """Generate the FFmpeg crop filter for the facecam region with smooth panning."""
+        """Generate the FFmpeg crop filter for a per-frame crop track.
+
+        Args:
+            crops: Per-frame crop dicts with timestamp, crop_x, crop_y, crop_w, crop_h.
+            video_w: Source video width.
+            video_h: Source video height.
+            interpolate: When True (default, used by opt-in gameplay pan) the crop position
+                glides linearly between sampled keyframes.  When False (used by the PODCAST
+                facecam / speaker-cut path) the crop position is held constant from one
+                keyframe until the next and then jumps — a hard cut with zero camera motion.
+        """
         if not crops:
             crop_w = int(video_h * (9.0 / 16.0))
             crop_h = video_h
@@ -167,18 +177,22 @@ class FFmpegCommandBuilder:
 
         crop_w = crops[0]["crop_w"]
         crop_h = crops[0]["crop_h"]
-        
+
         x_expr = f"{keyframes[-1][1]}"
         y_expr = f"{keyframes[-1][2]}"
-        
+
         for i in range(len(keyframes) - 2, -1, -1):
             t_curr, x_curr, y_curr = keyframes[i]
             t_next, x_next, y_next = keyframes[i + 1]
-            slope_x = (x_next - x_curr) / max(0.01, t_next - t_curr)
-            slope_y = (y_next - y_curr) / max(0.01, t_next - t_curr)
-            
-            x_expr = f"if(lt(t,{t_next:.3f}),{x_curr:.1f}+(t-{t_curr:.3f})*{slope_x:.3f},{x_expr})"
-            y_expr = f"if(lt(t,{t_next:.3f}),{y_curr:.1f}+(t-{t_curr:.3f})*{slope_y:.3f},{y_expr})"
+            if interpolate:
+                slope_x = (x_next - x_curr) / max(0.01, t_next - t_curr)
+                slope_y = (y_next - y_curr) / max(0.01, t_next - t_curr)
+                x_expr = f"if(lt(t,{t_next:.3f}),{x_curr:.1f}+(t-{t_curr:.3f})*{slope_x:.3f},{x_expr})"
+                y_expr = f"if(lt(t,{t_next:.3f}),{y_curr:.1f}+(t-{t_curr:.3f})*{slope_y:.3f},{y_expr})"
+            else:
+                # Static hold: keep the keyframe value until the next boundary, then cut.
+                x_expr = f"if(lt(t,{t_next:.3f}),{x_curr:.0f},{x_expr})"
+                y_expr = f"if(lt(t,{t_next:.3f}),{y_curr:.0f},{y_expr})"
 
         x_expr_escaped = x_expr.replace(",", "\\,")
         y_expr_escaped = y_expr.replace(",", "\\,")
@@ -199,9 +213,9 @@ class FFmpegCommandBuilder:
     def _build_mode_a_filters(
         self, spec: dict, subtitle_ass_path: Path | None
     ) -> list[str]:
-        """Build filters for Mode A - Single 9:16 Vertical with smooth face panning."""
+        """Build filters for Mode A - Single 9:16 Vertical with static speaker cuts."""
         face_crop = self._get_face_crop_filter(
-            spec["crops"], spec["video_width"], spec["video_height"]
+            spec["crops"], spec["video_width"], spec["video_height"], interpolate=False
         )
         v_filter = f"[0:v]setpts=PTS-STARTPTS,{face_crop},scale={spec['target_width']}:{spec['target_height']},format=yuv420p,setsar=1"
         v_filter = self._append_subtitles_filter(v_filter, subtitle_ass_path)

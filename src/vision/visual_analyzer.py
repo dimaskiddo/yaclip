@@ -19,6 +19,7 @@ from src.core.constants import (
     FACECAM_MIN_AREA_FRAC,
     FACECAM_MIN_PERSISTENCE,
     FACECAM_MIN_SEP_FRAC,
+    PERSON_COUNT_CONF_MIN,
     STACK2_PANEL_ASPECT,
 )
 from src.core.utils import SystemUtils
@@ -46,7 +47,7 @@ class VisualAnalyzer:
         self.cfg = self.config.video_processing.region_detection
         self._model = None  # lazily-loaded ultralytics YOLO
 
-    # ------------------------------------------------------------------ model
+    # ------------------------------------------------------------------ Model
 
     def _load_model(self):  # type: ignore[no-untyped-def]
         """Lazy-load the YOLOv8 model, routing weights into the portable workspace."""
@@ -62,9 +63,7 @@ class VisualAnalyzer:
         model_path.parent.mkdir(parents=True, exist_ok=True)
         # YOLO() downloads the named asset to the given path if it does not exist yet.
         target = str(model_path) if model_path.exists() else self.cfg.model_name
-        logger.info(
-            f"Loading object detection model: {SystemUtils.display_path(model_path)}"
-        )
+        logger.info("Loading object detection model...")
         self._model = YOLO(target)
         # Keep weights inside the workspace for portability on first download.
         if not model_path.exists():
@@ -79,12 +78,12 @@ class VisualAnalyzer:
     def release(self) -> None:
         """Free the YOLO model from memory (RAM safety before loading other ML models)."""
         if self._model is not None:
-            logger.info("Releasing object detection model from memory...")
+            logger.debug("Releasing object detection model from memory.")
             del self._model
             self._model = None
             gc.collect()
 
-    # --------------------------------------------------------------- analysis
+    # --------------------------------------------------------------- Analysis
 
     def analyze_window(
         self,
@@ -134,8 +133,9 @@ class VisualAnalyzer:
         # Sparse YOLO pass: facecam / persons / screen inset.
         persons: list[dict] = []
         screen_box: tuple[int, int, int, int] | None = None
+        max_persons_in_frame: int = 0
         if self.cfg.enabled:
-            persons, screen_box = self._detect_regions(frames, width, height)
+            persons, screen_box, max_persons_in_frame = self._detect_regions(frames, width, height)
         # Use the stable, video-level facecam box when provided so framing is identical
         # across every clip (the cam is positionally static; per-clip boxes drift with pose).
         # COLLAB passes the reliable detect_facecams() PAIR: [0] = primary (top), [1] = collaborator
@@ -174,7 +174,7 @@ class VisualAnalyzer:
                 video_path, start_time, end_time, facecam_box
             )
             mediashare_box = ms_box or screen_box
-            mediashare_present = bool(ms_events) or screen_box is not None
+            mediashare_present = bool(ms_events)
         else:
             ms_events, ms_box = [], None
             mediashare_box = None
@@ -204,12 +204,152 @@ class VisualAnalyzer:
             "mediashare_present": mediashare_present,
             "mediashare_box": mediashare_box,
             "mediashare_events": ms_events,
-            "face_count": len(persons),
+            "face_count": max_persons_in_frame,
             "motion_level": motion_level,
         }
         analysis["descriptor"] = self._build_descriptor(analysis)
-        logger.info(f"Scene analysis [{start_time:.1f}-{end_time:.1f}s]: {analysis['descriptor']}")
+        logger.info(self._build_log_summary(analysis, start_time, end_time))
+        logger.debug(f"Scene descriptor (LLM input): {analysis['descriptor']}")
         return analysis
+
+    def detect_gameplay_presence(self, video_path: Path) -> dict:
+        """Measure how much animated content exists in the non-person screen area.
+
+        Returns a dict with:
+          ``non_person_motion``  — mean frame-diff intensity in non-person pixels
+                                   (low ≈ static background / podcast set; high ≈ active game)
+          ``open_area_frac``     — fraction of a coarse cell grid NOT covered by any person box
+                                   (small ≈ people fill the frame; large ≈ a game screen is visible)
+          ``person_count``       — number of persistent person clusters detected
+
+        This is the key signal for the gameplay gate in ContentTypeDetector: a genuine gaming
+        video has both substantial non-person screen space AND motion in that space.  A podcast
+        with a static studio set may have a falsely-elevated HUD score but will fail on
+        open_area_frac (people fill the frame) and/or non_person_motion (borders are static).
+
+        The method reuses the same 12-frame YOLO pass as detect_facecams, then adds three short
+        consecutive-frame motion bursts (each ≈ 6 frames at 0.5s spacing, spread across the
+        middle 80% of the video) so the diff captures real per-frame change — not global shift.
+        """
+        import cv2
+        import numpy as np
+
+        if not self.cfg.enabled:
+            # Model disabled — return neutral values; caller treats gaming as unconfirmed.
+            return {"non_person_motion": 0.0, "open_area_frac": 1.0, "person_count": 0}
+
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            return {"non_person_motion": 0.0, "open_area_frac": 1.0, "person_count": 0}
+
+        try:
+            total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = cap.get(cv2.CAP_PROP_FPS) or 29.97
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
+
+            # ── YOLO pass: detect persistent person clusters (12 frames, middle 80%) ──
+            n = 12
+            idxs = [int(total * (0.1 + 0.8 * i / max(1, n - 1))) for i in range(n)]
+            yolo_frames = []
+            for idx in idxs:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                ret, frame = cap.read()
+                if ret:
+                    yolo_frames.append(frame)
+        finally:
+            cap.release()
+
+        if not yolo_frames:
+            return {"non_person_motion": 0.0, "open_area_frac": 1.0, "person_count": 0}
+
+        persons, _, _max = self._detect_regions(yolo_frames, width, height)
+        person_count = len(persons)
+
+        # ── Open-area fraction: coarse 16×9 grid, mark cells covered by any person ──
+        grid_cols, grid_rows = 16, 9
+        cell_w = width / grid_cols
+        cell_h = height / grid_rows
+        covered = set()
+        for p in persons:
+            bx, by, bw, bh = p["box"]
+            c0 = int(max(0, bx / cell_w))
+            c1 = int(min(grid_cols, (bx + bw) / cell_w)) + 1
+            r0 = int(max(0, by / cell_h))
+            r1 = int(min(grid_rows, (by + bh) / cell_h)) + 1
+            for r in range(r0, r1):
+                for c in range(c0, c1):
+                    covered.add((r, c))
+        total_cells = grid_cols * grid_rows
+        open_area_frac = 1.0 - len(covered) / total_cells
+
+        # ── Motion bursts: 3 short windows across the middle 80% ──
+        # Each burst = 6 consecutive frames at ~0.5 s apart.  Person regions zeroed.
+        # We measure the mean of non-zero (non-person) diff pixels per burst.
+        burst_motions: list[float] = []
+        small_w, small_h = 320, 180
+        scale_x, scale_y = width / small_w, height / small_h
+
+        # Pre-compute person mask rects in the downsampled grid (same across all bursts).
+        mask_rects = [
+            (
+                max(0, int(p["box"][0] / scale_x)),
+                min(small_w, int((p["box"][0] + p["box"][2]) / scale_x)),
+                max(0, int(p["box"][1] / scale_y)),
+                min(small_h, int((p["box"][1] + p["box"][3]) / scale_y)),
+            )
+            for p in persons
+        ]
+
+        cap2 = cv2.VideoCapture(str(video_path))
+        if cap2.isOpened():
+            try:
+                burst_step_frames = max(1, int(fps * 0.5))  # ~2 fps within a burst
+                burst_len = 6  # frames per burst
+                # Three anchor points in the middle 80%: 25%, 50%, 75% of video length
+                anchors = [int(total * frac) for frac in (0.25, 0.50, 0.75)]
+                for anchor in anchors:
+                    indices = [anchor + i * burst_step_frames for i in range(burst_len)]
+                    indices = [min(max(0, idx), total - 1) for idx in indices]
+                    burst_frames: list[np.ndarray] = []
+                    for idx in indices:
+                        cap2.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                        ret, frame = cap2.read()
+                        if ret:
+                            burst_frames.append(
+                                cv2.cvtColor(
+                                    cv2.resize(frame, (small_w, small_h)),
+                                    cv2.COLOR_BGR2GRAY,
+                                ).astype(np.float32)
+                            )
+
+                    if len(burst_frames) < 2:
+                        continue
+
+                    diffs: list[np.ndarray] = []
+                    for i in range(1, len(burst_frames)):
+                        d = np.abs(burst_frames[i] - burst_frames[i - 1])
+                        # Zero every person region so the metric reflects non-person pixels only.
+                        for mx0, mx1, my0, my1 in mask_rects:
+                            d[my0:my1, mx0:mx1] = 0.0
+                        diffs.append(d)
+
+                    if diffs:
+                        burst_mean = float(np.mean(np.stack(diffs, axis=0)))
+                        burst_motions.append(burst_mean)
+            finally:
+                cap2.release()
+
+        non_person_motion = float(np.median(burst_motions)) if burst_motions else 0.0
+        logger.debug(
+            f"Gameplay probe — open_area: {open_area_frac:.2f}, "
+            f"non_person_motion: {non_person_motion:.2f}, persons: {person_count}"
+        )
+        return {
+            "non_person_motion": non_person_motion,
+            "open_area_frac": open_area_frac,
+            "person_count": person_count,
+        }
 
     def detect_stable_facecam(
         self, video_path: Path
@@ -249,7 +389,7 @@ class VisualAnalyzer:
         if not frames:
             return None
 
-        persons, _ = self._detect_regions(frames, width, height)
+        persons, _, _max = self._detect_regions(frames, width, height)
         box = self._pick_facecam(persons, width, height)
         if box is None:
             logger.info("No fixed webcam found in video. Webcam position will be detected per clip.")
@@ -291,7 +431,7 @@ class VisualAnalyzer:
         if not frames:
             return []
 
-        persons, _ = self._detect_regions(frames, width, height)
+        persons, _, _max = self._detect_regions(frames, width, height)
         frame_area = float(width * height)
         diag = float((width**2 + height**2) ** 0.5)
         cams: list[tuple[float, float, float, float]] = []
@@ -606,27 +746,42 @@ class VisualAnalyzer:
 
     def _detect_regions(
         self, frames: list[np.ndarray], width: int, height: int
-    ) -> tuple[list[dict], tuple[int, int, int, int] | None]:
-        """Run YOLO across frames → persistent person clusters + a screen-inset box."""
+    ) -> tuple[list[dict], tuple[int, int, int, int] | None, int]:
+        """Run YOLO across frames → persistent person clusters + a screen-inset box + max simultaneous person count.
+
+        Returns:
+            persons: Persistent YOLO person clusters (used for facecam picking / gameplay exclusion).
+            screen_box: A transient screen-class inset (MediaShare candidate), or None.
+            max_persons_in_frame: The maximum number of high-confidence person boxes detected
+                in any single sampled frame.  This is the honest "how many people are on screen
+                at once" — used for face_count / num_faces sizing.  Cross-frame clustering is
+                intentionally NOT used here because adjacent people would merge into one cluster.
+        """
         model = self._load_model()
         if model is None:
-            return [], None
+            return [], None, 0
 
         device = SystemUtils.resolve_device(self.cfg.device)
         person_dets: list[tuple[float, float, float, float]] = []
         screen_dets: list[tuple[float, float, float, float]] = []
+        max_persons_in_frame: int = 0
 
         for frame in frames:
             results = model.predict(frame, verbose=False, device=device)
+            frame_person_count = 0
             for res in results:
                 for box in res.boxes:
                     cls_id = int(box.cls[0])
+                    conf = float(box.conf[0])
                     x1, y1, x2, y2 = (float(v) for v in box.xyxy[0])
                     rect = (x1, y1, x2 - x1, y2 - y1)
                     if cls_id == COCO_CLASS_PERSON:
                         person_dets.append(rect)
+                        if conf >= PERSON_COUNT_CONF_MIN:
+                            frame_person_count += 1
                     elif cls_id in COCO_SCREEN_CLASSES:
                         screen_dets.append(rect)
+            max_persons_in_frame = max(max_persons_in_frame, frame_person_count)
 
         persons = self._cluster_boxes(person_dets, width, height, len(frames))
 
@@ -642,7 +797,7 @@ class VisualAnalyzer:
                 screen_box = (int(box[0]), int(box[1]), int(box[2]), int(box[3]))
                 break
 
-        return persons, screen_box
+        return persons, screen_box, max_persons_in_frame
 
     def _cluster_boxes(
         self,
@@ -786,6 +941,32 @@ class VisualAnalyzer:
         intensity = "high" if level > 12 else "moderate" if level > 4 else "low"
         parts.append(f"{intensity} on-screen motion")
         return "; ".join(parts) + "."
+
+    def _build_log_summary(self, a: dict, start_time: float, end_time: float) -> str:
+        """Plain one-line sentence for the INFO log (user-readable).
+
+        Intentionally separate from ``_build_descriptor`` which serves the LLM and keeps
+        its technical phrasing (facecam, screen inset, etc.) intact.
+        """
+        w, h = a["video_width"], a["video_height"]
+        n = a["face_count"]
+        people = f"{n} {'person' if n == 1 else 'people'}"
+        parts = [people]
+        if a["facecam_box"]:
+            parts.append(f"webcam {self._where(a['facecam_box'], w, h)}")
+        if a.get("collab_box"):
+            parts.append(f"second webcam {self._where(a['collab_box'], w, h)}")
+        if a["mediashare_present"]:
+            events = a.get("mediashare_events") or []
+            if events:
+                e0, e1 = events[0]
+                parts.append(f"donation alert around {e0:.0f}–{e1:.0f}s")
+            else:
+                parts.append("donation overlay visible")
+        level = a["motion_level"]
+        intensity = "high" if level > 12 else "moderate" if level > 4 else "low"
+        parts.append(f"{intensity} motion")
+        return f"Scene [{start_time:.1f}–{end_time:.1f}s]: {', '.join(parts)}."
 
     def _where(self, box: tuple[int, int, int, int], width: int, height: int) -> str:
         """Human-readable screen position of a box (e.g. 'bottom-right')."""

@@ -20,7 +20,7 @@ from src.core.constants import (
     STT_REPEAT_TOKEN_MAX,
 )
 from src.core.utils import SystemUtils
-from src.core.workspace import SUBTITLES_DIR
+from src.core.workspace import DATA_DIR
 
 
 def segments_to_transcript(segments: list[dict]) -> str:
@@ -61,9 +61,9 @@ def save_words_cache(video_id: str, candidates: list[dict]) -> None:
     """Persist per-candidate word-level segments (absolute times) for render-time reuse.
 
     Schema: ``{"video_id", "candidates": [{"start", "end", "segments": [...]}]}``. Written to
-    ``workspace/subtitles/{video_id}_words.json`` so the renderer can skip re-transcribing clips.
+    ``workspace/data/{video_id}_words.json`` so the renderer can skip re-transcribing clips.
     """
-    path = SUBTITLES_DIR / f"{video_id}_words.json"
+    path = DATA_DIR / f"{video_id}_words.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         path.write_text(
@@ -80,7 +80,7 @@ def save_words_cache(video_id: str, candidates: list[dict]) -> None:
 
 def load_words_cache(video_id: str) -> dict | None:
     """Load the per-candidate word cache for a video, or None if absent/unreadable."""
-    path = SUBTITLES_DIR / f"{video_id}_words.json"
+    path = DATA_DIR / f"{video_id}_words.json"
     if not path.exists():
         return None
     try:
@@ -94,10 +94,10 @@ def save_mediashare_cache(video_id: str, candidates: list[dict]) -> None:
     """Persist per-candidate donation/MediaShare scan results for render-time reuse.
 
     Schema: ``{"video_id", "candidates": [{"start", "end", "mediashare_present", "mediashare_box"}]}``.
-    Written to ``workspace/subtitles/{video_id}_mediashare.json`` so the renderer can reuse
+    Written to ``workspace/data/{video_id}_mediashare.json`` so the renderer can reuse
     the selection-phase donation scan instead of rescanning each clip window.
     """
-    path = SUBTITLES_DIR / f"{video_id}_mediashare.json"
+    path = DATA_DIR / f"{video_id}_mediashare.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         path.write_text(
@@ -114,7 +114,7 @@ def save_mediashare_cache(video_id: str, candidates: list[dict]) -> None:
 
 def load_mediashare_cache(video_id: str) -> dict | None:
     """Load the per-candidate donation scan cache for a video, or None if absent/unreadable."""
-    path = SUBTITLES_DIR / f"{video_id}_mediashare.json"
+    path = DATA_DIR / f"{video_id}_mediashare.json"
     if not path.exists():
         return None
     try:
@@ -291,12 +291,12 @@ class LocalSTTProvider:
             audio_path: Path to the audio file to transcribe.
             force: If True, re-transcribe even if a cached transcript exists.
             model: Optional pre-loaded WhisperModel to reuse (avoids re-loading).
-            cache_dir: Directory to save the transcript cache. Defaults to SUBTITLES_DIR.
+            cache_dir: Directory to save the transcript cache. Defaults to DATA_DIR.
                        Pass TMP_DIR for temporary slice chunks so they are auto-cleaned.
         """
         audio_path = Path(audio_path)
         video_id = audio_path.stem
-        out_dir = cache_dir if cache_dir is not None else SUBTITLES_DIR
+        out_dir = cache_dir if cache_dir is not None else DATA_DIR
         out_txt = out_dir / f"{video_id}.txt"
 
         if out_txt.exists() and not force:

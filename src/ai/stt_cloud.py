@@ -9,7 +9,7 @@ from src.ai.prompts import get_language_prompt
 from src.core.config import load_config
 from src.core.exceptions import AIProviderError
 from src.core.utils import SystemUtils
-from src.core.workspace import SUBTITLES_DIR
+from src.core.workspace import DATA_DIR
 
 
 class CloudSTTProvider:
@@ -159,7 +159,7 @@ class CloudSTTProvider:
         """Transcribes audio using the configured cloud provider and caches the transcript."""
         audio_path = Path(audio_path)
         video_id = audio_path.stem
-        out_txt = SUBTITLES_DIR / f"{video_id}.txt"
+        out_txt = DATA_DIR / f"{video_id}.txt"
 
         if out_txt.exists() and not force:
             logger.info(

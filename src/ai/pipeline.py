@@ -20,7 +20,7 @@ from src.core.config import load_config
 from src.core.constants import CANDIDATE_WINDOW_BUFFER, MIN_CLIP_SECONDS, ContentType
 from src.media.energy import AudioEnergyAnalyzer
 from src.media.slicer import AudioSlicer
-from src.core.workspace import SUBTITLES_DIR, TMP_DIR
+from src.core.workspace import DATA_DIR, TMP_DIR
 
 
 class AIPipeline:
@@ -89,7 +89,7 @@ class AIPipeline:
             return model.generate_content([uploaded_file, user_prompt])
 
         video_id = Path(audio_path).stem
-        out_txt = SUBTITLES_DIR / f"{video_id}.txt"
+        out_txt = DATA_DIR / f"{video_id}.txt"
 
         uploaded_file = None
         try:
@@ -259,7 +259,7 @@ class AIPipeline:
 
     def _load_metadata_context(self, video_id: str) -> str:
         """Build a compact 'Video metadata' header (title/category/tags) for the LLM prompt."""
-        meta_path = SUBTITLES_DIR / f"{video_id}_metadata.json"
+        meta_path = DATA_DIR / f"{video_id}_metadata.json"
         if not meta_path.exists():
             return ""
         try:
@@ -435,8 +435,7 @@ class AIPipeline:
 
             # Size each candidate window to the TARGET clip length (default + margin) + buffer around
             # the spike centre — wide enough for the LLM to pick a [default, default+margin] clip and
-            # for the post-map enforcement to extend a short pick up to the floor, without transcribing
-            # huge windows (the old max-wide window was the runtime bottleneck).
+            # for the post-map enforcement to extend a short pick up to the floor.
             clip_ceiling = (
                 clip_cfg.default_clip_duration_seconds + clip_cfg.clip_length_margin_seconds
             )

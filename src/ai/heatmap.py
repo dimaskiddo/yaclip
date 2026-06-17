@@ -4,7 +4,7 @@ from typing import Dict, List
 from loguru import logger
 
 from src.core.config import load_config
-from src.core.workspace import SUBTITLES_DIR
+from src.core.workspace import DATA_DIR
 
 
 class HeatmapAnalyzer:
@@ -17,7 +17,7 @@ class HeatmapAnalyzer:
         """
         Parses the yt-dlp heatmap JSON file and extracts the most viral (replayed) segments.
         """
-        heatmap_file = SUBTITLES_DIR / f"{video_id}_heatmap_youtube.json"
+        heatmap_file = DATA_DIR / f"{video_id}_heatmap_youtube.json"
         if not heatmap_file.exists():
             logger.info(
                 f"No Most Replayed data found for {video_id}. Skipping Most Replayed clip extraction."

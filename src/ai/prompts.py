@@ -15,7 +15,7 @@ DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
     "2. PAYOFF — a clear punchline, insight, or emotional/action peak before the end.\n"
     "3. STANDALONE — makes complete sense on its own, without needing earlier context.\n"
     "4. ENERGY — high emotion, reaction, or on-screen action sustains attention.\n\n"
-    "For PODCAST and INTERVIEW content: prioritize complete, punchy thoughts, strong opinions, surprising facts, or emotional peaks. "
+    "For PODCAST content: prioritize complete, punchy thoughts, strong opinions, surprising facts, or emotional peaks. "
     "Avoid segments that feel incomplete without visual context.\n"
     "For JUST_CHAT content: prioritize high-energy reactions, funny moments, and segments where donation interactions produce strong streamer responses.\n"
     "For GAMING_SOLO and GAMING_COLLAB content: prioritize intense gameplay moments, clutch plays, funny failures, and strong streamer reactions. "

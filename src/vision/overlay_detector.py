@@ -153,13 +153,14 @@ class OverlayDetector:
                 continue
             popups.append(iv)
 
-        logger.info(
-            f"Donation alert scan: {len(intervals)} region(s) found, "
-            f"{len(popups)} confirmed popup(s)."
-        )
+        n_confirmed = len(popups)
+        if n_confirmed:
+            logger.info(f"Donation overlay scan: {n_confirmed} popup(s) confirmed.")
+        else:
+            logger.info("Donation overlay scan: no popups confirmed.")
         for idx, val in enumerate(popups):
-            logger.info(
-                f"Donation popup {idx + 1} confirmed: {val['start_time']:.1f}s-{val['end_time']:.1f}s "
+            logger.debug(
+                f"Popup {idx + 1}: {val['start_time']:.1f}s–{val['end_time']:.1f}s "
                 f"({val['hits']} frames matched)"
             )
         return popups

@@ -24,7 +24,7 @@ It works on **Windows, macOS, Linux, and WSL2**, and is designed to run well eve
 When you give YaClip a YouTube URL, it goes through these steps automatically:
 
 1. **Download** — downloads the video and audio
-2. **Detect** — analyses the video to understand what type of content it is (podcast, gaming stream, interview, etc.)
+2. **Detect** — analyses the video to understand what type of content it is (podcast, panel discussion, gaming stream, just chat, etc.)
 3. **Find moments** — uses YouTube's own most-replayed data or audio energy peaks to locate the best candidate sections
 4. **Transcribe** — converts the audio of those sections to text
 5. **AI picks the best clips** — sends the transcripts to an AI model which selects the most engaging moments and gives each one a title
@@ -83,14 +83,13 @@ YaClip automatically detects what kind of video you're working with and adjusts 
 
 | Video Type | What it looks like | Vertical layout |
 |---|---|---|
-| **Podcast** | One speaker, mostly static camera, talking directly | Full-screen vertical, face kept centred |
-| **Interview** | Two or more people taking turns speaking | Full-screen vertical, camera smoothly shifts to whoever is talking |
+| **Podcast / Panel** | One speaker OR multiple people taking turns talking (no gameplay) | Full-screen vertical; when 2+ faces, camera **cuts** to whoever is speaking — static crop, no pan, no glide. All simultaneously-visible people are counted and tracked. |
 | **Just Chatting** | Single streamer, no gameplay, may have donation alerts | Webcam on top, stream content on bottom |
-| **Gaming — Solo** | Gameplay visible, one webcam in corner | Webcam on top, gameplay on bottom |
-| **Gaming — Collab** | Gameplay visible, two or more webcams | Webcam 1 on top, gameplay in centre, Webcam 2 on bottom |
+| **Gaming — Solo** | Gameplay confirmed on screen, one webcam in corner | Webcam on top, **static gameplay crop** on bottom (centred on the action, no pan) |
+| **Gaming — Collab** | Gameplay confirmed, two or more webcams | Webcam 1 on top, **static gameplay crop** in centre, Webcam 2 on bottom |
 | **Donation Alert** | A donation or media share popup appears during the clip | Webcam on top, donation popup on bottom |
 
-> Donation alert clips are handled automatically — any clip where a Trakteer or MediaShare popup appears will use the Donation Alert layout, no matter what the base video type is.
+> Donation alert clips are handled automatically — any clip where a Trakteer or MediaShare popup appears will use the Donation Alert layout. By default, **Podcast** and **Gaming Collab** clips are excluded from this (pre-recorded content has no live donations; collab clips keep all three panels). You can change which types are excluded in `config.yaml` under `video_processing.donation_overlay_exclude_types`.
 
 ---
 
@@ -117,11 +116,12 @@ YaClip keeps all its files inside a `workspace/` folder in the project directory
 | `workspace/models/` | Local AI model files (downloaded when first used) |
 | `workspace/videos/` | Raw downloaded videos |
 | `workspace/audios/` | Extracted audio files |
-| `workspace/subtitles/` | Transcripts and clip data |
+| `workspace/subtitles/` | `.ass` subtitle files for rendered clips |
+| `workspace/data/` | Transcripts, AI clip results, and cached data (word timings, heatmap, metadata) |
 | `workspace/clips/` | Your finished vertical clips |
 | `workspace/tmp/` | Temporary working files (deleted automatically) |
 
-**Automatic cleanup:** Every time YaClip starts, it automatically deletes old files to free up disk space. By default: videos, audio, and transcripts older than 3 days are removed; temporary files older than 1 day are removed. Your finished clips in `workspace/clips/` are never auto-deleted. You can adjust retention settings in `config.yaml` or clear the cache manually from the Maintenance tab.
+**Automatic cleanup:** Every time YaClip starts, it automatically deletes old files to free up disk space. By default: videos, audio, subtitles, and data files older than 3 days are removed; temporary files older than 1 day are removed. Your finished clips in `workspace/clips/` are never auto-deleted. You can adjust retention settings in `config.yaml` or clear the cache manually from the Maintenance tab.
 
 ---
 

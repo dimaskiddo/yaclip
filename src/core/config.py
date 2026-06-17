@@ -177,7 +177,7 @@ class RegionDetectionConfig(BaseModel):
     model_name: str = Field(default="yolov8n.pt")
     sample_frames: int = Field(default=4, ge=1, le=20)
     device: str = Field(default="auto")
-    gameplay_follow_motion: bool = Field(default=True)  # gentle centred pan vs static centred crop
+    gameplay_follow_motion: bool = Field(default=False)  # false = static centred crop; true = animated motion-following pan
     gameplay_zoom: float = Field(default=1.25, ge=1.0, le=2.0)  # >1 zooms the gameplay crop tighter
 
 
@@ -188,6 +188,13 @@ class VideoProcessingConfig(BaseModel):
     detection_confidence_threshold: float = Field(default=0.6)
     auto_face_tracking: bool = Field(default=True)
     preserve_donation_overlays: bool = Field(default=True)
+    # Content types excluded from per-clip donation-overlay promotion.
+    # PODCAST is excluded because it is pre-recorded (no live donation widgets).
+    # GAMING_COLLAB is excluded because the popup must not replace one of the three collab panels.
+    # Valid values: PODCAST | JUST_CHAT | GAMING_SOLO | GAMING_COLLAB | DONATION_OVERLAY
+    donation_overlay_exclude_types: List[str] = Field(
+        default_factory=lambda: ["PODCAST", "GAMING_COLLAB"]
+    )
     default_resolution: str = Field(default="1080p")
     region_detection: RegionDetectionConfig = Field(
         default_factory=RegionDetectionConfig
@@ -199,6 +206,7 @@ class RetentionDaysConfig(BaseModel):
     videos: int = Field(default=3)
     audios: int = Field(default=3)
     subtitles: int = Field(default=3)
+    data: int = Field(default=3)
     tmp: int = Field(default=1)
 
 

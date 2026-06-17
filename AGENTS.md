@@ -4,7 +4,7 @@
 
 You are an expert Python software architect, AI integration specialist, and multimedia processing engineer. Your task is to build a modern, cross-platform **YaClip** — an application that downloads YouTube videos, automatically detects the most engaging moments, and renders them as vertical short-form clips ready for **YouTube Shorts, Instagram Reels, and TikTok**.
 
-The source video can be any of these content types: **Podcast, Interview, Gaming Stream, Just Chat / Just Chill, or Solo Commentary**. Each type has its own detection heuristics, face-tracking behavior, and vertical layout strategy. The application must handle all of them correctly without manual configuration, unless the user explicitly wants to override detection.
+The source video can be any of these content types: **Podcast / Panel Discussion, Gaming Stream, Just Chat / Just Chill, or Solo Commentary**. Each type has its own detection heuristics, face-tracking behavior, and vertical layout strategy. The application must handle all of them correctly without manual configuration, unless the user explicitly wants to override detection.
 
 The application features both a **CLI** and a **WebUI** (Gradio). It must be cross-platform (Windows, macOS, Linux, WSL), optimized for **low-to-medium spec hardware**, implement a **100% Portable Asset Cache**, and follow a **Cloud-First with Local-Fallback** AI architecture.
 
@@ -45,15 +45,14 @@ This section is the source of truth for what this application is and how it thin
 
 #### 1.1 Supported Content Types
 
-The application recognizes five content types. Detection is automatic unless overridden in `config.yaml`.
+The application recognizes four content types. Detection is automatic unless overridden in `config.yaml`.
 
 | Content Type | Key Characteristics |
 |---|---|
-| `PODCAST` | Single dominant speaker, static camera or minimal movement, no gaming HUD, no persistent second face, monologue or Q&A with off-screen host |
-| `INTERVIEW` | Two or more clearly separated face regions, alternating speech patterns, face-switching required when speaker changes |
+| `PODCAST` | Talking-head content with no confirmed gameplay: single speaker, panel discussion, interview, or Q&A. When two or more persistent face regions are detected, the camera follows the active speaker (lip-movement tracking). When a single face is dominant, the camera centers and tracks that speaker only. |
 | `JUST_CHAT` | Single streamer, no gaming HUD, donation overlays (Trakteer.ID, MediaShare) are common and must be preserved |
-| `GAMING_SOLO` | Persistent gaming HUD/interface visible, single facecam in corner, donation overlays must be preserved |
-| `GAMING_COLLAB` | Persistent gaming HUD, multiple persistent faces (Discord grid, dual-screen collab layout), donation overlays must be preserved |
+| `GAMING_SOLO` | Confirmed gameplay detected (animated non-person screen region), single facecam in corner, donation overlays must be preserved |
+| `GAMING_COLLAB` | Confirmed gameplay detected, multiple persistent webcam faces (Discord grid, dual-screen collab layout), donation overlays must be preserved |
 | `DONATION_OVERLAY` | **Per-clip, not a video-level type.** Any clip whose window contains a transient mediashare/donation overlay is promoted to this type (from whatever base type the video has) and routed to a dedicated facecam + popup layout. This is the single home for donation handling — the other layouts no longer embed donations. |
 
 #### 1.2 Target Output Formats
@@ -83,7 +82,7 @@ Two modes exist and MUST be fully supported:
 - **Startup Integrity Check:** On every app boot, verify and auto-repair the workspace environment:
   - `./workspace/bin/` — check for FFmpeg and yt-dlp. Auto-download the correct OS-specific binary if missing.
   - `./workspace/fonts/` — check for the primary subtitle font. Auto-download an open-source high-impact font (e.g., Anton or Oswald) if missing.
-  - `./workspace/videos/`, `./workspace/audios/`, `./workspace/subtitles/`, `./workspace/tmp/` — create if missing.
+  - `./workspace/videos/`, `./workspace/audios/`, `./workspace/subtitles/`, `./workspace/data/`, `./workspace/tmp/` — create if missing.
 - Advanced users may manually place custom binaries or `.ttf` fonts directly into the relevant `./workspace/` subdirectory.
 
 ---
@@ -183,7 +182,7 @@ This is the core intelligence of the application. The detection engine runs once
 Two refinements matter for correctness:
 - **Dense MediaShare event scan.** A transient MediaShare/donation popup is easily missed by sparse sampling, so a separate **~2 fps bounded scan** (appearance/disappearance against a median-frame baseline, via `overlay_detector`) runs over each window and reports `mediashare_events` with timing. The descriptor states e.g. *"Donation overlay reaction at ~412–418s (high-value moment)"*, and the LLM prompt treats such candidates as **high-priority** — this is what lets a mediashare moment actually be selected.
   - **Static-vs-moving gate (CRITICAL, anti-false-positive):** a real donation card holds the **same on-screen position** while shown; gameplay novelty (camera pan, moving character) **drifts** frame-to-frame and would otherwise be misread as a popup. The detector computes per-interval **box-centre jitter** (normalised by the frame diagonal) and **rejects** intervals above `POPUP_MAX_JITTER` — only a positionally-stable card survives. The aspect gate also requires cards clearly wider than tall (`POPUP_ASPECT_MIN`).
-- **Animated gameplay pan.** At render, the gameplay bottom panel follows the action: a `gameplay_track` of peak-motion crop boxes (argmax, not centroid — better for slow/tiny subjects) drives the same smooth-pan FFmpeg crop expression used by the facecam. MediaShare bottom stays a static crop.
+- **Static gameplay crop.** At render, the gameplay bottom panel uses a **static centred crop** (motion-centroid–centred, zoomed by `gameplay_zoom`, cam-band-aware) — no panning, no animation. The crop is computed once per clip window by `_motion_region` and emitted as a constant `crop=` FFmpeg filter. MediaShare bottom is also a static crop. The legacy motion-following pan (`_gameplay_pan`, `gameplay_follow_motion: true`) is preserved as an opt-in escape hatch but disabled by default.
 
 Audio (heatmap/energy/STT) and visual analysis run over the **same time windows** so selection and layout share aligned evidence. **Game/show context:** the downloader saves `{video_id}_metadata.json` (title/category/tags/description); the batched LLM prompt is prefixed with this so it can infer the game, and a "Gaming" category lowers the HUD threshold in detection.
 
@@ -191,20 +190,25 @@ Audio (heatmap/energy/STT) and visual analysis run over the **same time windows*
 
 Detection MUST be performed in this order, stopping at the first confident match:
 
-1. **Gaming detection (HUD OR Gaming category)** — Sample frames and detect persistent HUD elements (health bars, minimaps, ammo counters, score displays). A positive HUD match classifies the video as gaming. **The YouTube "Gaming" category (`gaming_hint` from saved metadata) ALSO routes to gaming** even when the HUD is small/sub-threshold — the category is a strong, reliable signal (a small corner HUD must not drop a genuine gaming stream to PODCAST). Face count then splits the type:
-   - If two or more persistent face regions are found → `GAMING_COLLAB`
-   - If a single persistent face region is found → `GAMING_SOLO`
-   - Face counting for SOLO-vs-COLLAB uses the **YOLO facecam detector** (`VisualAnalyzer.detect_facecams`): persistent, cam-sized person boxes near a frame **edge** (small corner webcams that MediaPipe misses are caught; interior game characters are rejected). Two separated cams ⇒ `GAMING_COLLAB`.
+1. **Config Override** — If `video_processing.content_type_override` is set to anything other than `"auto"` in `config.yaml`, skip all detection steps and use the configured value directly.
 
-2. **Multi-Face Region Analysis** — If not gaming, count persistent face regions across sampled frames.
-   - Two or more distinct, spatially-separated persistent face regions with alternating speech patterns → `INTERVIEW`
-   - Single persistent face region → proceed to step 3.
+2. **Gameplay Gate (required for any gaming type)** — Run `VisualAnalyzer.detect_gameplay_presence`: measure `open_area_frac` (fraction of the frame NOT occupied by person boxes) and `non_person_motion` (mean frame-diff outside person regions, three short consecutive-frame bursts). Gaming classification requires **both**:
+   - `open_area_frac >= GAMEPLAY_MIN_OPEN_AREA_FRAC` (≈0.45) — a real game needs visible screen space
+   - `non_person_motion >= GAMEPLAY_MIN_NONPERSON_MOTION` (≈4.0) **OR** `has_hud` (HUD score above threshold) **OR** `gaming_hint` (YouTube "Gaming" category in metadata)
 
-3. **Donation Overlay Sampling** — For single-face, no-HUD content, sample for known donation overlay signatures (bright pop-up alerts in corners, Trakteer/MediaShare visual patterns).
+   `has_hud` and `gaming_hint` are corroborating signals, not standalone triggers. A podcast studio set may produce a false HUD reading; `open_area_frac` kills that path (4 people fill the frame → small open area → no gameplay confirmed).
+
+   If gameplay is confirmed, face count splits the type:
+   - If two or more persistent webcam faces (via YOLO `detect_facecams`) → `GAMING_COLLAB`
+   - Single webcam face → `GAMING_SOLO`
+
+3. **Multi-Face Analysis** — If gameplay is **not** confirmed, count persistent MediaPipe face regions.
+   - Two or more distinct, persistent, spatially-separated face regions → `PODCAST` (active-speaker tracking enabled)
+   - Single face region → proceed to step 4.
+
+4. **Donation Overlay Sampling** — For single-face, no-gameplay content, sample for known donation overlay signatures (bright pop-up alerts in corners, Trakteer/MediaShare visual patterns).
    - Overlay detected → `JUST_CHAT`
    - No overlay detected → `PODCAST`
-
-4. **Config Override** — If `video_processing.content_type_override` is set to anything other than `"auto"` in `config.yaml`, skip all detection steps and use the configured value directly.
 
 #### 6.2 Detection Output & Downstream Routing
 
@@ -212,14 +216,13 @@ The detected `ContentType` is stored in the pipeline state and passed to every d
 
 | Detected Type | Layout Mode | Face Switching | Donation Handling |
 |---|---|---|---|
-| `PODCAST` | Mode A — Single Vertical | No | — (promoted per-clip if a popup appears) |
-| `INTERVIEW` | Mode A — Single Vertical + Speaker Switch | Yes | — (promoted per-clip if a popup appears) |
+| `PODCAST` | Mode A — Single Vertical | Yes — active speaker when 2+ faces | **Excluded by default** (pre-recorded; no live donation widgets) |
 | `JUST_CHAT` | Mode B — Stacked Split-Screen | No | — (promoted per-clip if a popup appears) |
 | `GAMING_SOLO` | Mode B — Stacked Split-Screen | No | — (promoted per-clip if a popup appears) |
-| `GAMING_COLLAB` | Mode C — Multi-Face Collab Stack | No | — (promoted per-clip if a popup appears) |
+| `GAMING_COLLAB` | Mode C — Multi-Face Collab Stack | No | **Excluded by default** (popup must not displace a collab panel) |
 | `DONATION_OVERLAY` | Mode B geometry — Facecam top + popup bottom | No | This **is** the donation layout |
 
-**Per-clip donation promotion:** content type is detected once per video, but after per-clip visual analysis any clip whose window contains a transient mediashare/donation popup (`mediashare_present`) is promoted to `DONATION_OVERLAY` and routed to the facecam + popup 2-stack — regardless of the video's base type. Gated by `video_processing.preserve_donation_overlays` (off → donations are shown nowhere). An explicit per-clip `content_type` (review-gate edit) is never overridden. **Exception — `GAMING_COLLAB` always keeps its 3-stack:** the donation promotion is skipped for collab videos (the popup does not replace a panel), so both collaborators and the gameplay stay on screen.
+**Per-clip donation promotion:** content type is detected once per video, but after per-clip visual analysis any clip whose window contains a transient mediashare/donation popup (`mediashare_present`) is promoted to `DONATION_OVERLAY` and routed to the facecam + popup 2-stack. Gated by `video_processing.preserve_donation_overlays` (off → donations are shown nowhere). An explicit per-clip `content_type` (review-gate edit) is never overridden. **Configurable exclusion:** `video_processing.donation_overlay_exclude_types` lists which base types are never promoted (default: `["PODCAST", "GAMING_COLLAB"]`). `PODCAST` is excluded because it is pre-recorded content with no live donation widgets; `GAMING_COLLAB` is excluded because the popup must not replace one of the three collab panels. Remove a type from this list to enable donation routing for it.
 
 #### 6.3 Detection Confidence & Fallback
 
@@ -234,19 +237,21 @@ Use `opencv-python-headless` and `mediapipe` or `yolov8-face`. The headless Open
 
 ---
 
-#### Layout Mode A — Single Vertical (Podcast / Interview)
+#### Layout Mode A — Single Vertical (Podcast)
 
-**Applies to:** `PODCAST`, `INTERVIEW`
+**Applies to:** `PODCAST`
 
 - Render as a **single 9:16 vertical crop**. No stacking, no split panels.
-- Face tracking applies: the crop window smoothly follows the active speaker, keeping their face in the upper-center region.
+- Face tracking applies: the crop window **statically centers on the active speaker** — no pan, no glide. When the active speaker changes the crop makes a hard cut to the new speaker's face position.
 - If no face is detected (e.g., screen-share segment), default to a center-biased static crop with no movement.
 
-**Interview sub-mode (INTERVIEW only):**
-- The face tracker MUST identify and register two or more distinct face regions at the start of each clip.
-- During the clip, monitor audio activity per face region using speaker diarization or lip-movement detection to determine who is speaking at any given moment.
-- When the active speaker changes, **smoothly transition the crop window** to center the new speaker. Do not cut abruptly — use a short eased pan (0.3–0.5s transition).
-- The primary interview subject (the person being interviewed) is given crop priority during equal-activity frames.
+**Multi-speaker mode (2+ faces detected):**
+- The FaceLandmarker capacity (`num_faces`) is sized from the **YOLO person count** (`analysis["face_count"]`, computed during the visual analysis pass) plus `FACE_COUNT_MARGIN` (default `+2`) as a safety margin, clamped to `FACE_LANDMARKER_MAX_FACES` (default 8). `face_count` is the **maximum number of high-confidence person boxes visible in any single sampled frame** (not a cross-frame cluster count) — so 4 people appearing simultaneously register as 4, not 2 even if they are seated close together. The margin provides headroom for partially-visible or angled faces.
+- During the clip, an **EMA of lip distance per face** (`alpha = 0.35`) identifies who is speaking at any given moment — responsive from frame 1, no warm-up window needed.
+- The active speaker must hold consistently for at least `SPEAKER_HOLD_SECONDS` (default 1 s) before the crop cuts to them — prevents single-frame mis-detections from triggering false cuts.
+- When the active speaker commits, the crop **immediately holds a fixed center** on their face box (median of detected face centers in that segment). No interpolation, no ramp.
+- The most persistent face receives crop priority during equal-activity frames.
+- Single-speaker clips use the lighter FaceDetector (Mode B/C) and track that face only.
 
 ---
 
@@ -256,7 +261,7 @@ Use `opencv-python-headless` and `mediapipe` or `yolov8-face`. The headless Open
 
 - Construct a **two-region vertical stack** (each panel 1080×960, total 1080×1920):
   - **Top panel = Facecam (always fits).** A **single stable cam box** is detected once for the whole video (`detect_stable_facecam`, sampled across its length) and reused for every clip, so the framing does not drift with the streamer's pose. The cam box is expanded by `FACECAM_FIT_FACTOR` (≈1.45× — comfortable context margin, cam ≈69% of panel height) and shaped to the panel aspect (1.125), then **crop-filled into the 1080×960 panel — sharp, prominent, no blur and no left/right bars** (mild upscale when the cam region is smaller than the panel).
-  - **Bottom panel = Gameplay.** A **centered, panel-aspect gameplay crop** zoomed by `region_detection.gameplay_zoom` (default 1.25× — crops the bottom ticker from the panel). When `region_detection.gameplay_follow_motion: true`, the crop **holds still by default** (static-first) and only glides slowly to follow character motion when the weighted-centroid target drifts beyond a deadzone (≈6% of panel width), capped at ≈1.2% of panel width per keyframe so the movement is imperceptible to viewers. (Donation/MediaShare popups are **not** shown here — a clip with a popup is promoted to `DONATION_OVERLAY`; see below.)
+  - **Bottom panel = Gameplay.** A **centered, panel-aspect gameplay crop** zoomed by `region_detection.gameplay_zoom` (default 1.25× — crops the bottom ticker from the panel). The crop is **fully static** (motion-centroid–centered at analysis time by `_motion_region`; no panning at render). This keeps the viewer's eye steady on the gameplay. The legacy motion-following pan (`gameplay_follow_motion: true` in config) is available but disabled by default. (Donation/MediaShare popups are **not** shown here — a clip with a popup is promoted to `DONATION_OVERLAY`; see below.)
   - **Fullscreen-cam override:** when the facecam covers >55% of the frame (a just-chatting / reaction moment with no real gameplay), the clip renders as a **single full-face 9:16 vertical** (Mode A) instead of a 2-stack — avoids face-over-face. (Skipped for `DONATION_OVERLAY`.)
 - **CRITICAL LAYOUT ORDER:** Facecam is always the top panel, gameplay the bottom. No third (black/subtitle-pad) zone — the stack is exactly two equal panels.
 - Detect static streaming HUD elements (corner overlays, alert boxes) and exclude them from the gameplay motion crop so the crop locks onto gameplay, not the HUD.
@@ -281,7 +286,7 @@ Use `opencv-python-headless` and `mediapipe` or `yolov8-face`. The headless Open
 
 - Construct a **three-region vertical stack**: Primary Facecam at top, Gameplay in the absolute center, Collaborator face(s) at the bottom.
 - **Both cams come from the reliable `VisualAnalyzer.detect_facecams` PAIR**, locked once video-wide (the same detector that drives the SOLO-vs-COLLAB split), not from the per-clip `persons` list. `analyze_window(facecam_boxes=[primary, collaborator])` sets `facecam_box` (top panel) and `collab_box` (bottom panel); the layout uses `collab_box` directly and only falls back to the per-clip edge-cam `persons` heuristic when the pair is absent. The descriptor names **both** cams ("facecam at bottom-right; second facecam at bottom-left").
-- **CRITICAL LAYOUT ORDER:** Gameplay canvas is always center. Both face regions are secondary. Each panel is a panel-aspect (1080×640) crop-fill (no distortion). The centre gameplay panel uses the **same zoomed, static-first slow-pan engine as Mode B** (`gameplay_zoom` + velocity-capped glide), shaped to the 3-stack aspect (1.6875). **Both cam boxes are excluded from the gameplay crop** — masked out of the motion search and, when they sit in the bottom third, the crop is shrunk + biased upward so its bottom edge sits at/above the highest bottom cam — so neither corner cam ever bleeds into the centre (no "double facecam"). A `GAMING_COLLAB` clip stays a 3-stack even when a donation is present (donation promotion is skipped for collab).
+- **CRITICAL LAYOUT ORDER:** Gameplay canvas is always center. Both face regions are secondary. Each panel is a panel-aspect (1080×640) crop-fill (no distortion). The centre gameplay panel uses the **same static centred crop as Mode B** (`gameplay_zoom` + `_motion_region`, shaped to the 3-stack aspect 1.6875) — no panning. **Both cam boxes are excluded from the gameplay crop** — masked out of the motion search and, when they sit in the bottom third, the crop is shrunk + biased upward so its bottom edge sits at/above the highest bottom cam — so neither corner cam ever bleeds into the centre (no "double facecam"). A `GAMING_COLLAB` clip stays a 3-stack even when a donation is present (donation promotion is skipped for collab).
 - **Donation Handling:** Mode C does not composite donations. A collab clip whose window contains a donation popup is promoted to `DONATION_OVERLAY` (facecam + popup 2-stack) for that clip, trading the collab face for proper popup display.
 
 ---
@@ -383,17 +388,20 @@ clip_selection:
 
 video_processing:
   output_dir: "./workspace/clips"
-  content_type_override: "auto"        # auto | PODCAST | INTERVIEW | JUST_CHAT | GAMING_SOLO | GAMING_COLLAB | DONATION_OVERLAY
+  content_type_override: "auto"        # auto | PODCAST | JUST_CHAT | GAMING_SOLO | GAMING_COLLAB | DONATION_OVERLAY
   detection_confidence_threshold: 0.6  # Below this, detection falls back to PODCAST and logs a warning
   auto_face_tracking: true             # Smooth face-centered crop for Mode A (talking heads)
   preserve_donation_overlays: true     # Detect and composite Trakteer/MediaShare alerts
+  donation_overlay_exclude_types:      # Types excluded from per-clip donation routing (configurable)
+    - "PODCAST"                        #   pre-recorded content — no live donation widgets
+    - "GAMING_COLLAB"                  #   popup must not displace a collab panel
   default_resolution: "1080p"
   region_detection:                    # YOLOv8n visual analysis: facecam / gameplay / mediashare regions
     enabled: true                      # false = fall back to motion/face heuristics only
     model_name: "yolov8n.pt"           # Ultralytics COCO nano model (auto-downloaded to workspace/models/)
     sample_frames: 4                   # Frames sampled per candidate/clip window (sparse = fast)
     device: "auto"                     # auto | cpu | cuda
-    gameplay_follow_motion: true       # true = gentle centred pan follows char (small move) | false = static centred crop
+    gameplay_follow_motion: false      # false = static centred crop (default, no pan) | true = legacy gentle pan
     gameplay_zoom: 1.25                 # >1 zooms the gameplay panel tighter (1.25 = 25% closer, crops the ticker out)
   subtitles:
     enabled: true
@@ -437,7 +445,7 @@ The application MUST use a hardcoded system prompt injected into every LLM analy
 
 > "You are an expert social media content curator specializing in {content_type} videos. Analyze the provided transcript and timestamps. Identify the most engaging, viral, or emotionally resonant segments that would perform exceptionally well as {target_duration}-second YouTube Shorts, Instagram Reels, or TikTok clips.
 >
-> For PODCAST and INTERVIEW content: prioritize complete, punchy thoughts, strong opinions, surprising facts, or emotional peaks. Avoid segments that feel incomplete without visual context.
+> For PODCAST content: prioritize complete, punchy thoughts, strong opinions, surprising facts, or emotional peaks. Avoid segments that feel incomplete without visual context.
 > For JUST_CHAT content: prioritize high-energy reactions, funny moments, and segments where donation interactions produce strong streamer responses.
 > For GAMING_SOLO and GAMING_COLLAB content: prioritize intense gameplay moments, clutch plays, funny failures, and strong streamer reactions. Donation-triggered reactions are high-value clip targets.
 >
@@ -495,7 +503,8 @@ except: pass
 #### 11.5 Constants & Enums (No Magic Values)
 
 - Zero magic strings or numbers in the codebase. All fixed values in `src/core/constants.py` as `Enum` classes or typed constants.
-- Key enums: `ContentType` (`PODCAST`, `INTERVIEW`, `JUST_CHAT`, `GAMING_SOLO`, `GAMING_COLLAB`, `DONATION_OVERLAY`), `LayoutMode` (`SINGLE_VERTICAL`, `STACKED_SPLIT`, `MULTI_COLLAB`), `AIProvider` (`GOOGLE`, `OPENAI`, `LOCAL`), `ClipMode` (`AUTO`, `MANUAL`).
+- Key enums: `ContentType` (`PODCAST`, `JUST_CHAT`, `GAMING_SOLO`, `GAMING_COLLAB`, `DONATION_OVERLAY`), `LayoutMode` (`SINGLE_VERTICAL`, `STACKED_SPLIT`, `MULTI_COLLAB`), `AIProvider` (`GOOGLE`, `OPENAI`, `LOCAL`), `ClipMode` (`AUTO`, `MANUAL`).
+- Key numeric constants (selection): `GAMEPLAY_MIN_NONPERSON_MOTION`, `GAMEPLAY_MIN_OPEN_AREA_FRAC` — gameplay gate thresholds; `FACE_LANDMARKER_MAX_FACES` — ceiling for FaceLandmarker capacity (default 8); `FACE_COUNT_MARGIN` — safety headroom added to the YOLO person count before sizing `num_faces` (default 2, so 4 YOLO persons → capacity 6); `PERSON_COUNT_CONF_MIN` — minimum YOLO box confidence for counting simultaneous persons per frame (default 0.5); `SPEAKER_HOLD_SECONDS` — debounce period before committing a speaker cut (default 1.0 s).
 
 #### 11.6 DRY Principle & Code Reuse
 
@@ -663,6 +672,7 @@ yaclip/
 ### 12. Logging, Observability & Strict Memory Optimization
 
 - **Loguru (CRITICAL):** Completely abandon `print()`. All output goes through `loguru`. Configuration (level, rotation, retention, file path) loaded from `config.yaml` at init. Rotating `.log` files written to `./workspace/logs/` capture silent FFmpeg failures.
+- **Log level standard:** `INFO` messages must be **short, single-line, plain-language sentences readable by a standard user** — no internal variable dumps, enum reprs (`ContentType.PODCAST`), raw crop coordinates, or boolean flags. Technical detail (crop boxes, per-frame data, debug booleans) belongs in `DEBUG`. Example: `"Content type detected: PODCAST."` not `"Video type detected: ContentType.PODCAST"`. A `_build_log_summary` helper in `VisualAnalyzer` produces the user-facing scene summary; the separate `_build_descriptor` remains unchanged as the LLM input.
 - **Sequential Local AI Execution:** Never load `faster-whisper` and `llama-cpp` simultaneously. Strict order: `Load STT → Transcribe → del model → gc.collect() → Load LLM → Analyze → del model → gc.collect()`.
 - **CV Resource Releasing:** OpenCV capture handles closed in `finally` blocks. Frame arrays (`del frame`) deleted immediately after use.
 - **Gradio State Hygiene:** Never pass multi-GB structures into persistent `gr.State()`. Reset, overwrite, or garbage collect UI state on every new submission.
@@ -680,8 +690,9 @@ The sequential workspace purge system prevents unbounded disk growth. It is not 
 |---|---|---|
 | `./workspace/videos/` | Raw downloads | 3 days |
 | `./workspace/audios/` | Audio tracks | 3 days |
-| `./workspace/subtitles/` | Transcriptions & AI JSON | 3 days |
-| `./workspace/tmp/` | FFmpeg scratch files | 1 day |
+| `./workspace/subtitles/` | `.ass` subtitle files | 3 days |
+| `./workspace/data/` | STT transcripts + AI/cache JSON (clip proposals, word timings, mediashare cache, heatmap, metadata) | 3 days |
+| `./workspace/tmp/` | FFmpeg scratch files (fire-and-forget: audio slices, cookie copies) | 1 day |
 
 Protected (NEVER purged): `./workspace/bin/`, `./workspace/fonts/`, `./workspace/models/`. Driven by `workspace_cleanup.protected_dirs` in config.
 

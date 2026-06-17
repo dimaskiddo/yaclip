@@ -9,7 +9,13 @@ from pathlib import Path
 from loguru import logger
 
 from src.core.config import load_config
-from src.core.constants import ContentType
+from src.core.constants import (
+    COCO_CLASS_PERSON,
+    ContentType,
+    FACE_COUNT_MARGIN,
+    FACE_LANDMARKER_MAX_FACES,
+    SPEAKER_HOLD_SECONDS,
+)
 from src.core.workspace import MODELS_DIR
 
 
@@ -26,6 +32,7 @@ class FaceTracker:
         start_time: float,
         end_time: float,
         content_type: ContentType,
+        person_count: int = 0,
     ) -> list[dict]:
         """Track face coordinates frame-by-frame and return crop boxes.
 
@@ -34,6 +41,9 @@ class FaceTracker:
             start_time: Start time of the clip in seconds.
             end_time: End time of the clip in seconds.
             content_type: The content type of the video.
+            person_count: Number of persons detected in the video by YOLO (from
+                ``analysis["face_count"]``).  Used to size the FaceLandmarker capacity
+                (PODCAST mode).  Defaults to 0 (treated as 1 after margin is applied).
 
         Returns:
             A list of crop dictionaries, one per frame of the clip.
@@ -59,7 +69,7 @@ class FaceTracker:
         end_frame = max(start_frame + 1, min(end_frame, total_frames))
         clip_frame_count = end_frame - start_frame
 
-        logger.info(
+        logger.debug(
             f"Tracking faces in clip: {start_time:.2f}s to {end_time:.2f}s ({clip_frame_count} frames)"
         )
 
@@ -70,11 +80,13 @@ class FaceTracker:
             dict
         ] = []  # List of dicts: {"frame_idx": int, "faces": list}
 
-        # Initialize MediaPipe models based on ContentType
-        # We use FaceMesh for Interview (speaker detection), and FaceDetection for others (faster)
-        if content_type == ContentType.INTERVIEW:
-            raw_detections = self._track_interview_mesh(
-                cap, start_frame, end_frame, detection_interval, width, height
+        # PODCAST uses MediaPipe FaceLandmarker (lip-landmark speaker detection) so it can
+        # identify and cut to the active speaker when 2+ faces are present.  All other types
+        # use YOLO person detection (no lip landmarks needed; simpler crop).
+        if content_type == ContentType.PODCAST:
+            raw_detections = self._track_speaker_mesh(
+                cap, start_frame, end_frame, detection_interval, width, height,
+                person_count=person_count,
             )
         else:
             raw_detections = self._track_standard_detection(
@@ -93,7 +105,7 @@ class FaceTracker:
         import urllib.request
 
         path.parent.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Downloading MediaPipe model from {url} to {path}")
+        logger.info("Downloading speaker-tracking model...")
         urllib.request.urlretrieve(url, str(path))
 
     def _track_standard_detection(
@@ -105,62 +117,60 @@ class FaceTracker:
         width: int,
         height: int,
     ) -> list[dict]:
-        """Detect faces using standard MediaPipe Face Detector Tasks API at interval steps."""
+        """Detect persons using YOLOv8 at interval steps.
+
+        Detects COCO class 0 (person) boxes at each sample frame using the same YOLO
+        model as VisualAnalyzer — no separate model download needed.
+        """
         import cv2
-        import mediapipe as mp
-        from mediapipe.tasks import python
-        from mediapipe.tasks.python import vision
+        from src.core.utils import SystemUtils
 
-        model_path = MODELS_DIR / "face_detector.tflite"
-        if not model_path.exists():
-            self._download_model(
-                "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
-                model_path,
-            )
+        cfg = self.config.video_processing.region_detection
+        model_path = MODELS_DIR / cfg.model_name
+        model_path.parent.mkdir(parents=True, exist_ok=True)
 
-        base_options = python.BaseOptions(model_asset_path=str(model_path))
-        options = vision.FaceDetectorOptions(
-            base_options=base_options, running_mode=vision.RunningMode.IMAGE
-        )
+        try:
+            from ultralytics import YOLO
+        except ImportError:
+            logger.warning("Object detection unavailable — using center crops for this clip.")
+            return []
+
+        target = str(model_path) if model_path.exists() else cfg.model_name
+
+        logger.info("Loading object detection model...")
+        model = YOLO(target)
+        device = SystemUtils.resolve_device(cfg.device)
 
         detections = []
-        with vision.FaceDetector.create_from_options(options) as detector:
-            for idx in range(start_frame, end_frame, interval):
-                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-                ret, frame = cap.read()
-                if not ret:
-                    break
+        for idx in range(start_frame, end_frame, interval):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-                res = detector.detect(mp_image)
-                faces = []
-                if res.detections:
-                    for det in res.detections:
-                        bbox = det.bounding_box
-                        xmin = max(0, bbox.origin_x)
-                        ymin = max(0, bbox.origin_y)
-                        w_box = bbox.width
-                        h_box = bbox.height
-
-                        faces.append(
-                            {
-                                "box": (
-                                    float(xmin),
-                                    float(ymin),
-                                    float(w_box),
-                                    float(h_box),
-                                ),
-                                "score": det.categories[0].score
-                                if det.categories
-                                else 1.0,
-                            }
-                        )
-                detections.append({"frame_idx": idx, "faces": faces})
+            results = model.predict(frame, verbose=False, device=device)
+            faces = []
+            for res in results:
+                for box in res.boxes:
+                    if int(box.cls[0]) != COCO_CLASS_PERSON:
+                        continue
+                    x1, y1, x2, y2 = (float(v) for v in box.xyxy[0])
+                    faces.append(
+                        {
+                            "box": (
+                                max(0.0, x1),
+                                max(0.0, y1),
+                                x2 - x1,
+                                y2 - y1,
+                            ),
+                            "score": float(box.conf[0]),
+                        }
+                    )
+            detections.append({"frame_idx": idx, "faces": faces})
 
         return detections
 
-    def _track_interview_mesh(
+    def _track_speaker_mesh(
         self,
         cap: cv2.VideoCapture,
         start_frame: int,
@@ -168,8 +178,19 @@ class FaceTracker:
         interval: int,
         width: int,
         height: int,
+        person_count: int = 0,
     ) -> list[dict]:
-        """Detect faces and capture lip landmarks using MediaPipe FaceLandmarker Tasks API at interval steps."""
+        """Detect faces and capture lip landmarks using MediaPipe FaceLandmarker Tasks API at interval steps.
+
+        Used for PODCAST content so the crop cuts to the active speaker when 2+ faces are
+        present (EMA of lip distance identifies who is talking).  A single-face podcast
+        simply tracks that face; the speaker-switching logic in _generate_smooth_crops
+        naturally no-ops in that case.
+
+        The FaceLandmarker ``num_faces`` capacity is sized from the YOLO person count passed
+        in via ``person_count`` (from ``analysis["face_count"]``), adding ``FACE_COUNT_MARGIN``
+        headroom so partially-visible or angled faces are never missed.
+        """
         import cv2
         import numpy as np
         import mediapipe as mp
@@ -183,11 +204,14 @@ class FaceTracker:
                 model_path,
             )
 
+        num_faces = max(1, min(person_count + FACE_COUNT_MARGIN, FACE_LANDMARKER_MAX_FACES))
+        logger.info(f"Speaker tracking: {person_count} person(s) in video, tracking up to {num_faces} speakers.")
+
         base_options = python.BaseOptions(model_asset_path=str(model_path))
         options = vision.FaceLandmarkerOptions(
             base_options=base_options,
             running_mode=vision.RunningMode.IMAGE,
-            num_faces=3,
+            num_faces=num_faces,
         )
 
         detections = []
@@ -254,7 +278,7 @@ class FaceTracker:
         # scale (1080x960 for 2-stack, 1080x640 for collab) adds zero distortion.
         from src.core.constants import STACK2_PANEL_ASPECT, STACK3_PANEL_ASPECT
 
-        if content_type in (ContentType.PODCAST, ContentType.INTERVIEW):
+        if content_type == ContentType.PODCAST:
             # 9:16 full-height vertical pillar
             crop_w = int(height * (9.0 / 16.0))
             crop_h = height
@@ -279,9 +303,11 @@ class FaceTracker:
         # We will compute the target face center for each step frame
         step_centers = []
 
-        # For INTERVIEW mode, we also track speaker activity
+        # For PODCAST mode, we also track speaker activity when 2+ faces are present.
+        # EMA of per-face lip distance — responsive from frame 1, no warm-up window.
         active_speaker_idx = 0
-        speaker_lip_history: dict[int, list[float]] = {}
+        speaker_lip_ema: dict[int, float] = {}
+        _LIP_EMA_ALPHA = 0.35  # higher = faster reaction to new lip movement
 
         # We need to map face bounding boxes to consistent speaker IDs
         face_ids: list[tuple[float, float]] = []  # list of average x,y centers
@@ -329,25 +355,27 @@ class FaceTracker:
 
                 mapped_faces.append((face_id, face))
 
-            # Determine who is speaking in INTERVIEW mode
-            if content_type == ContentType.INTERVIEW:
-                # Update lip distance history
+            # Determine who is speaking in PODCAST mode (2+ faces: follow active speaker)
+            if content_type == ContentType.PODCAST:
+                # Update per-face EMA of lip distance
+                visible_fids = set()
                 for fid, face in mapped_faces:
-                    if fid not in speaker_lip_history:
-                        speaker_lip_history[fid] = []
-                    speaker_lip_history[fid].append(face.get("lip_distance", 0.0))
-                    # Keep last 15 samples (approx 3 seconds)
-                    if len(speaker_lip_history[fid]) > 15:
-                        speaker_lip_history[fid].pop(0)
+                    visible_fids.add(fid)
+                    lip_dist = face.get("lip_distance", 0.0)
+                    if fid not in speaker_lip_ema:
+                        speaker_lip_ema[fid] = lip_dist
+                    else:
+                        speaker_lip_ema[fid] = (
+                            _LIP_EMA_ALPHA * lip_dist
+                            + (1 - _LIP_EMA_ALPHA) * speaker_lip_ema[fid]
+                        )
 
-                # Active speaker has the highest variance of lip distance over the window
-                max_variance = -1.0
-                for fid, history in speaker_lip_history.items():
-                    if len(history) >= 3:
-                        var = float(np.var(history))
-                        if var > max_variance:
-                            max_variance = var
-                            active_speaker_idx = fid
+                # Active speaker = highest current EMA among visible faces
+                max_activity = -1.0
+                for fid, ema_val in speaker_lip_ema.items():
+                    if fid in visible_fids and ema_val > max_activity:
+                        max_activity = ema_val
+                        active_speaker_idx = fid
 
                 # Find the active speaker face in current frame
                 target_face = None
@@ -373,86 +401,106 @@ class FaceTracker:
                         "target_x": int(fx),
                         "target_y": int(fy),
                         "speaker_id": active_speaker_idx
-                        if content_type == ContentType.INTERVIEW
+                        if content_type == ContentType.PODCAST
                         else 0,
                     }
                 )
 
-        # Now interpolate frame-by-frame center points
+        # ── Static-cut crop: no camera pan, no EMA glide ─────────────────────────────────
+        # Build committed speaker segments with debounce:
+        #   - A candidate speaker must hold for >= SPEAKER_HOLD_SECONDS before we commit.
+        #   - Each committed segment owns a FIXED crop center (median of face-box centers
+        #     in that segment).  The crop is constant for the whole segment; switching to
+        #     a new speaker is a hard frame cut — zero viewer dizziness.
+        # For non-PODCAST (single face tracked) the step_centers list all share speaker_id 0
+        # → one segment → fully static center crop.
+        import numpy as np
+
+        hold_steps = max(1, int(SPEAKER_HOLD_SECONDS * fps / max(1, int(fps / 5))))
+
+        # --- Phase 1: debounced segment boundaries ----------------------------------------
+        # Each entry: {"speaker_id", "frame_idx", "target_x", "target_y"}
+        segments: list[dict] = []  # {"speaker_id", "start_f", "end_f", "cx", "cy"}
+
+        if not step_centers:
+            # No detections at all → static center fallback (handled by caller).
+            return self._generate_fallback_crops(start_frame, end_frame, fps, width, height)
+
+        committed_sid = step_centers[0]["speaker_id"]
+        pending_sid = committed_sid
+        pending_count = 0
+        seg_xs: list[float] = []
+        seg_ys: list[float] = []
+        seg_start = start_frame
+
+        def _close_segment(sid: int, xs: list, ys: list, sf: int, ef: int) -> dict:
+            cx = float(np.median(xs)) if xs else width / 2.0
+            cy = float(np.median(ys)) if ys else height / 2.0
+            # Clamp center so the crop box stays inside the frame.
+            cx = max(crop_w / 2.0, min(cx, width - crop_w / 2.0))
+            cy = max(crop_h / 2.0, min(cy, height - crop_h / 2.0))
+            return {"speaker_id": sid, "start_f": sf, "end_f": ef, "cx": cx, "cy": cy}
+
+        for sc in step_centers:
+            sid = sc["speaker_id"]
+            tx = float(sc["target_x"])
+            ty = float(sc["target_y"])
+            if sid == committed_sid:
+                # Still the committed speaker — accumulate.
+                pending_sid = sid
+                pending_count = 0
+                seg_xs.append(tx)
+                seg_ys.append(ty)
+            else:
+                if sid == pending_sid:
+                    pending_count += 1
+                else:
+                    pending_sid = sid
+                    pending_count = 1
+                # Commit the switch only after hold threshold is met.
+                if pending_count >= hold_steps:
+                    # Close current segment up to this step's frame.
+                    segments.append(
+                        _close_segment(committed_sid, seg_xs, seg_ys, seg_start, sc["frame_idx"])
+                    )
+                    committed_sid = sid
+                    pending_count = 0
+                    seg_start = sc["frame_idx"]
+                    seg_xs = [tx]
+                    seg_ys = [ty]
+                # While waiting for hold, still accumulate coords for pending speaker
+                # so if it commits we already have a good median.
+
+        # Close the final open segment.
+        segments.append(
+            _close_segment(committed_sid, seg_xs, seg_ys, seg_start, end_frame)
+        )
+
+        # --- Phase 2: emit one static crop box per frame ----------------------------------
+        # Build frame→segment index for O(n) lookup.
+        seg_by_frame: list[dict] = []  # ordered list (start_f, end_f, cx, cy)
+        for seg in segments:
+            seg_by_frame.append(seg)
+
         crops = []
+        seg_iter = iter(seg_by_frame)
+        cur_seg = next(seg_iter)
 
-        # Initial smoothed center
-        if step_centers:
-            curr_x = float(step_centers[0]["target_x"])
-            curr_y = float(step_centers[0]["target_y"])
-        else:
-            curr_x = width / 2
-            curr_y = height / 2
-
-        # Panning speed coefficient
-        alpha = 0.08  # Lower means smoother, more lag. Higher means faster transition.
-
-        # Track transitions for Interview switches
-        last_speaker = -1
+        def _crop_from_center(cx: float, cy: float) -> tuple[int, int]:
+            xm = int(cx - crop_w / 2)
+            xm = max(0, min(xm, width - crop_w))
+            ym = int(cy - crop_h / 2)
+            ym = max(0, min(ym, height - crop_h))
+            return xm, ym
 
         for f_idx in range(start_frame, end_frame):
-            # Find closest past and future step center
-            past_step = None
-            future_step = None
-            for sc in step_centers:
-                if sc["frame_idx"] <= f_idx:
-                    past_step = sc
-                elif sc["frame_idx"] > f_idx and not future_step:
-                    future_step = sc
+            # Advance segment when this frame is past the current one's end.
+            while f_idx >= cur_seg["end_f"]:
+                try:
+                    cur_seg = next(seg_iter)
+                except StopIteration:
                     break
-
-            # Interpolate target coordinate
-            if past_step and future_step:
-                # Simple linear interpolation between detection steps
-                ratio = (f_idx - past_step["frame_idx"]) / (
-                    future_step["frame_idx"] - past_step["frame_idx"]
-                )
-                target_x = past_step["target_x"] + ratio * (
-                    future_step["target_x"] - past_step["target_x"]
-                )
-                target_y = past_step["target_y"] + ratio * (
-                    future_step["target_y"] - past_step["target_y"]
-                )
-                speaker_id = past_step["speaker_id"]
-            elif past_step:
-                target_x = past_step["target_x"]
-                target_y = past_step["target_y"]
-                speaker_id = past_step["speaker_id"]
-            else:
-                target_x = width / 2
-                target_y = height / 2
-                speaker_id = -1
-
-            # Adjust panning speed on speaker transition
-            if (
-                content_type == ContentType.INTERVIEW
-                and speaker_id != last_speaker
-                and last_speaker != -1
-            ):
-                # Faster alpha during transition (0.3s transition is approx 10 frames at 30fps)
-                alpha_val = 0.22
-            else:
-                alpha_val = alpha
-
-            if speaker_id != -1:
-                last_speaker = speaker_id
-
-            # Apply EMA smoothing to camera pan
-            curr_x = alpha_val * target_x + (1 - alpha_val) * curr_x
-            curr_y = alpha_val * target_y + (1 - alpha_val) * curr_y
-
-            # Keep crop window inside image boundaries
-            x_min = int(curr_x - crop_w / 2)
-            x_min = max(0, min(x_min, width - crop_w))
-
-            y_min = int(curr_y - crop_h / 2)
-            y_min = max(0, min(y_min, height - crop_h))
-
+            x_min, y_min = _crop_from_center(cur_seg["cx"], cur_seg["cy"])
             crops.append(
                 {
                     "timestamp": (f_idx - start_frame) / fps,

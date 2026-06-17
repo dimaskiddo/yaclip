@@ -59,20 +59,25 @@ clip_selection:
 video_processing:
   output_dir: "./workspace/clips"
   device: "auto"                       # auto | cpu | cuda
-  content_type_override: "auto"        # auto | PODCAST | INTERVIEW | JUST_CHAT | GAMING_SOLO | GAMING_COLLAB | DONATION_OVERLAY
+  content_type_override: "auto"        # auto | PODCAST | JUST_CHAT | GAMING_SOLO | GAMING_COLLAB | DONATION_OVERLAY
   detection_confidence_threshold: 0.6  # Below this, detection falls back to PODCAST and logs a warning
   auto_face_tracking: true             # Smooth face-centered crop for all layout modes
   preserve_donation_overlays: true     # Master on/off for donation/MediaShare handling. true = auto-detect
                                        #   popups, route clips to DONATION_OVERLAY layout, and composite
                                        #   Trakteer/MediaShare alerts. false = skip all donation scans
                                        #   (faster) and never auto-route to DONATION_OVERLAY.
+  donation_overlay_exclude_types:      # Content types excluded from per-clip donation routing.
+    - "PODCAST"                        #   PODCAST = pre-recorded content; live donation popups never appear.
+    - "GAMING_COLLAB"                  #   GAMING_COLLAB = popup must not displace a collab panel in the 3-stack.
+                                       #   Remove a type from this list to allow donation routing for it.
+                                       #   Valid values: PODCAST | JUST_CHAT | GAMING_SOLO | GAMING_COLLAB
   default_resolution: "1080p"
   region_detection:                    # YOLOv8n visual analysis: facecam / gameplay / mediashare regions
     enabled: true                      # false = fall back to motion/face heuristics only
     device: "auto"                     # auto | cpu | cuda
     model_name: "yolov8n.pt"           # Ultralytics COCO nano model (auto-downloaded to workspace/models/)
     sample_frames: 4                   # Frames sampled per candidate/clip window (sparse = fast)
-    gameplay_follow_motion: true       # true = gentle centred pan follows char (small move) | false = static centred crop
+    gameplay_follow_motion: false      # false = static centred crop | true = animated motion-following pan
     gameplay_zoom: 1.25                # >1 zooms the gameplay panel tighter (1.25 = 25% closer, crops the ticker out)
   subtitles:
     enabled: true
@@ -98,7 +103,8 @@ workspace_cleanup:
   retention_days:
     videos: 3                          # Raw yt-dlp downloads — set to -1 to disable purge for this dir
     audios: 3                          # Extracted audio tracks
-    subtitles: 3                       # Full-video STT transcriptions and AI JSON results — set to -1 to disable
+    subtitles: 3                       # ASS subtitle files
+    data: 3                            # STT transcripts + AI/cache JSON (clip proposals, word timings, mediashare cache)
     tmp: 1                             # FFmpeg scratch files — purge aggressively; 0 = purge every run
   protected_dirs:                      # These directories are NEVER touched by auto-purge
     - "bin"

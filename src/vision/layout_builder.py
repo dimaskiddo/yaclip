@@ -54,7 +54,7 @@ class LayoutBuilder:
 
         # Determine LayoutMode. DONATION_OVERLAY is a per-clip type (promoted when a mediashare
         # popup is in the window); it reuses the 2-stack geometry with the popup forced bottom.
-        if content_type in (ContentType.PODCAST, ContentType.INTERVIEW):
+        if content_type == ContentType.PODCAST:
             layout_mode = LayoutMode.SINGLE_VERTICAL
         elif content_type in (
             ContentType.GAMING_SOLO,
@@ -78,11 +78,9 @@ class LayoutBuilder:
         ):
             layout_mode = LayoutMode.SINGLE_VERTICAL
             crops = self._facecam_single_vertical_crops(analysis, width, height)
-            logger.info("Facecam dominates frame → single vertical (no stack).")
+            logger.info("Webcam fills most of the frame — using single vertical layout.")
 
-        logger.info(
-            f"Assembling layout for {content_type} (LayoutMode: {layout_mode.value})"
-        )
+        logger.info(f"Building {content_type.value} layout ({layout_mode.value}).")
 
         spec: dict = {
             "content_type": content_type.value,
@@ -144,12 +142,11 @@ class LayoutBuilder:
             width, height, STACK2_PANEL_ASPECT
         )
         spec["bottom_track"] = analysis.get("gameplay_track") or []
-        logger.info(
-            f"Mode B bottom = gameplay (centred crop {spec['bottom_crop']}, "
-            f"track {len(spec['bottom_track'])} keyframes)"
-        )
+        kf = len(spec["bottom_track"])
+        logger.info(f"Layout: webcam top, gameplay bottom ({kf} motion keyframe(s)).")
+        logger.debug(f"Gameplay crop box: {spec['bottom_crop']}")
 
-    # ------------------------------------------------------- Donation overlay
+    # ------------------------------------------------------- Donation Overlay
 
     def _fill_donation(
         self, spec: dict, analysis: dict, overlay_data: list[dict], width: int, height: int
@@ -163,7 +160,8 @@ class LayoutBuilder:
             spec["bottom_crop"] = self._expand_box_to_aspect(
                 *mediashare_box, width, height, STACK2_PANEL_ASPECT
             )
-            logger.info(f"Donation overlay bottom = {spec['bottom_crop']}")
+            logger.info("Layout: webcam top, donation popup bottom.")
+            logger.debug(f"Donation popup crop box: {spec['bottom_crop']}")
         else:
             # Promoted to donation but no usable popup box (e.g. content_type forced via config) →
             # degrade gracefully to the gameplay bottom rather than a black panel.
@@ -172,7 +170,7 @@ class LayoutBuilder:
                 width, height, STACK2_PANEL_ASPECT
             )
             spec["bottom_track"] = analysis.get("gameplay_track") or []
-            logger.info("Donation bottom = gameplay fallback (no usable popup box).")
+            logger.info("Layout: webcam top, gameplay bottom (no popup box found — using gameplay fallback).")
 
     # ---------------------------------------------------------------- Mode C
 
@@ -241,7 +239,7 @@ class LayoutBuilder:
         )
         spec["gameplay_track"] = analysis.get("gameplay_track") or []
 
-    # --------------------------------------------------------------- helpers
+    # --------------------------------------------------------------- Helpers
 
     def _facecam_crop(
         self, analysis: dict, width: int, height: int, aspect: float

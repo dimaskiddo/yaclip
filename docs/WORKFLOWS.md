@@ -51,17 +51,17 @@ flowchart TD
     SaveHeatmap --> DetectionStart
 
     subgraph S3["3. Content Type Detection"]
-        DetectionStart[sample_video_frames] --> HUDCheck{Gaming HUD detected?}
-        HUDCheck -- Yes, multi-face --> ColabType[ContentType = GAMING_COLLAB]
-        HUDCheck -- Yes, single face --> SoloType[ContentType = GAMING_SOLO]
-        HUDCheck -- No --> FaceCount{Multiple persistent<br/>face regions +<br/>alternating speech?}
-        FaceCount -- Yes --> InterviewType[ContentType = INTERVIEW]
+        DetectionStart[sample_video_frames] --> GameplayGate{Gameplay confirmed?<br/>open_area_frac ≥ 0.45<br/>AND motion/HUD/hint}
+        GameplayGate -- Yes, multi-cam --> ColabType[ContentType = GAMING_COLLAB]
+        GameplayGate -- Yes, single cam --> SoloType[ContentType = GAMING_SOLO]
+        GameplayGate -- No --> FaceCount{Multiple persistent<br/>face regions?}
+        FaceCount -- Yes --> PodcastMulti[ContentType = PODCAST<br/>active-speaker tracking]
         FaceCount -- No --> OverlayCheck{Donation overlay<br/>signatures detected?}
         OverlayCheck -- Yes --> JustChatType[ContentType = JUST_CHAT]
         OverlayCheck -- No --> PodcastType[ContentType = PODCAST]
         ColabType --> ConfCheck
         SoloType --> ConfCheck
-        InterviewType --> ConfCheck
+        PodcastMulti --> ConfCheck
         JustChatType --> ConfCheck
         PodcastType --> ConfCheck
         ConfCheck{Confidence ≥ threshold?}
@@ -132,7 +132,7 @@ flowchart TD
 
         ParseJSON["Parse JSON — exactly target_clips results<br/>strip_json_markdown"] --> RemapTS[Remap chunk timestamps<br/>back to original video timeline]
         RemapTS --> Dedup[Deduplicate clips — 5s overlap tolerance]
-        Dedup --> SaveJSON["Save ./workspace/subtitles/{id}.json<br/>Save ./workspace/subtitles/{id}.txt"]
+        Dedup --> SaveJSON["Save ./workspace/data/{id}.json<br/>Save ./workspace/data/{id}.txt"]
     end
 
     subgraph S6["6. Review Gate"]
@@ -146,22 +146,20 @@ flowchart TD
 
     subgraph S7["7. Vision & Layout Engine"]
         VisionStart["For each approved clip"] --> SampleFrames["Sample frames from clip time range"]
-        SampleFrames --> DonationGate{"mediashare_present?<br/>(preserve_donation_overlays on,<br/>no explicit content_type)"}
+        SampleFrames --> DonationGate{"mediashare_present?<br/>(preserve_donation_overlays on,<br/>type not in donation_overlay_exclude_types,<br/>no explicit content_type)"}
         DonationGate -- "Yes" --> ModeDonation["DONATION_OVERLAY (per-clip)<br/>Facecam Top (always fits)<br/>Donation Popup Bottom (forced)"]
-        DonationGate -- "No" --> LayoutRoute{ContentType?}
+        DonationGate -- "No / excluded type" --> LayoutRoute{ContentType?}
 
-        LayoutRoute -- "PODCAST" --> ModeA_Basic["Mode A — Single Vertical<br/>Face tracker centers on speaker<br/>No switching"]
-        LayoutRoute -- "INTERVIEW" --> ModeA_Interview["Mode A — Single Vertical<br/>+ Speaker Switch<br/>Detect active speaker via<br/>diarization / lip-movement<br/>Smooth 0.3–0.5s crop pan on switch"]
+        LayoutRoute -- "PODCAST" --> ModeA["Mode A — Single Vertical<br/>YOLO count + margin → dynamic FaceLandmarker capacity<br/>2+ faces: active-speaker cut via lip EMA / static center on speaker<br/>Single face: static center on that face"]
         LayoutRoute -- "JUST_CHAT" --> ModeB_Chat["Mode B — Stacked Split-Screen<br/>Facecam Top (always fits)<br/>Streamer/Gameplay Bottom"]
         LayoutRoute -- "GAMING_SOLO" --> ModeB["Mode B — 2-Stack<br/>Facecam Top (always fits)<br/>Motion-Tracked Gameplay Bottom"]
         LayoutRoute -- "GAMING_COLLAB" --> ModeC["Mode C — Multi-Face Collab Stack<br/>Primary Facecam Top<br/>Gameplay Center ← ALWAYS CENTER<br/>Collab Face Grid Bottom"]
 
         ModeDonation --> LayoutMeta
-        ModeA_Interview --> LayoutMeta
+        ModeA --> LayoutMeta
         ModeB --> LayoutMeta
         ModeC --> LayoutMeta
         ModeB_Chat --> LayoutMeta
-        ModeA_Basic --> LayoutMeta
 
         LayoutMeta[Output: Layout metadata JSON<br/>crop coords · stack regions · facecam fill mode]
     end
@@ -227,14 +225,14 @@ flowchart TD
 
 Runs immediately after download, before any AI analysis. Samples frames at regular intervals from the downloaded video and processes three detection signals:
 
-**Step 1 — Gaming HUD Detection:**
-Uses template matching or a lightweight frame classifier to detect persistent UI elements: health bars, minimaps, ammo counters, score displays, ability cooldown icons. If a HUD is consistently present across sampled frames — **or** the saved metadata marks the video as the YouTube "Gaming" category (`gaming_hint`, which routes to gaming even when the HUD is small/sub-threshold) — the video is classified as gaming. The **YOLO facecam detector** (`VisualAnalyzer.detect_facecams`) then splits `GAMING_SOLO` vs `GAMING_COLLAB` (≥2 cams ⇒ collab) — it counts persistent, cam-sized person boxes near a frame edge, which catches small corner webcams that MediaPipe misses while rejecting interior game characters.
+**Step 1 — Gameplay Gate:**
+`VisualAnalyzer.detect_gameplay_presence` measures two signals over the sampled frames: `open_area_frac` (fraction of the frame NOT covered by person boxes — large ⇒ a game screen is visible) and `non_person_motion` (mean frame-diff in non-person regions across three short consecutive-frame bursts — high ⇒ the screen is animated). Gaming classification requires **both** `open_area_frac ≥ 0.45` AND (`non_person_motion ≥ 4.0` OR a high HUD score OR the YouTube "Gaming" category hint). A podcast studio set may fool the HUD heuristic but fails on `open_area_frac` (4 people fill the frame → no open screen area). When gameplay is confirmed, the **YOLO facecam detector** (`VisualAnalyzer.detect_facecams`) splits `GAMING_SOLO` vs `GAMING_COLLAB` (≥2 persistent cam-sized edge boxes ⇒ collab).
 
 **Step 2 — Multi-Face Analysis:**
-If no HUD is found, MediaPipe FaceDetection counts distinct, spatially-separated, persistent face regions. When two or more are found alongside alternating speech activity (via lip-movement detection or audio energy per face region), the video is classified as `INTERVIEW`.
+If gameplay is NOT confirmed, MediaPipe FaceDetection counts distinct, spatially-separated, persistent face regions. When two or more are found → `PODCAST` with active-speaker tracking enabled (camera follows whoever is speaking via EMA of lip distance, with FaceLandmarker capacity sized dynamically to the detected face count).
 
 **Step 3 — Donation Overlay Sampling:**
-For single-face, no-HUD content, the detector samples for known donation alert signatures: bright pop-up boxes in screen corners, Trakteer.ID visual patterns, MediaShare full-screen video intrusions. If found → `JUST_CHAT`.
+For single-face, no-gameplay content, the detector samples for known donation alert signatures: bright pop-up boxes in screen corners, Trakteer.ID visual patterns, MediaShare full-screen video intrusions. If found → `JUST_CHAT`.
 
 **Fallback:**
 If all confidence scores are below `detection_confidence_threshold` (default: 0.6), the engine falls back to `PODCAST`, logs a warning with the ambiguous frame samples, and continues. The user can manually override via the WebUI review panel.
@@ -299,7 +297,7 @@ STT and LLM run as two independent steps. Each resolves its own provider from co
 **Post-processing (all paths):**
 - Map chunk-relative timestamps to original video: `original_start = chunk_offset + clip.start_time`.
 - Deduplicate with 5s overlap tolerance. Sort chronologically.
-- Save to `./workspace/subtitles/{id}.json` and `{id}.txt`.
+- Save to `./workspace/data/{id}.json` and `{id}.txt`.
 - Clean temp audio slices from `./workspace/tmp/`.
 
 ---
@@ -325,17 +323,12 @@ In Manual Mode, the parsed timestamp ranges appear here for confirmation before 
 For each approved clip, using the locked `ContentType` from pipeline state:
 
 **Mode A — PODCAST:**
-Face tracker finds the single dominant speaker, generates a 9:16 crop box centered on their face with damped smooth panning. No overlay detection.
-
-**Mode A — INTERVIEW:**
-1. Face tracker registers two or more distinct face regions at clip start.
-2. Speaker activity is monitored per face region (lip-movement analysis or audio energy correlation).
-3. When the active speaker changes, the crop box executes a smooth 0.3–0.5s eased pan transition to the new speaker's face region.
-4. The interview subject (person being interviewed) receives crop priority during simultaneous or ambiguous activity.
-5. No donation overlay detection.
+Face tracker generates a **static 9:16 crop** centered on the active speaker — no panning or gliding.
+- **Single face**: static center on that speaker via MediaPipe FaceDetector.
+- **Two or more faces** (panel discussion, podcast, interview, Q&A): `face_count` = the maximum number of high-confidence YOLO person boxes visible in any **single sampled frame** (confidence ≥ `PERSON_COUNT_CONF_MIN`, default 0.5), so 4 people simultaneously on screen counts as 4. The FaceLandmarker capacity (`num_faces`) is set to `min(face_count + FACE_COUNT_MARGIN, FACE_LANDMARKER_MAX_FACES)`. An EMA of lip distance per face (alpha=0.35) identifies who is currently speaking — responsive from the first frame. The crop **statically holds on the active speaker's face center**; once a new speaker stays active for `SPEAKER_HOLD_SECONDS` (default 1 s), the crop **cuts** (not pans) to them — `_get_face_crop_filter(interpolate=False)` emits a stepwise constant FFmpeg `crop=` expression; no slope ramp between keyframes. The most persistent face receives crop priority during simultaneous or ambiguous activity.
 
 **Per-clip donation promotion (runs before the routing below):**
-The renderer promotes any clip whose window contains a transient mediashare/donation popup (`mediashare_present`) to `DONATION_OVERLAY` (`ClipRenderer._apply_donation_override`, gated by `preserve_donation_overlays`; an explicit per-clip `content_type` is respected). Promoted clips use the DONATION_OVERLAY layout below instead of their base type's layout. This is the only layout that composites donations — Modes A/B/C do not.
+The renderer promotes any clip whose window contains a transient mediashare/donation popup (`mediashare_present`) to `DONATION_OVERLAY` (`ClipRenderer._apply_donation_override`, gated by `preserve_donation_overlays`; an explicit per-clip `content_type` is respected). Types listed in `video_processing.donation_overlay_exclude_types` (default: `["PODCAST", "GAMING_COLLAB"]`) are **never promoted**: `PODCAST` is pre-recorded and carries no live donation widgets; `GAMING_COLLAB` keeps its 3-stack so the popup does not displace a collab panel. This list is user-configurable. Promoted clips use the DONATION_OVERLAY layout below instead of their base type's layout. This is the only layout that composites donations — Modes A/B/C do not.
 
 **DONATION_OVERLAY (per-clip):**
 2-stack reusing the Mode B geometry: **Top** = facecam (always fits). **Bottom** = the donation/mediashare popup, forced — the popup box (appearance/disappearance detector, colour-overlay fallback) expanded to the panel aspect with blurred-background fill; the webcam inset is excluded so the face never duplicates top+bottom. Degrades to the gameplay bottom if forced but no popup box is found.
@@ -344,10 +337,10 @@ The renderer promotes any clip whose window contains a transient mediashare/dona
 2-stack layout (two 1080×960 panels): facecam always-fits at top; bottom = a lower-region streamer / gameplay crop. Donations handled by the promotion above.
 
 **Mode B — GAMING_SOLO:**
-2-stack layout (two 1080×960 panels = 1080×1920). **Top = Facecam (always fits)** — the stable cam box is expanded ~1.45× and shaped to the panel aspect, then crop-filled into the panel **sharp, prominent (cam ≈69% of panel height), with no blur and no left/right bars** (mild upscale when the cam is small). **Bottom** = the **centered panel-aspect gameplay crop** zoomed by `gameplay_zoom` (default 1.25× — drops the bottom ticker from the panel). When `gameplay_follow_motion: true`: camera is **static-first** — holds position until the motion weighted-centroid drifts beyond a deadzone (≈6% panel width), then glides toward the target at ≤1.2% panel width per keyframe (imperceptible to viewers). No black/subtitle-pad third zone.
+2-stack layout (two 1080×960 panels = 1080×1920). **Top = Facecam (always fits)** — the stable cam box is expanded ~1.45× and shaped to the panel aspect, then crop-filled into the panel **sharp, prominent (cam ≈69% of panel height), with no blur and no left/right bars** (mild upscale when the cam is small). **Bottom** = the **fully static, centered panel-aspect gameplay crop** zoomed by `gameplay_zoom` (default 1.25× — drops the bottom ticker from the panel). The crop center is computed once at analysis time by `_motion_region` (motion-centroid–centered, cam-band-aware) and held constant — no pan, no animation. The legacy `gameplay_follow_motion` pan is available as an opt-in via config but disabled by default. No black/subtitle-pad third zone.
 
 **Mode C — GAMING_COLLAB:**
-Three-region stack (each 1080×640): Primary Facecam Top, Gameplay Center (ALWAYS center), Collaborator Bottom. Both cams come from the reliable **`detect_facecams` pair** (locked once video-wide — the same detector that drives the SOLO-vs-COLLAB split), passed to `analyze_window(facecam_boxes=…)` as `facecam_box` (top) + `collab_box` (bottom); the per-clip `persons` heuristic is only a fallback when the pair is absent. **Both cam boxes are excluded from the gameplay centre** — masked out of the motion search, and when they sit in the bottom third the crop is shrunk + biased upward so its bottom edge clears the highest bottom cam — so neither corner cam bleeds into the gameplay (no "double facecam"). A `GAMING_COLLAB` clip **stays a 3-stack even with a donation** (the donation promotion is skipped for collab).
+Three-region stack (each 1080×640): Primary Facecam Top, Gameplay Center (ALWAYS center), Collaborator Bottom. Both cams come from the reliable **`detect_facecams` pair** (locked once video-wide — the same detector that drives the SOLO-vs-COLLAB split), passed to `analyze_window(facecam_boxes=…)` as `facecam_box` (top) + `collab_box` (bottom); the per-clip `persons` heuristic is only a fallback when the pair is absent. **Both cam boxes are excluded from the gameplay centre** — masked out of the motion search, and when they sit in the bottom third the crop is shrunk + biased upward so its bottom edge clears the highest bottom cam — so neither corner cam bleeds into the gameplay (no "double facecam"). A `GAMING_COLLAB` clip **stays a 3-stack even with a donation** (excluded from donation promotion by default via `donation_overlay_exclude_types`).
 
 **Output**: Structured layout metadata JSON passed to `ffmpeg_builder.py`.
 
@@ -393,13 +386,14 @@ Three-region stack (each 1080×640): Primary Facecam Top, Gameplay Center (ALWAY
 |---|---|---|
 | Raw video | `./workspace/videos/` | `{video_id}.mp4` |
 | Audio track | `./workspace/audios/` | `{video_id}.aac` |
-| STT transcript | `./workspace/subtitles/` | `{video_id}.txt` |
-| AI clip proposals | `./workspace/subtitles/` | `{video_id}.json` |
-| STT word cache (reused for subtitles) | `./workspace/subtitles/` | `{video_id}_words.json` (per-candidate word-level segments, absolute times) |
-| Video metadata | `./workspace/subtitles/` | `{video_id}_metadata.json` (title/category/tags → LLM game context) |
-| YouTube heatmap | `./workspace/subtitles/` | `{video_id}_heatmap_youtube.json` |
-| Energy pseudo-heatmap | `./workspace/subtitles/` | `{video_id}_heatmap_energy.json` |
+| STT transcript | `./workspace/data/` | `{video_id}.txt` |
+| AI clip proposals | `./workspace/data/` | `{video_id}.json` |
+| STT word cache (reused for subtitles) | `./workspace/data/` | `{video_id}_words.json` (per-candidate word-level segments, absolute times) |
+| Mediashare scan cache | `./workspace/data/` | `{video_id}_mediashare.json` (per-candidate donation scan results) |
+| Video metadata | `./workspace/data/` | `{video_id}_metadata.json` (title/category/tags → LLM game context) |
+| YouTube heatmap | `./workspace/data/` | `{video_id}_heatmap_youtube.json` |
+| Energy pseudo-heatmap | `./workspace/data/` | `{video_id}_heatmap_energy.json` |
 | Temp audio slices | `./workspace/tmp/` | `{video_id}_slice_{i}.aac` |
 | WSL cookie copy | `./workspace/tmp/` | `wsl_{browser}_cookies/` |
-| Subtitle script | `./workspace/tmp/` | `{video_id}_clip_{i}.ass` |
+| Subtitle script | `./workspace/subtitles/` | `subs_{title}_{start}.ass` |
 | Final clips | `./workspace/clips/` | `{title}_clips_{i}.mp4` |
