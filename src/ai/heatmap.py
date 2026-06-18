@@ -15,7 +15,7 @@ class HeatmapAnalyzer:
     def __init__(self) -> None:
         self.config = load_config()
 
-    def analyze_heatmap(self, video_id: str) -> List[Dict]:
+    def analyze_heatmap(self, video_id: str) -> list[dict]:
         """
         Parses the yt-dlp heatmap JSON file and extracts the most viral (replayed) segments.
         """
