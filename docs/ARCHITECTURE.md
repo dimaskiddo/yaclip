@@ -106,8 +106,8 @@ All runtime assets live inside `./workspace/` within the project root. The OS te
 | `videos/` | Raw yt-dlp downloads (`{video_id}.mp4`) |
 | `audios/` | Extracted audio tracks (`{video_id}.aac`) |
 | `subtitles/` | `.ass` subtitle files for rendered clips — 3-day retention |
-| `data/` | STT transcripts (`.txt`), AI clip results (`.json`), per-candidate word cache (`{id}_words.json`), mediashare scan cache, heatmap data, video metadata — 3-day retention |
-| `tmp/` | Scratch space: audio slices (`{video_id}_slice_N.aac`), slice STT transcripts for debugging (`.txt`), WSL cookie copies — 1-day retention |
+| `data/` | STT transcripts (`.txt`), AI clip results (`.json`), per-candidate word cache (`{video_id}_words.json`), mediashare scan cache, heatmap data, video metadata — 3-day retention |
+| `tmp/` | Scratch space: audio slices (`audio_{video_id}_{i}.aac`), slice STT transcripts for debugging (`.txt`), WSL cookie copies — 1-day retention |
 
 **Workspace Integrity** (`src/core/workspace.py`): On every boot, checks each directory and auto-downloads any missing binary (FFmpeg via `static-ffmpeg`), Bun JS runtime, or subtitle font. Injects `./workspace/bin` into `PATH` and sets `HF_HOME=./workspace/models/hf/` so all HuggingFace Hub model downloads are routed to the workspace automatically — no `cache_dir` parameter is needed.
 

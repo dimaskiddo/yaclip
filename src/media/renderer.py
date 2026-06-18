@@ -348,7 +348,7 @@ class ClipRenderer:
             for idx in pending:
                 clip = clips[idx]
                 start_t, end_t = clip["start_time"], clip["end_time"]
-                slice_path = TMP_DIR / f"subaud_{idx + 1}_{start_t:.1f}.{audio_ext}"
+                slice_path = TMP_DIR / f"audio_{video_path.stem}_{idx + 1}.{audio_ext}"
                 ok = self.slicer.slice_audio_chunk(
                     str(audio_path), start_t, end_t, str(slice_path)
                 )
@@ -427,6 +427,7 @@ class ClipRenderer:
         rendered: list[Path] = []
         audio_path = self._resolve_audio_track(video_path)
 
+        video_id = video_path.stem
         for idx, clip in enumerate(clips):
             start_t, end_t = clip["start_time"], clip["end_time"]
             duration = end_t - start_t
@@ -435,7 +436,7 @@ class ClipRenderer:
             safe_title = "".join(
                 c if c.isalnum() or c in ("-", "_") else "_" for c in title
             ).strip("_")
-            output_path = output_dir / f"{safe_title}_{start_t:.1f}_{end_t:.1f}.mp4"
+            output_path = output_dir / f"clips_{video_id}_{idx + 1}_{safe_title}.mp4"
 
             logger.info(
                 f"--- Rendering Clip {idx + 1}/{len(clips)}: {title} "
@@ -478,7 +479,7 @@ class ClipRenderer:
                     content_type, analyses[idx], face_data, overlay_data
                 )
 
-                ass_path = SUBTITLES_DIR / f"subs_{safe_title}_{start_t:.1f}.ass"
+                ass_path = SUBTITLES_DIR / f"subs_{video_id}_{idx + 1}.ass"
                 has_subs = self.subtitle_gen.generate_ass(
                     segments_per_clip[idx], ass_path, clip_start=start_t
                 )

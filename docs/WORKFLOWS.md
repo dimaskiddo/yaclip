@@ -178,7 +178,7 @@ flowchart TD
         GenASS --> BuildFilter
         BuildFilter["Build FFmpeg filter_complex<br/>(crop + scale + vstack + overlay + subtitles)"]
         BuildFilter --> Encode["FFmpeg encode → 9:16 MP4<br/>(subtitles hard-burned via vf)"]
-        Encode --> Export["Export ./workspace/clips/{title}_clips_{i}.mp4"]
+        Encode --> Export["Export ./workspace/clips/clips_{video_id}_{i}_{title}.mp4"]
         Export --> TmpCleanup["Delete ./workspace/tmp/ scratch files"]
     end
 
@@ -371,7 +371,7 @@ Shared flags `-profile:v high -level 4.1 -pix_fmt yuv420p -r 30 -g 60 -movflags 
 **Encoding** (`renderer.py`):
 - Single FFmpeg subprocess call (list form, explicit timeout, stderr captured).
 - Subtitles hard-burned via `vf="subtitles=..."` — no soft-sub reliance.
-- Output: `./workspace/clips/{title}_clips_{i}.mp4` at configured resolution.
+- Output: `./workspace/clips/clips_{video_id}_{i}_{title}.mp4` at configured resolution.
 - Temp files in `./workspace/tmp/` deleted after successful render.
 
 ---
@@ -397,7 +397,7 @@ Shared flags `-profile:v high -level 4.1 -pix_fmt yuv420p -r 30 -g 60 -movflags 
 | Video metadata | `./workspace/data/` | `{video_id}_metadata.json` (title/category/tags → LLM game context) |
 | YouTube heatmap | `./workspace/data/` | `{video_id}_heatmap_youtube.json` |
 | Energy pseudo-heatmap | `./workspace/data/` | `{video_id}_heatmap_energy.json` |
-| Temp audio slices | `./workspace/tmp/` | `{video_id}_slice_{i}.aac` |
+| Temp audio slices | `./workspace/tmp/` | `audio_{video_id}_{i}.aac` |
+| Subtitle script | `./workspace/subtitles/` | `subs_{video_id}_{i}.ass` |
+| Final clips | `./workspace/clips/` | `clips_{video_id}_{i}_{title}.mp4` |
 | WSL cookie copy | `./workspace/tmp/` | `wsl_{browser}_cookies/` |
-| Subtitle script | `./workspace/subtitles/` | `subs_{title}_{start}.ass` |
-| Final clips | `./workspace/clips/` | `{title}_clips_{i}.mp4` |

@@ -447,8 +447,8 @@ class AIPipeline:
                 i, spike = i_spike
                 centre = (float(spike["start_time"]) + float(spike["end_time"])) / 2.0
                 s_start = max(0.0, centre - half_window)
-                s_end = centre + half_window  # slicer caps the end at the file end
-                chunk_path = str(TMP_DIR / f"{video_id}_slice_{i + 1}.aac")  # 1-based index
+                s_end = centre + half_window
+                chunk_path = str(TMP_DIR / f"audio_{video_id}_{i + 1}.aac")
                 success = slicer.slice_audio_chunk(audio_path, s_start, s_end, chunk_path)
                 return (i, spike, chunk_path, s_start, s_end, success)
 
