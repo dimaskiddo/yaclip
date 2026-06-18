@@ -1,20 +1,33 @@
 FROM python:3.11-slim-bookworm
+MAINTAINER Dimas Restu Hidayanto <drh.dimasrestu@gmail.com>
+
+LABEL maintainer="Dimas Restu Hidayanto <drh.dimasrestu@gmail.com>"
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    DEBIAN_FRONTEND=noninteractive \
+    TZ=Asia/Jakarta \
+    HOME=/
 
 WORKDIR /usr/app/yaclip
 
 RUN apt-get -y update --allow-releaseinfo-change \
+    && apt-get -y dist-upgrade \
     && apt-get -y install --no-install-recommends \
         libegl1 \
         libgles2 \
         libgl1 \
-        libglib2.0-0 \
         ffmpeg \
         git \
-        build-essential \
-        cmake \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get -y purge --autoremove \
+    && apt-get -y clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --no-cache-dir --break-system-packages --upgrade \
+        pip \
+        setuptools \
+        wheel \
+        uv
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY requirements.txt .
 
 RUN uv venv \
