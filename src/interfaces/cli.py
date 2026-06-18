@@ -215,13 +215,13 @@ def cache_purge(
     target: str | None = typer.Argument(
         None, help="Specific dir to purge (videos|audios|subtitles|tmp|clips); all if omitted"
     ),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Log what would be deleted, delete nothing"),
+    concern: bool = typer.Option(False, "--concern", help="Will run the purging with user concern confirmed"),
 ) -> None:
     """Manually purge the workspace cache (bypasses retention)."""
-    if dry_run:
+    if not concern:
         load_config().workspace_cleanup.dry_run = True
-    logger.info(f"Manual cache purge (target: {target or 'all'}, dry_run: {dry_run})...")
-    run_purge_cycle(force=True, specific_target=target)
+    logger.info(f"Manual cache purge (target: {target or 'all'}, concern: {concern})...")
+    run_purge_cycle(force=concern, specific_target=target)
 
 
 @cli.command("clean-workspace", hidden=True)
