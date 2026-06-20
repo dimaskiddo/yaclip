@@ -3,7 +3,6 @@ from __future__ import annotations
 import yaml
 
 from pathlib import Path
-from typing import List
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from src.core.exceptions import ConfigValidationError
@@ -113,7 +112,7 @@ class DownloaderConfig(BaseModel):
 class ClipSelectionConfig(BaseModel):
     mode: str = Field(default="auto")
     auto_strategy: str = Field(default="hybrid")
-    candidate_multiplier: int = Field(default=2, ge=1, le=5)
+    candidate_margin: int = Field(default=2, ge=0, le=15)
     require_review_before_render: bool = Field(default=True)
     heatmap_threshold_percentile: int = Field(default=85)
     min_clips: int = Field(default=1)
@@ -195,12 +194,12 @@ class VideoProcessingConfig(BaseModel):
     content_type_override: str = Field(default="auto")
     detection_confidence_threshold: float = Field(default=0.6)
     auto_face_tracking: bool = Field(default=True)
-    preserve_donation_overlays: bool = Field(default=True)
+    preserve_donation_overlays: bool = Field(default=False)
     # Content types excluded from per-clip donation-overlay promotion.
     # PODCAST is excluded because it is pre-recorded (no live donation widgets).
     # GAMING_COLLAB is excluded because the popup must not replace one of the three collab panels.
     # Valid values: PODCAST | JUST_CHAT | GAMING_SOLO | GAMING_COLLAB | DONATION_OVERLAY
-    donation_overlay_exclude_types: List[str] = Field(
+    donation_overlay_exclude_types: list[str] = Field(
         default_factory=lambda: ["PODCAST", "GAMING_COLLAB"]
     )
     default_resolution: str = Field(default="1080p")
@@ -223,7 +222,7 @@ class WorkspaceCleanupConfig(BaseModel):
     run_on_startup: bool = Field(default=True)
     dry_run: bool = Field(default=False)
     retention_days: RetentionDaysConfig = Field(default_factory=RetentionDaysConfig)
-    protected_dirs: List[str] = Field(
+    protected_dirs: list[str] = Field(
         default_factory=lambda: ["bin", "fonts", "models"]
     )
 

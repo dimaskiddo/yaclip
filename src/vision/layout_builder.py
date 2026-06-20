@@ -291,10 +291,9 @@ class LayoutBuilder:
         return union > 0 and (inter / union) > thresh
 
     def _set_facecam_top(self, spec: dict, analysis: dict, width: int, height: int) -> None:
-        """Compute the always-fit top-panel facecam crop and stash crop + fill mode on the spec."""
-        crop, fill = self._facecam_panel_crop(analysis, width, height)
+        """Compute the always-fit top-panel facecam crop on the spec."""
+        crop, _ = self._facecam_panel_crop(analysis, width, height)
         spec["facecam_crop"] = crop
-        spec["facecam_fill"] = fill
 
     def _facecam_panel_crop(
         self, analysis: dict, width: int, height: int

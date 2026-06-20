@@ -197,6 +197,12 @@ class VisualAnalyzer:
             "mediashare_events": ms_events,
             "face_count": max_persons_in_frame,
             "motion_level": motion_level,
+            # Classification-ready signals (consumed by ContentTypeDetector.classify_from_analysis):
+            #   non_person_motion — motion_level is an accumulated sum over frame pairs; normalise to a
+            #   per-pair mean so it is comparable to the GAMEPLAY_MIN_NONPERSON_MOTION gate.
+            #   open_area_frac — fraction of a coarse grid NOT covered by person boxes (game screen room).
+            "non_person_motion": motion_level / max(1, len(frames) - 1),
+            "open_area_frac": self._open_area_frac(persons, width, height),
         }
         analysis["descriptor"] = self._build_descriptor(analysis)
         logger.info(self._build_log_summary(analysis, start_time, end_time))
@@ -217,15 +223,10 @@ class VisualAnalyzer:
         video has both substantial non-person screen space AND motion in that space.  A podcast
         with a static studio set may have a falsely-elevated HUD score but will fail on
         open_area_frac (people fill the frame) and/or non_person_motion (borders are static).
-
-        The method reuses the same 12-frame YOLO pass as detect_facecams, then adds three short
-        consecutive-frame motion bursts (each ≈ 6 frames at 0.5s spacing, spread across the
-        middle 80% of the video) so the diff captures real per-frame change — not global shift.
         """
         import cv2
 
         if not self.cfg.enabled:
-            # Model disabled — return neutral values; caller treats gaming as unconfirmed.
             return {"non_person_motion": 0.0, "open_area_frac": 1.0, "person_count": 0}
 
         cap = cv2.VideoCapture(str(video_path))
@@ -238,10 +239,10 @@ class VisualAnalyzer:
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
 
-            # ── YOLO pass: detect persistent person clusters (12 frames, middle 80%) ──
+            # YOLO pass: detect persistent person clusters (12 frames, middle 80%)
             n = 12
             idxs = [int(total * (0.1 + 0.8 * i / max(1, n - 1))) for i in range(n)]
-            yolo_frames = []
+            yolo_frames: list[np.ndarray] = []
             for idx in idxs:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
                 ret, frame = cap.read()
@@ -255,32 +256,13 @@ class VisualAnalyzer:
 
         persons, _, _max = self._detect_regions(yolo_frames, width, height)
         person_count = len(persons)
+        open_area_frac = self._open_area_frac(persons, width, height)
 
-        # ── Open-area fraction: coarse 16×9 grid, mark cells covered by any person ──
-        grid_cols, grid_rows = 16, 9
-        cell_w = width / grid_cols
-        cell_h = height / grid_rows
-        covered = set()
-        for p in persons:
-            bx, by, bw, bh = p["box"]
-            c0 = int(max(0, bx / cell_w))
-            c1 = int(min(grid_cols, (bx + bw) / cell_w)) + 1
-            r0 = int(max(0, by / cell_h))
-            r1 = int(min(grid_rows, (by + bh) / cell_h)) + 1
-            for r in range(r0, r1):
-                for c in range(c0, c1):
-                    covered.add((r, c))
-        total_cells = grid_cols * grid_rows
-        open_area_frac = 1.0 - len(covered) / total_cells
-
-        # ── Motion bursts: 3 short windows across the middle 80% ──
-        # Each burst = 6 consecutive frames at ~0.5 s apart.  Person regions zeroed.
-        # We measure the mean of non-zero (non-person) diff pixels per burst.
+        # Motion bursts: 3 short windows across the middle 80%.
+        # Each burst = 6 consecutive frames at ~2 fps apart.  Person regions zeroed.
         burst_motions: list[float] = []
         small_w, small_h = 320, 180
         scale_x, scale_y = width / small_w, height / small_h
-
-        # Pre-compute person mask rects in the downsampled grid (same across all bursts).
         mask_rects = [
             (
                 max(0, int(p["box"][0] / scale_x)),
@@ -295,8 +277,7 @@ class VisualAnalyzer:
         if cap2.isOpened():
             try:
                 burst_step_frames = max(1, int(fps * 0.5))  # ~2 fps within a burst
-                burst_len = 6  # frames per burst
-                # Three anchor points in the middle 80%: 25%, 50%, 75% of video length
+                burst_len = 6
                 anchors = [int(total * frac) for frac in (0.25, 0.50, 0.75)]
                 for anchor in anchors:
                     indices = [anchor + i * burst_step_frames for i in range(burst_len)]
@@ -319,14 +300,12 @@ class VisualAnalyzer:
                     diffs: list[np.ndarray] = []
                     for i in range(1, len(burst_frames)):
                         d = np.abs(burst_frames[i] - burst_frames[i - 1])
-                        # Zero every person region so the metric reflects non-person pixels only.
                         for mx0, mx1, my0, my1 in mask_rects:
                             d[my0:my1, mx0:mx1] = 0.0
                         diffs.append(d)
 
                     if diffs:
-                        burst_mean = float(np.mean(np.stack(diffs, axis=0)))
-                        burst_motions.append(burst_mean)
+                        burst_motions.append(float(np.mean(np.stack(diffs, axis=0))))
             finally:
                 cap2.release()
 
@@ -482,6 +461,8 @@ class VisualAnalyzer:
             "mediashare_events": [],
             "face_count": 0,
             "motion_level": 0.0,
+            "non_person_motion": 0.0,
+            "open_area_frac": 1.0,
             "descriptor": "No visual signal available.",
         }
 
@@ -904,6 +885,28 @@ class VisualAnalyzer:
 
         crop_x = make_even(int(max(0, min(cx - crop_w / 2.0, width - crop_w))))
         return {"x": crop_x, "y": crop_y, "w": crop_w, "h": crop_h}, motion_level
+
+    @staticmethod
+    def _open_area_frac(persons: list[dict], width: int, height: int) -> float:
+        """Fraction of a coarse 16×9 grid NOT covered by any person box.
+
+        Small ≈ people fill the frame (talking-heads); large ≈ open screen space for a game. Feeds the
+        gameplay gate in ``ContentTypeDetector.classify_from_analysis``.
+        """
+        grid_cols, grid_rows = 16, 9
+        cell_w = width / grid_cols
+        cell_h = height / grid_rows
+        covered: set[tuple[int, int]] = set()
+        for p in persons:
+            bx, by, bw, bh = p["box"]
+            c0 = int(max(0, bx / cell_w))
+            c1 = int(min(grid_cols, (bx + bw) / cell_w)) + 1
+            r0 = int(max(0, by / cell_h))
+            r1 = int(min(grid_rows, (by + bh) / cell_h)) + 1
+            for r in range(r0, r1):
+                for c in range(c0, c1):
+                    covered.add((r, c))
+        return 1.0 - len(covered) / (grid_cols * grid_rows)
 
     def _build_descriptor(self, a: dict) -> str:
         """Compact natural-language summary of the window for a (text-only) LLM."""

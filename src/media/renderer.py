@@ -52,7 +52,6 @@ class ClipRenderer:
         self,
         video_path: Path,
         clip_proposals: list[dict],
-        transcript_segments: list[dict] | None = None,
         content_type: ContentType | None = None,
     ) -> list[Path]:
         """Render multiple clip proposals to vertical 9:16 MP4 files.
@@ -60,8 +59,8 @@ class ClipRenderer:
         Args:
             video_path: Path to the raw downloaded video file.
             clip_proposals: [{"start_time", "end_time", "title", optional "content_type"}].
-            transcript_segments: Unused — subtitles are re-transcribed per clip locally for
-                reliable word timings (kept for signature compatibility).
+            content_type: Video-level content type from the detector. When set, used as the
+                type for all clips (except those promoted to DONATION_OVERLAY or overridden).
 
         Returns:
             Paths to the successfully rendered clips.
@@ -82,12 +81,21 @@ class ClipRenderer:
             logger.warning("No valid clips to render after dropping degenerate proposals.")
             return []
 
-        # Use the content type detected upstream (cli) when provided — avoids a second detection.
-        base_content_type = content_type or self._resolve_base_content_type(video_path)
-        clip_types = [self._clip_content_type(c, base_content_type) for c in clip_proposals]
+        # Resolve the per-clip content type. Precedence: config override > explicit per-clip type
+        # (from LLM / review edit) > video-level detected_type (from cli.py) > visual fallback > PODCAST.
+        override = self._content_type_override()
+        base_type = override or content_type  # video-level type from the detector (may be None)
+        clip_types: list[ContentType | None] = [
+            self._initial_clip_type(c, base_type) for c in clip_proposals
+        ]
 
         # Pass 1 — visual region analysis (YOLO loaded once, released after).
         analyses = self._analyze_regions(video_path, clip_proposals, clip_types)
+
+        # For manual mode (no LLM call) — any clip still without a type gets a visual fallback.
+        clip_types = self._finalize_clip_types(
+            video_path, clip_proposals, clip_types, analyses
+        )
 
         # Promote any clip whose window contains a mediashare/donation popup to DONATION_OVERLAY
         # (mediashare_present is only known after Pass 1). Done before Pass 2 so a promoted clip is
@@ -134,22 +142,90 @@ class ClipRenderer:
 
     # ------------------------------------------------------------- Content Type
 
-    def _resolve_base_content_type(self, video_path: Path) -> ContentType:
+    def _content_type_override(self) -> ContentType | None:
+        """The forced content type from ``content_type_override``, or None when set to 'auto'."""
         override = self.config.video_processing.content_type_override
-        if override != "auto":
-            try:
-                return ContentType(override.upper())
-            except ValueError:
-                pass
-        return self.detector.detect_content_type(video_path)
+        if override == "auto":
+            return None
+        try:
+            return ContentType(override.upper())
+        except ValueError:
+            logger.warning(f"Invalid content_type_override '{override}' — ignoring, will auto-detect.")
+            return None
 
-    def _clip_content_type(self, clip: dict, base: ContentType) -> ContentType:
+    def _initial_clip_type(
+        self, clip: dict, override: ContentType | None
+    ) -> ContentType | None:
+        """Override wins; else an explicit/LLM-assigned per-clip type; else None (resolved later)."""
+        if override is not None:
+            return override
         if "content_type" in clip:
             try:
-                return ContentType(clip["content_type"].upper())
+                return ContentType(str(clip["content_type"]).upper())
             except ValueError:
                 pass
-        return base
+        return None
+
+    def _finalize_clip_types(
+        self,
+        video_path: Path,
+        clips: list[dict],
+        clip_types: list[ContentType | None],
+        analyses: list[dict],
+    ) -> list[ContentType]:
+        """Resolve any still-unknown clip type. Only used for manual mode (no LLM call).
+
+        When the video-level detector returned None (uncertain) AND the LLM didn't assign types
+        (manual mode), fall back to the per-clip visual classifier. Inconclusive windows default
+        to PODCAST. A clip that turns out GAMING_COLLAB but was region-analyzed as non-collab is
+        re-analyzed with the locked facecam pair.
+        """
+        gaming_hint = self.detector.metadata_gaming_hint(video_path)
+        out: list[ContentType] = []
+        collab_pending: list[int] = []
+        for idx, ctype in enumerate(clip_types):
+            if ctype is None:
+                ctype = self.detector.classify_from_analysis(analyses[idx], gaming_hint)
+                if ctype is None:
+                    ctype = ContentType.PODCAST
+                    logger.info(f"Clip {idx + 1}: content type unclear — defaulting to PODCAST.")
+                else:
+                    logger.info(f"Clip {idx + 1}: content type detected as {ctype.value}.")
+                if ctype == ContentType.GAMING_COLLAB and analyses[idx].get("collab_box") is None:
+                    collab_pending.append(idx)
+            out.append(ctype)
+        if collab_pending:
+            self._reanalyze_collab(video_path, clips, analyses, collab_pending)
+        return out
+
+    def _reanalyze_collab(
+        self,
+        video_path: Path,
+        clips: list[dict],
+        analyses: list[dict],
+        indices: list[int],
+    ) -> None:
+        """Re-run region analysis for late-classified COLLAB clips with the locked facecam pair."""
+        analyzer = VisualAnalyzer()
+        try:
+            collab_cams = analyzer.detect_facecams(video_path)
+            if len(collab_cams) < 2:
+                logger.info(
+                    "Collaborative clip(s) detected but no webcam pair found — keeping single-cam framing."
+                )
+                return
+            stable = analyzer.detect_stable_facecam(video_path)
+            for idx in indices:
+                analyses[idx] = analyzer.analyze_window(
+                    video_path,
+                    clips[idx]["start_time"],
+                    clips[idx]["end_time"],
+                    facecam_override=stable,
+                    facecam_boxes=collab_cams,
+                    gameplay_aspect=STACK3_PANEL_ASPECT,
+                )
+        finally:
+            analyzer.release()
 
     def _apply_donation_override(
         self,

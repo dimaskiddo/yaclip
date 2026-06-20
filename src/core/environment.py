@@ -92,17 +92,23 @@ def setup_environment() -> None:
     """Inject required environment variables for paths, caches, and log suppression."""
 
     # AI Model Cache Path
-    hf_workspace_dir = Path(str(MODELS_DIR)).resolve()
+    hf_workspace_dir = MODELS_DIR.resolve()
     os.environ["HF_HOME"] = str(hf_workspace_dir)
     os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN_WARNING"] = "1"
 
     # Binaries Path (prioritize our local FFmpeg cache)
-    bin_dir = Path(str(BIN_DIR)).resolve()
+    bin_dir = BIN_DIR.resolve()
     os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
 
-    # Suppress verbose C++ stderr logging from MediaPipe and TensorFlow
-    os.environ["GLOG_minloglevel"] = "2"
-    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+    # Suppress verbose C++ stderr logging from MediaPipe and TensorFlow.
+    # GLOG_minloglevel=3 silences everything below ERROR: the absl::InitializeLog warning,
+    # face_landmarker_graph.cc info lines, inference_feedback_manager warnings, and the
+    # "Created TensorFlow Lite XNNPACK delegate" info.  Without this, every FaceLandmarker
+    # load dumps ~10 lines of C++ noise to stderr.
+    os.environ["GLOG_minloglevel"] = "3"
+    os.environ["GLOG_alsologtostderr"] = "0"
+    os.environ["GLOG_logtostderr"] = "0"
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
     # Guard against the MediaPipe × triton SIGSEGV (see guard_triton_segfault docstring).
     guard_triton_segfault()

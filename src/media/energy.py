@@ -3,11 +3,23 @@ from __future__ import annotations
 import math
 import struct
 import subprocess
+import numpy as np
 
 from loguru import logger
 
 from src.core.config import load_config
-from src.core.constants import RMS_SAMPLE_RATE
+from src.core.constants import (
+    RMS_SAMPLE_RATE,
+    SPEAKER_F0_MAX_HZ,
+    SPEAKER_F0_MIN_HZ,
+    SPEAKER_KMEANS_ITERS,
+    SPEAKER_MIN_CLUSTER_FRAC,
+    SPEAKER_MIN_SEPARATION_HZ,
+    SPEAKER_MIN_VOICED_FRAMES,
+    SPEAKER_PITCH_CLARITY_MIN,
+    SPEAKER_PITCH_FRAME_SAMPLES,
+    SPEAKER_VOICE_RMS_FLOOR_FRAC,
+)
 from src.core.utils import SystemUtils
 
 
@@ -162,3 +174,88 @@ class AudioEnergyAnalyzer:
         # Sort chronological
         clips.sort(key=lambda x: x["start_time"])
         return clips
+
+    # ----------------------------------------------------- Speaker-Count Hint
+
+    def estimate_speaker_count(self, audio_path: str) -> int:
+        """Estimate distinct speakers in an audio slice (lightweight pitch clustering; no ML model).
+
+        Reuses the same 8 kHz mono PCM pipe as the RMS analysis: voiced frames are pitch-tracked and
+        the pitches clustered — two separated, well-populated modes ⇒ ~2 speakers, else 1. A coarse
+        hint for the LLM clip-classifier (one voice over gameplay vs two people talking), not exact
+        diarization.
+
+        Returns:
+            1 or 2 (1 on any failure or too little voiced audio).
+        """
+        samples = self._decode_mono_pcm(audio_path)
+        if samples.size == 0:
+            return 1
+        pitches = self._voiced_frame_pitches(samples)
+        return 2 if self._looks_like_two_speakers(pitches) else 1
+
+    def _decode_mono_pcm(self, audio_path: str) -> np.ndarray:
+        """Decode an audio file to a float32 mono 8 kHz sample array (empty on failure)."""
+        cmd = [
+            SystemUtils.get_ffmpeg_path(), "-i", audio_path,
+            "-f", "s16le", "-acodec", "pcm_s16le",
+            "-ar", str(RMS_SAMPLE_RATE), "-ac", "1",
+            "pipe:1", "-loglevel", "quiet",
+        ]
+        try:
+            out = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+        except Exception as e:
+            logger.warning(f"Speaker-count audio decode failed: {e}")
+            return np.empty(0, dtype=np.float32)
+        return np.frombuffer(out, dtype=np.int16).astype(np.float32)
+
+    @staticmethod
+    def _voiced_frame_pitches(samples: np.ndarray) -> np.ndarray:
+        """Per-frame fundamental frequency (Hz) for voiced frames, via autocorrelation."""
+        frame = SPEAKER_PITCH_FRAME_SAMPLES
+        if samples.size < frame * 2:
+            return np.empty(0, dtype=np.float32)
+        hop = frame // 2
+        n = 1 + (samples.size - frame) // hop
+        frames = np.stack([samples[i * hop : i * hop + frame] for i in range(n)])
+
+        # Voice gate: keep frames at least half as loud as the median frame (drop near-silence).
+        rms = np.sqrt((frames**2).mean(axis=1) + 1e-9)
+        voiced = frames[rms >= SPEAKER_VOICE_RMS_FLOOR_FRAC * float(np.median(rms))]
+
+        lag_min = int(RMS_SAMPLE_RATE / SPEAKER_F0_MAX_HZ)
+        lag_max = int(RMS_SAMPLE_RATE / SPEAKER_F0_MIN_HZ)
+        pitches: list[float] = []
+        for f in voiced:
+            f = f - f.mean()
+            corr = np.correlate(f, f, mode="full")[f.size - 1 :]
+            if corr[0] <= 0:
+                continue
+            band = corr[lag_min : lag_max + 1]
+            if band.size == 0:
+                continue
+            lag = lag_min + int(np.argmax(band))
+            # A clear pitch has a strong autocorrelation peak relative to zero-lag energy.
+            if corr[lag] >= SPEAKER_PITCH_CLARITY_MIN * corr[0]:
+                pitches.append(RMS_SAMPLE_RATE / lag)
+        return np.array(pitches, dtype=np.float32)
+
+    @staticmethod
+    def _looks_like_two_speakers(pitches: np.ndarray) -> bool:
+        """True when the pitch values split into two separated, well-populated clusters."""
+        if pitches.size < SPEAKER_MIN_VOICED_FRAMES:
+            return False
+        lo, hi = float(pitches.min()), float(pitches.max())
+        if hi - lo < SPEAKER_MIN_SEPARATION_HZ:
+            return False
+        c0, c1 = lo, hi  # seed the 1-D 2-means at the pitch extremes
+        g0 = g1 = pitches
+        for _ in range(SPEAKER_KMEANS_ITERS):
+            g0 = pitches[np.abs(pitches - c0) <= np.abs(pitches - c1)]
+            g1 = pitches[np.abs(pitches - c0) > np.abs(pitches - c1)]
+            if g0.size == 0 or g1.size == 0:
+                return False
+            c0, c1 = float(g0.mean()), float(g1.mean())
+        separated = abs(c1 - c0) >= SPEAKER_MIN_SEPARATION_HZ
+        balanced = min(g0.size, g1.size) / pitches.size >= SPEAKER_MIN_CLUSTER_FRAC
+        return separated and balanced

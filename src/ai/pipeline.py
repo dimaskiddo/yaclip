@@ -62,9 +62,10 @@ class AIPipeline:
     def run_unified_gemini(
         self,
         audio_path: str,
-        content_type: str,
+        content_type: str | None,
         target_duration: int,
         target_clips: int,
+        detected_type: ContentType | None = None,
     ) -> list[dict[str, Any]]:
         """Runs a single unified Gemini call that handles both STT and LLM analysis."""
         try:
@@ -125,6 +126,7 @@ class AIPipeline:
                 '      "start_time": float,\n'
                 '      "end_time": float,\n'
                 '      "title": "catchy title (max 50 chars)",\n'
+                '      "content_type": "string (one of PODCAST, JUST_CHAT, GAMING_SOLO, GAMING_COLLAB)",\n'
                 '      "reasoning": "one sentence explaining why this is engaging"\n'
                 "    }\n"
                 "  ]\n"
@@ -145,6 +147,22 @@ class AIPipeline:
                 logger.info(f"Saved combined transcript to {out_txt}")
 
             clips = data.get("clips", [])
+            # Enforce target_clips: LLM may return more than requested
+            if len(clips) > target_clips:
+                logger.info(
+                    f"Clamping clip count from {len(clips)} to requested {target_clips}."
+                )
+                clips = clips[:target_clips]
+            # Normalise content_type per clip (same pattern as the hybrid path)
+            for cc in clips:
+                if detected_type is not None:
+                    cc["content_type"] = detected_type.value
+                else:
+                    resolved = self._normalise_base_content_type(cc.get("content_type"))
+                    if resolved is not None:
+                        cc["content_type"] = resolved
+                    else:
+                        cc.pop("content_type", None)
             logger.info(f"Combined Gemini analysis found {len(clips)} clip(s).")
             return clips
 
@@ -184,7 +202,7 @@ class AIPipeline:
         return local_provider.transcribe(audio_path, force=force, model=whisper_model, cache_dir=cache_dir)
 
     def run_llm_analysis(
-        self, transcript: str, content_type: str, target_duration: int, llama_model: object | None = None
+        self, transcript: str, content_type: str | None, target_duration: int, target_clips: int = 5, llama_model: object | None = None
     ) -> list[dict[str, Any]]:
         """Helper to run LLM transcript analysis based on config, automatically falling back if requested."""
         llm_cfg = self.config.ai_pipeline.llm
@@ -201,6 +219,7 @@ class AIPipeline:
                     transcript,
                     content_type=content_type,
                     target_duration=target_duration,
+                    target_clips=target_clips,
                 )
             except Exception as e:
                 if provider == "auto":
@@ -214,6 +233,7 @@ class AIPipeline:
             transcript,
             content_type=content_type,
             target_duration=target_duration,
+            target_clips=target_clips,
             llm=llama_model,
         )
 
@@ -274,17 +294,30 @@ class AIPipeline:
         categories = ", ".join(meta.get("categories") or []) or "unknown"
         tags = ", ".join((meta.get("tags") or [])[:10])
         parts = [
-            "=== VIDEO METADATA (context for judging clip-worthiness) ===",
-            f"Title: {meta.get('title', '')}",
-            f"Channel: {meta.get('channel', '')}",
-            f"Category: {categories}",
+            f"Video: {meta.get('title', '')} | Channel: {meta.get('channel', '')} | Category: {categories}",
         ]
         if tags:
             parts.append(f"Tags: {tags}")
-        parts.append(
-            "Use this to infer the game/show and what would resonate with its audience.\n"
-        )
+        parts.append("")
         return "\n".join(parts) + "\n"
+
+    @staticmethod
+    def _normalise_base_content_type(value: object) -> str | None:
+        """Validate an LLM-returned content_type against the 4 base types.
+
+        Excludes the render-time-only DONATION_OVERLAY (that promotion happens in the renderer).
+        Returns the canonical enum name, or None when the value is missing/invalid.
+        """
+        if not isinstance(value, str):
+            return None
+        name = value.strip().upper()
+        allowed = {
+            ContentType.PODCAST.value,
+            ContentType.JUST_CHAT.value,
+            ContentType.GAMING_SOLO.value,
+            ContentType.GAMING_COLLAB.value,
+        }
+        return name if name in allowed else None
 
     @staticmethod
     def _enforce_duration(
@@ -329,6 +362,9 @@ class AIPipeline:
                 visually analysed (YOLOv8n) and a text descriptor is fed to the LLM so clip
                 selection considers on-screen events (mediashare, action) — not audio alone.
             force: Re-run STT even if a cached transcript exists.
+            detected_type: Video-level content type from ``ContentTypeDetector.detect_content_type``.
+                When confident, it's used for all clips and threaded to the LLM prompt.
+                When None (uncertain), the LLM decides per-clip.
         """
         active_pipeline_event.set()
         try:
@@ -346,10 +382,15 @@ class AIPipeline:
                 )
                 return []
 
-            # Resolve content type and target duration for system prompt dynamic formatting
-            content_type = self.config.video_processing.content_type_override
-            if not content_type or content_type.lower() == "auto":
-                content_type = "PODCAST"
+            # Resolve content type for the system prompt. The video-level detector's result
+            # takes precedence over the config override (the detector already read config).
+            # When detected_type is None (uncertain), the LLM decides per-clip.
+            if detected_type is not None:
+                content_type = detected_type.value
+            else:
+                content_type = self.config.video_processing.content_type_override
+                if not content_type or content_type.lower() == "auto":
+                    content_type = None  # uncertain — LLM decides
 
             target_duration = clip_cfg.default_clip_duration_seconds or 60
             target_clips = clip_cfg.default_clips or 5
@@ -365,6 +406,7 @@ class AIPipeline:
                         content_type=content_type,
                         target_duration=target_duration,
                         target_clips=target_clips,
+                        detected_type=detected_type,
                     )
                 except Exception as e:
                     logger.error(
@@ -379,6 +421,7 @@ class AIPipeline:
                     transcript,
                     content_type=content_type,
                     target_duration=target_duration,
+                    target_clips=target_clips,
                 )
 
             video_id = Path(audio_path).stem
@@ -403,6 +446,7 @@ class AIPipeline:
                     transcript,
                     content_type=content_type,
                     target_duration=target_duration,
+                    target_clips=target_clips,
                 )
 
             if strategy == "heatmap":
@@ -419,12 +463,14 @@ class AIPipeline:
             # Sort spikes by score descending (highest priority first)
             spikes.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
 
-            candidate_multiplier = clip_cfg.candidate_multiplier or 2
-            pool_size = target_clips * candidate_multiplier
+            # Additive margin: pool = target + margin (not target × N) so STT cost stays bounded as
+            # the requested clip count grows (e.g. 15 clips + 2 = 17 candidates, not 30).
+            candidate_margin = clip_cfg.candidate_margin
+            pool_size = target_clips + candidate_margin
             top_candidates = spikes[:pool_size]
 
             logger.info(
-                f"Selected top {len(top_candidates)} of {len(spikes)} candidates (multiplier: {candidate_multiplier}x)."
+                f"Selected top {len(top_candidates)} of {len(spikes)} candidates (target + {candidate_margin} margin)."
             )
 
             slicer = AudioSlicer()
@@ -503,14 +549,11 @@ class AIPipeline:
                 except Exception as e:
                     logger.error(f"Failed to load local transcription model: {e}")
 
-            # Subtitles won't render for a collab video with collab subtitles off (or globally
-            # disabled) — so skip the word-level STT + word cache and transcribe text-only for the
-            # LLM. (Selection still needs the transcript; only the subtitle-only detail is dropped.)
+            # Content type is per-clip now and unknown at this point, so we keep word-level timings
+            # whenever subtitles are enabled (the renderer still skips subtitles per-clip for the
+            # cramped GAMING_COLLAB layout). When subtitles are off entirely, transcribe text-only.
             sub_cfg = self.config.video_processing.subtitles
-            collab_no_subs = (
-                detected_type == ContentType.GAMING_COLLAB and not sub_cfg.collab_enabled
-            )
-            subs_will_render = sub_cfg.enabled and not collab_no_subs
+            subs_will_render = sub_cfg.enabled
 
             # Local STT keeps word-level segments (for the subtitle word cache) only when subtitles
             # will actually render; otherwise it transcribes text-only for selection.
@@ -634,6 +677,7 @@ class AIPipeline:
             if transcribed_slices:
                 # Construct candidate transcripts text block
                 prompt_parts = []
+                speaker_analyzer = AudioEnergyAnalyzer()
                 for idx, (
                     i,
                     spike,
@@ -646,10 +690,17 @@ class AIPipeline:
                     visual_block = (
                         f"Visual context: {visual_line}\n" if visual_line else ""
                     )
+                    # Lightweight audio speaker-count hint (≈1 vs ≈2+ voices).
+                    speakers = speaker_analyzer.estimate_speaker_count(chunk_path)
+                    audio_line = (
+                        "Audio: ~2 distinct speakers (leans podcast/collab)\n"
+                        if speakers >= 2
+                        else "Audio: ~1 speaker (leans solo/just-chat)\n"
+                    )
                     prompt_parts.append(
-                        f"=== Candidate Index: {idx + 1} ===\n"
-                        f"Original Approximate Timeline: [{s_start:.2f}s - {s_end:.2f}s]\n"
+                        f"[Candidate {idx + 1}] Window: [{s_start:.2f}s-{s_end:.2f}s]\n"
                         f"{visual_block}"
+                        f"{audio_line}"
                         f"Transcript:\n{transcript}\n"
                     )
                 # Prepend video/game metadata context so the LLM knows the show/game.
@@ -741,6 +792,20 @@ class AIPipeline:
                                 cc["start_time"] = mapped_start
                                 cc["end_time"] = mapped_end
 
+                                # When the video-level detector was confident, all clips get that
+                                # type. When uncertain (detected_type=None), the LLM decided per-clip.
+                                if detected_type is not None:
+                                    cc["content_type"] = detected_type.value
+                                else:
+                                    # Validate the LLM's per-clip pick; drop invalid values.
+                                    resolved = self._normalise_base_content_type(
+                                        cc.get("content_type")
+                                    )
+                                    if resolved is not None:
+                                        cc["content_type"] = resolved
+                                    else:
+                                        cc.pop("content_type", None)
+
                                 if "Heatmap" not in cc.get("reasoning", ""):
                                     cc["reasoning"] += (
                                         " (Extracted via Heatmap/Energy Spike)."
@@ -768,6 +833,13 @@ class AIPipeline:
                         gc.collect()
 
             # Sort chronological and filter duplicates
+            # Enforce target_clips: LLM may return more than requested
+            if len(refined_clips) > target_clips:
+                logger.info(
+                    f"Clamping clip count from {len(refined_clips)} to requested {target_clips}."
+                )
+                refined_clips = refined_clips[:target_clips]
+
             refined_clips.sort(key=lambda x: float(x["start_time"]))
 
             final_clips = []

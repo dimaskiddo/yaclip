@@ -24,22 +24,7 @@ class LayoutMode(str, Enum):
     MULTI_COLLAB = "multi_collab"
 
 
-class AIProvider(str, Enum):
-    GOOGLE = "google"
-    OPENAI = "openai"
-    LOCAL = "local"
-
-
-class LogLevel(str, Enum):
-    DEBUG = "DEBUG"
-    INFO = "INFO"
-    WARNING = "WARNING"
-    ERROR = "ERROR"
-
-
 # Layout and rendering constants
-ASPECT_RATIO_VERTICAL: float = 9.0 / 16.0
-DEFAULT_FONT_NAME: str = "Anton.ttf"
 
 # Final vertical canvas (9:16)
 TARGET_WIDTH: int = 1080
@@ -82,6 +67,10 @@ FACECAM_FIT_FACTOR: float = 1.45
 # are missed.
 GAMEPLAY_MIN_NONPERSON_MOTION: float = 4.0  # mean frame-diff in non-person cells ("moderate" boundary)
 GAMEPLAY_MIN_OPEN_AREA_FRAC: float = 0.45   # fraction of coarse grid not covered by persons
+# Relaxed open-area threshold when the YouTube metadata says "Gaming" (gaming_hint=True).  A
+# close-up cam shot in a gaming stream may show <45% free grid but the game is still present
+# behind/around the streamer; 30% is enough to confirm gameplay when the category corroborates.
+GAMEPLAY_MIN_OPEN_AREA_FRAC_GAMING_HINT: float = 0.30
 
 # Streamer-facecam detection (YOLO persons) for GAMING_SOLO vs GAMING_COLLAB and the Mode C collab
 # pick. A real webcam inset is cam-sized (a fraction of the frame, not a tiny in-game character nor a
@@ -169,7 +158,7 @@ IOU_MATCH_MIN: float = 0.3
 # Gentle EMA panning (PODCAST): the final per-frame crop center glides toward its target by this
 # fraction each frame.  Within a held shot the target is constant so the crop stays put (no drift);
 # on a speaker change it eases over ~1 s instead of hard-cutting.  Higher = snappier.
-PAN_SMOOTHING_FACTOR: float = 0.12
+PAN_SMOOTHING_FACTOR: float = 0.03
 
 # Haar-cascade fast tracking (opt-in `video_processing.fast_mode`): a lightweight CPU-only PODCAST
 # tracker that follows the largest frontal face — no MediaPipe, no audio.  Frames are downscaled for
@@ -215,3 +204,16 @@ GPU_ENCODER_FAILURE_SIGNS: tuple[str, ...] = (
 
 # Native GL libraries MediaPipe needs present on headless Linux/WSL (environment preflight).
 MEDIAPIPE_GL_LIBS: tuple[str, ...] = ("libEGL.so.1", "libGLESv2.so.2")
+
+# ── Audio speaker-count heuristic (AudioEnergyAnalyzer.estimate_speaker_count) ──
+# Lightweight, numpy-only pitch clustering over the same 8 kHz mono PCM used for RMS — a coarse
+# "~1 vs ~2 speakers" hint for the LLM clip-classifier, NOT exact diarization.
+SPEAKER_F0_MIN_HZ: float = 70.0            # lowest fundamental searched (deep male voice)
+SPEAKER_F0_MAX_HZ: float = 300.0           # highest fundamental searched (high female/child voice)
+SPEAKER_PITCH_FRAME_SAMPLES: int = 1024    # ~128 ms analysis frame at 8 kHz
+SPEAKER_VOICE_RMS_FLOOR_FRAC: float = 0.5  # voiced frame = RMS ≥ this × the median frame RMS
+SPEAKER_MIN_VOICED_FRAMES: int = 12        # fewer voiced/pitched frames than this → assume 1 speaker
+SPEAKER_PITCH_CLARITY_MIN: float = 0.3     # autocorr peak ≥ this × zero-lag energy → a clear pitch
+SPEAKER_MIN_SEPARATION_HZ: float = 45.0    # two pitch clusters this far apart → distinct speakers
+SPEAKER_MIN_CLUSTER_FRAC: float = 0.25     # each cluster must hold ≥ this share of pitched frames
+SPEAKER_KMEANS_ITERS: int = 10             # iterations for the tiny 1-D 2-means split

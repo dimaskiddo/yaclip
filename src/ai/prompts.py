@@ -1,36 +1,23 @@
 from __future__ import annotations
 
-from typing import Optional
-
 from src.core.config import load_config
 
 DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
-    "You are an expert social media content curator specializing in {content_type} videos. Analyze the provided transcript and timestamps. "
-    "Identify the most engaging, viral, or emotionally resonant segments that would perform exceptionally well as {target_duration}-second "
-    "YouTube Shorts, Instagram Reels, or TikTok clips.\n\n"
-    "Each transcript line is prefixed with its timing as `[start - end]` in seconds (relative to that candidate). "
-    "Choose a CONTIGUOUS run of whole lines: set `start_time` to the `start` of the FIRST line you include and `end_time` to the `end` of the LAST line. "
-    "Never split a line or cut mid-sentence. **Each clip MUST run between {min_duration} and {max_duration} seconds**, ideally about {target_duration} seconds — "
-    "never shorter than {min_duration}s: include enough surrounding lines to reach the minimum while staying on-topic.\n\n"
-    "Score and rank every candidate, then return only the best ones, using this rubric:\n"
-    "1. HOOK — a strong opening in the first ~3 seconds that stops the scroll.\n"
-    "2. PAYOFF — a clear punchline, insight, or emotional/action peak before the end.\n"
-    "3. STANDALONE — makes complete sense on its own, without needing earlier context.\n"
-    "4. ENERGY — high emotion, reaction, or on-screen action sustains attention.\n\n"
-    "For PODCAST content: prioritize complete, punchy thoughts, strong opinions, surprising facts, or emotional peaks. "
-    "Avoid segments that feel incomplete without visual context.\n"
-    "For JUST_CHAT content: prioritize high-energy reactions, funny moments, and segments where donation interactions produce strong streamer responses.\n"
-    "For GAMING_SOLO and GAMING_COLLAB content: prioritize intense gameplay moments, clutch plays, funny failures, and strong streamer reactions. "
-    "Donation-triggered reactions are high-value clip targets.\n\n"
-    "Some candidates include a 'Visual context:' line describing what is on screen (number of people, facecam position, "
-    "donation overlay/screen popups, motion intensity). Use it as an additional signal. "
-    "**A Donation overlay reaction is a rare, HIGH-PRIORITY clip target — it appears only on genuine donation moments "
-    "and drives the most engagement. If ANY candidate's Visual context reports a Donation overlay reaction, you MUST "
-    "include at least one such candidate in your selection.** "
-    "Moments with strong on-screen action or reactions are also higher-value. Do not invent visual details that are not stated.\n\n"
-    "Return ONLY a valid JSON array of objects. Each object must contain: `start_time` (float, seconds), `end_time` (float, seconds), "
-    "`title` (catchy, max 50 characters), and `reasoning` (one sentence naming the rubric strengths). "
-    "Ensure each clip is a complete, standalone moment that starts and ends on a line boundary."
+    "You are a short-form clip curator. Pick the best {target_duration}s segments "
+    "from the transcript for social media shorts.\n\n"
+    "Lines: `[start - end] text`. Pick contiguous whole lines only.\n"
+    "Clip duration: {min_duration}s–{max_duration}s (target {target_duration}s).\n\n"
+    "Rank by: 1) HOOK (strong first 3s), 2) PAYOFF (punchline/peak), "
+    "3) STANDALONE (self-contained), 4) ENERGY (emotion/action).\n\n"
+    "PODCAST: punchy thoughts, strong opinions, emotional peaks.\n"
+    "JUST_CHAT: reactions, funny moments, donations.\n"
+    "GAMING: clutch plays, funny failures, streamer reactions. Donation = top priority.\n\n"
+    "Visual context describes on-screen activity. Donation overlay = MUST include at least one. "
+    "Strong action = higher value. Never invent details.\n\n"
+    "{content_type_line}\n\n"
+    "Return JSON array. Fields: candidate_index (int, 1-based), start_time (float s), end_time (float s), "
+    "title (<=50 chars), content_type (PODCAST|JUST_CHAT|GAMING_SOLO|GAMING_COLLAB), "
+    "reasoning (one sentence)."
 )
 
 # Native-language "here is an accurate transcription" primer per ISO 639-1 code. Passed to Whisper /
@@ -114,7 +101,19 @@ LANGUAGE_MAP = {
 }
 
 
-def get_system_prompt(content_type: str = "PODCAST", target_duration: int = 60) -> str:
+_CONTENT_TYPE_CONFIDENT_LINE = (
+    "Content type: {content_type}. Use for all clips."
+)
+
+_CONTENT_TYPE_UNCERTAIN_LINE = (
+    "Content type: UNCERTAIN. Decide per clip from audio+visual+transcript.\n"
+    "Rules (priority): 1) Audio ~1 speaker = solo (never collab). "
+    "2) Game characters are NOT people — only count webcam faces. "
+    "3) Cross-check visual person count against audio."
+)
+
+
+def get_system_prompt(content_type: str | None = "PODCAST", target_duration: int = 60) -> str:
     """Retrieve the curation prompt, supporting hidden override 'dk_clipper_sys_prompt' in config.
 
     The configured min/max clip durations are injected so the LLM keeps every clip within bounds.
@@ -125,15 +124,21 @@ def get_system_prompt(content_type: str = "PODCAST", target_duration: int = 60) 
     # Clip length runs from the target (default) up to default + margin.
     min_duration = clip_cfg.default_clip_duration_seconds
     max_duration = min_duration + clip_cfg.clip_length_margin_seconds
+    # Content type instruction: confident → echo detected type; uncertain → LLM decides per clip.
+    if content_type is not None:
+        content_type_line = _CONTENT_TYPE_CONFIDENT_LINE.format(content_type=content_type)
+    else:
+        content_type_line = _CONTENT_TYPE_UNCERTAIN_LINE
     return template.format(
-        content_type=content_type,
+        content_type=content_type or "UNCERTAIN",
+        content_type_line=content_type_line,
         target_duration=target_duration,
         min_duration=min_duration,
         max_duration=max_duration,
     )
 
 
-def get_language_prompt(language: str) -> Optional[str]:
+def get_language_prompt(language: str) -> str | None:
     """Resolve a dialect-locking STT prompt for the given language code or name."""
     lang_code = language.lower()
     lang_code = LANGUAGE_MAP.get(lang_code, lang_code)

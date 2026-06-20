@@ -91,7 +91,7 @@ YaClip automatically detects what kind of video you're working with and adjusts 
 | **Gaming — Collab** | Gameplay confirmed, two or more webcams | Webcam 1 on top, **static gameplay crop** in centre, Webcam 2 on bottom |
 | **Donation Alert** | A donation or media share popup appears during the clip | Webcam on top, donation popup on bottom |
 
-> Donation alert clips are handled automatically — any clip where a Trakteer or MediaShare popup appears will use the Donation Alert layout. By default, **Podcast** and **Gaming Collab** clips are excluded from this (pre-recorded content has no live donations; collab clips keep all three panels). You can change which types are excluded in `config.yaml` under `video_processing.donation_overlay_exclude_types`.
+> Donation alert clips can be handled automatically — when enabled in `config.yaml` (`preserve_donation_overlays: true`), any clip where a Trakteer or MediaShare popup appears will use the Donation Alert layout instead of the base type layout. This is **disabled by default** so clips stay with their first-detected content type. You can enable donation handling and configure exclusions in `config.yaml` under `video_processing.preserve_donation_overlays` and `video_processing.donation_overlay_exclude_types`.
 
 ---
 

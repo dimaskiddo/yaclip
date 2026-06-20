@@ -90,16 +90,16 @@ def _run_pipeline(url: str, force: bool, debug: bool) -> None:
             logger.error("Download did not produce both video and audio files. Cannot continue.")
             return
 
-        # Detect content type once (here) and thread it to both selection and render, so the
-        # pipeline can skip subtitle-only STT work when no subtitles will render, and the renderer
-        # does not detect a second time.
+        # Detect content type ONCE for the whole video (aggregated evidence: gameplay gate,
+        # webcam count, HUD, donation overlay). Returns None when uncertain → LLM decides.
         from src.vision.content_type_detector import ContentTypeDetector
 
         content_type = ContentTypeDetector().detect_content_type(Path(video_path_str))
 
         logger.info("--- STEP 2: AI CLIP SELECTION ---")
         clips = AIPipeline().process_audio(
-            audio_path, video_path=video_path_str, force=force, detected_type=content_type
+            audio_path, video_path=video_path_str, force=force,
+            detected_type=content_type,
         )
 
         video_id = Path(audio_path).stem
@@ -212,8 +212,8 @@ def cache_status() -> None:
 
 @cache_app.command("purge")
 def cache_purge(
-    target: str | None = typer.Argument(
-        None, help="Specific dir to purge (videos|audios|subtitles|tmp|clips); all if omitted"
+    target: list[str] | None = typer.Argument(
+        None, help="Space-separated dirs to purge (videos|audios|subtitles|data|tmp|clips|logs); all if omitted"
     ),
     concern: bool = typer.Option(False, "--concern", help="Will run the purging with user concern confirmed"),
 ) -> None:
@@ -226,7 +226,7 @@ def cache_purge(
 
 @cli.command("clean-workspace", hidden=True)
 def clean_workspace(
-    target: str = typer.Argument(None, help="Specific workspace directory to clean"),
+    target: list[str] = typer.Argument(None, help="Space-separated workspace directories to clean"),
 ) -> None:
     """Deprecated alias of `cache purge`."""
     run_purge_cycle(force=True, specific_target=target)

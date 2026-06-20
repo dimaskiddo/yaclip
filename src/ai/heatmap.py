@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 
-from typing import Dict, List
 from loguru import logger
 
 from src.core.config import load_config

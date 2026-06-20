@@ -50,27 +50,20 @@ flowchart TD
     ExtractAudio --> DetectionStart
     SaveHeatmap --> DetectionStart
 
-    subgraph S3["3. Content Type Detection"]
-        DetectionStart[sample_video_frames] --> GameplayGate{Gameplay confirmed?<br/>open_area_frac ≥ 0.45<br/>AND motion/HUD/hint}
-        GameplayGate -- Yes, multi-cam --> ColabType[ContentType = GAMING_COLLAB]
-        GameplayGate -- Yes, single cam --> SoloType[ContentType = GAMING_SOLO]
-        GameplayGate -- No --> FaceCount{Multiple persistent<br/>face regions?}
-        FaceCount -- Yes --> PodcastMulti[ContentType = PODCAST<br/>active-speaker tracking]
-        FaceCount -- No --> OverlayCheck{Donation overlay<br/>signatures detected?}
-        OverlayCheck -- Yes --> JustChatType[ContentType = JUST_CHAT]
-        OverlayCheck -- No --> PodcastType[ContentType = PODCAST]
-        ColabType --> ConfCheck
-        SoloType --> ConfCheck
-        PodcastMulti --> ConfCheck
-        JustChatType --> ConfCheck
-        PodcastType --> ConfCheck
-        ConfCheck{Confidence ≥ threshold?}
-        ConfCheck -- No --> FallbackPodcast[Fallback to PODCAST<br/>Log warning + frame samples]
-        ConfCheck -- Yes --> TypeLocked[ContentType locked<br/>Stored in pipeline state]
-        FallbackPodcast --> TypeLocked
+    subgraph S3["3. Content Type Detection (video-level, once)"]
+        DetectionStart[detect_content_type(video_path)] --> ConfigOverride{content_type_override != auto?}
+        ConfigOverride -- Yes --> ForcedType["Return configured type"]
+        ConfigOverride -- No --> SampleFrames["Sample 25 frames<br/>HUD score + donation scan"]
+        SampleFrames --> GameplayGate{Gameplay confirmed?<br/>open_area + motion/HUD/gaming_hint}
+        GameplayGate -- Yes --> CamCheck{detect_facecams<br/>≥ 2 webcams?}
+        CamCheck -- "No → confident" --> GamingSolo[ContentType = GAMING_SOLO]
+        CamCheck -- "Yes → uncertain" --> Uncertain1[None — defer to LLM]
+        GameplayGate -- No --> FaceCheck{≥ 2 faces?}
+        FaceCheck -- Yes --> PodcastType[ContentType = PODCAST]
+        FaceCheck -- "1 face + donation" --> JustChat[ContentType = JUST_CHAT]
+        FaceCheck -- "1 face" --> PodcastSingle[ContentType = PODCAST]
+        FaceCheck -- "0 faces" --> Uncertain2[None — defer to LLM]
     end
-
-    TypeLocked --> ClipModeRoute
 
     subgraph S4["4. Clip Source Routing"]
         ClipModeRoute{clip_selection.mode?}
@@ -88,7 +81,7 @@ flowchart TD
             RMSAnalysis --> FindSpikes[Rank spike windows<br/>by RMS score descending]
             ParseHeatmap --> ComputePool
             FindSpikes --> ComputePool
-            ComputePool["Compute candidate pool size:<br/>target_clips × candidate_multiplier<br/>e.g. 5 clips × 2 = 10 candidates"]
+            ComputePool["Compute candidate pool size:<br/>target_clips + candidate_margin<br/>e.g. 5 clips + 2 = 7 candidates"]
             ComputePool --> TakeTopN["Take top-N by score<br/>Discard the rest entirely<br/>(no STT, no LLM on discards)"]
             TakeTopN --> HasSpikes{Candidates found?}
             HasSpikes -- No --> FullAudioFallback[Fallback: full audio to AI]
@@ -104,7 +97,7 @@ flowchart TD
     AIBrain --> ReviewGate
 
     subgraph S5["5. AI Brain — Independent STT + LLM"]
-        AIBrain["Receive top-N pre-ranked audio chunks<br/>(or full audio if fallback)"] --> BuildPrompt[Build content-aware system prompt<br/>Inject ContentType + target_clips + target_duration]
+        AIBrain["Receive top-N pre-ranked audio chunks<br/>(or full audio if fallback)"] --> BuildPrompt[Build system prompt<br/>per-candidate Visual classification + Audio speaker note<br/>+ target_clips + target_duration; LLM also returns content_type]
         BuildPrompt --> UnifiedCheck{"stt = cloud/google<br/>AND llm = cloud/google?"}
 
         UnifiedCheck -- "Yes → single Gemini call" --> GeminiUnified["Google Gemini — unified call:<br/>Upload all N audio chunks<br/>STT + batched analysis in one request<br/>→ return best target_clips"]
@@ -220,24 +213,18 @@ flowchart TD
 
 ---
 
-### 3. Content Type Detection
+### 3. Content Type Classification (per clip)
 **Module**: `src/vision/content_type_detector.py`
 
-Runs immediately after download, before any AI analysis. Samples frames at regular intervals from the downloaded video and processes three detection signals:
+Classified **per clip**, not once per video — each clip window is judged on its own content (a stream can mix solo gameplay, cutscenes, and face-cam reactions). `classify_from_analysis(analysis, gaming_hint)` reuses the per-clip `VisualAnalyzer.analyze_window` result (no extra sampling).
 
-**Step 1 — Gameplay Gate:**
-`VisualAnalyzer.detect_gameplay_presence` measures two signals over the sampled frames: `open_area_frac` (fraction of the frame NOT covered by person boxes — large ⇒ a game screen is visible) and `non_person_motion` (mean frame-diff in non-person regions across three short consecutive-frame bursts — high ⇒ the screen is animated). Gaming classification requires **both** `open_area_frac ≥ 0.45` AND (`non_person_motion ≥ 4.0` OR a high HUD score OR the YouTube "Gaming" category hint). A podcast studio set may fool the HUD heuristic but fails on `open_area_frac` (4 people fill the frame → no open screen area). When gameplay is confirmed, the **YOLO facecam detector** (`VisualAnalyzer.detect_facecams`) splits `GAMING_SOLO` vs `GAMING_COLLAB` (≥2 persistent cam-sized edge boxes ⇒ collab).
+**Step 1 — Visual classifier (primary):** the gameplay gate needs **both** `open_area_frac ≥ 0.45` (room for a game screen) AND (`non_person_motion ≥ 4.0` OR the YouTube "Gaming" `gaming_hint`). Confirmed gameplay with a single webcam ⇒ `GAMING_SOLO`. No gameplay: two+ persistent faces ⇒ `PODCAST`; single face + donation popup ⇒ `JUST_CHAT`; single face ⇒ `PODCAST`. The classifier returns **`None` (inconclusive)** when the call is too close — most importantly when gameplay is confirmed but the SOLO↔COLLAB **cam count is borderline** (a person box that could be a real 2nd webcam OR an on-screen game character/cutscene NPC), or the gameplay gate sits near threshold.
 
-**Step 2 — Multi-Face Analysis:**
-If gameplay is NOT confirmed, MediaPipe FaceDetection counts distinct, spatially-separated, persistent face regions. When two or more are found → `PODCAST` with active-speaker tracking enabled (two-shot group framing when faces are adjacent; otherwise audio-visual speaker cuts — MAR mouth-movement gated/weighted by the clip audio, with hysteresis and minimum shot length; FaceLandmarker capacity sized dynamically to the detected face count).
+**Step 2 — LLM fallback (only the `None` clips):** in auto mode the per-candidate verdict rides the **existing batched selection LLM call** as a `Visual classification:` line (concrete type or "uncertain") next to an `Audio: ~N speakers` note (lightweight pitch heuristic, `AudioEnergyAnalyzer.estimate_speaker_count`). For "uncertain" candidates the LLM decides `content_type` from the visual descriptor + audio speaker count + transcript + game/show metadata — a cutscene NPC is not a 2nd streamer, so single-streamer gameplay stays `GAMING_SOLO`. No extra model call. The confident visual verdict always wins; the LLM only fills the gaps.
 
-**Step 3 — Donation Overlay Sampling:**
-For single-face, no-gameplay content, the detector samples for known donation alert signatures: bright pop-up boxes in screen corners, Trakteer.ID visual patterns, MediaShare full-screen video intrusions. If found → `JUST_CHAT`.
+**Step 3 — Donation promotion & fallback (disabled by default):** on top of the base type, any clip whose window contains a transient mediashare/donation popup is promoted to `DONATION_OVERLAY` (gated by `preserve_donation_overlays`, which defaults to `false`; excluding `donation_overlay_exclude_types`). A clip still unresolved (manual mode, or no usable LLM value) defaults to `PODCAST`. The user can override the per-clip type via the WebUI review panel.
 
-**Fallback:**
-If all confidence scores are below `detection_confidence_threshold` (default: 0.6), the engine falls back to `PODCAST`, logs a warning with the ambiguous frame samples, and continues. The user can manually override via the WebUI review panel.
-
-The `ContentType` is stored in pipeline state and passed to all downstream modules.
+Each clip's `ContentType` rides on the clip proposal and is passed to all downstream rendering modules.
 
 ---
 
@@ -251,15 +238,16 @@ The `ContentType` is stored in pipeline state and passed to all downstream modul
 | YouTube Heatmap | `heatmap.py` | Parses `_heatmap_youtube.json`, ranks windows by replay value descending |
 | Audio Energy | `energy.py` | Pipes audio through FFmpeg as 8kHz mono PCM, calculates RMS per 1-second chunk, ranks windows by energy score descending |
 
-Both signals produce a **scored, ranked list** of candidate windows. The pipeline then applies the candidate multiplier:
+Both signals produce a **scored, ranked list** of candidate windows. The pipeline then applies the candidate margin:
 
-1. Compute pool size: `target_clips × candidate_multiplier` (e.g., user wants 5 clips, multiplier is 2 → pool of 10).
+1. Compute pool size: `target_clips + candidate_margin` (e.g., user wants 5 clips, margin is 2 → pool of 7).
 2. Take the **top-N candidates by score**. Discard the rest — no slicing, no STT, no LLM on them.
 3. Expand selected windows to min/max clip duration boundaries.
 4. Slice the top-N with FFmpeg `-c copy` (zero re-encode) into ~60s audio chunks.
 5. STT-transcribe all N chunks (in the local path, this happens before the LLM step; in the cloud Gemini path, audio chunks are uploaded and STT+LLM run together).
+6. **Post-LLM cap:** the pipeline clamps the LLM's output to exactly `target_clips` — any over-return is dropped before deduplication, guaranteeing no over-production.
 
-**Why pre-ranking matters:** 25 RMS spikes, 5 clips wanted, multiplier 2 → 10 STT calls and 1 LLM call. Without pre-ranking, naïvely: 25 STT calls and 25 LLM calls. The multiplier is the mechanism that connects the user's desired output count to the actual AI compute consumed.
+**Why pre-ranking matters:** 25 RMS spikes, 5 clips wanted, margin 2 → 7 STT calls and 1 LLM call. Without pre-ranking, naïvely: 25 STT calls and 25 LLM calls. The margin is **additive** (not a multiplier), so the cost stays bounded as the requested clip count grows — 15 clips + 2 = 17 candidates, not 30.
 
 **Manual Mode** (when `clip_selection.mode: "manual"`):
 The pre-slicing and ranking steps are skipped entirely. User-provided timestamp ranges are parsed and validated (start < end, within video duration), then passed directly to the Review Gate. No AI analysis occurs.
@@ -329,10 +317,10 @@ Face tracker generates a 9:16 crop that is **static while a speaker holds** and 
 - **Two or more faces** (panel discussion, podcast, interview, Q&A): `face_count` = the maximum number of high-confidence YOLO person boxes visible in any **single sampled frame** (confidence ≥ `PERSON_COUNT_CONF_MIN`, default 0.5), so 4 people simultaneously on screen counts as 4. The FaceLandmarker capacity (`num_faces`) is set to `min(face_count + FACE_COUNT_MARGIN, FACE_LANDMARKER_MAX_FACES)`. Faces/lips are sampled at `PODCAST_DETECTION_FPS` (10 fps); identities tracked across steps by IoU (`IOU_MATCH_MIN`). Speaker framing uses two strategies:
   1. **Two-shot grouping (primary), decided once per clip:** both faces are framed together (centered on the cluster midpoint, stable pseudo-subject `GROUP_SPEAKER_ID = -2`, no cuts) only when the median span ≤ `GROUP_FRAMING_FIT_FACTOR` (0.9) × `crop_w` **and** the median largest inter-face gap ≤ `GROUP_MAX_GAP_FACTOR` (0.25) × `crop_w`. The gap test stops the crop centering on the empty table between far-apart people; the clip-level decision stops group↔single flicker.
   2. **Audio-visual active-speaker (faces too far apart):** the speaking signal is the std-dev of **Mouth-Aspect-Ratio** (vertical lip opening ÷ mouth width) — a wide smile scores low, speech scores high. A per-clip RMS loudness envelope (`AudioEnergyAnalyzer.rms_envelope`, aligned to detection steps) **gates** switching to *voiced* steps (hold through silence), and a face is an **eligible** speaker only when its **local** windowed mouth↔audio coherence (`AV_SYNC_WINDOW_SECONDS`) ≥ `COHERENCE_MIN` and activity ≥ `LIP_ACTIVITY_MIN`. **Occlusion-aware hold:** when no face is eligible (e.g. the talker's lips are behind a mic, or only a non-speaker is smiling) the crop holds the current speaker rather than jumping to the visible non-speaker. Hysteresis (`SPEAKER_SWITCH_MARGIN` = 1.5×) and minimum shot length (`MIN_SHOT_SECONDS` = 2.0 s) gate all changes. No-face steps carry forward the last known position. If audio decode fails, falls back to visual-only MAR activity.
-  Targets get a rule-of-thirds headroom lift (`HEADROOM_FACTOR`). The committed crop is held static while a speaker is on, and on a speaker change a per-frame EMA pan (`PAN_SMOOTHING_FACTOR`) glides the crop — rendered via `_get_face_crop_filter(interpolate=True)`.
+  Targets get a rule-of-thirds headroom lift (`HEADROOM_FACTOR`). The committed crop is held static while a speaker is on, and on a speaker change a per-frame EMA pan (`PAN_SMOOTHING_FACTOR`=0.03, τ≈1.1 s — cinematic glide) glides the crop — rendered via `_get_face_crop_filter(interpolate=True)`.
 
-**Per-clip donation promotion (runs before the routing below):**
-The renderer promotes any clip whose window contains a transient mediashare/donation popup (`mediashare_present`) to `DONATION_OVERLAY` (`ClipRenderer._apply_donation_override`, gated by `preserve_donation_overlays`; an explicit per-clip `content_type` is respected). Types listed in `video_processing.donation_overlay_exclude_types` (default: `["PODCAST", "GAMING_COLLAB"]`) are **never promoted**: `PODCAST` is pre-recorded and carries no live donation widgets; `GAMING_COLLAB` keeps its 3-stack so the popup does not displace a collab panel. This list is user-configurable. Promoted clips use the DONATION_OVERLAY layout below instead of their base type's layout. This is the only layout that composites donations — Modes A/B/C do not.
+**Per-clip donation promotion (runs before the routing below, disabled by default):**
+The renderer promotes any clip whose window contains a transient mediashare/donation popup (`mediashare_present`) to `DONATION_OVERLAY` (`ClipRenderer._apply_donation_override`, gated by `preserve_donation_overlays` which defaults to `false`; an explicit per-clip `content_type` is respected). Types listed in `video_processing.donation_overlay_exclude_types` (default: `["PODCAST", "GAMING_COLLAB"]`) are **never promoted**: `PODCAST` is pre-recorded and carries no live donation widgets; `GAMING_COLLAB` keeps its 3-stack so the popup does not displace a collab panel. This list is user-configurable. Promoted clips use the DONATION_OVERLAY layout below instead of their base type's layout. This is the only layout that composites donations — Modes A/B/C do not.
 
 **DONATION_OVERLAY (per-clip):**
 2-stack reusing the Mode B geometry: **Top** = facecam (always fits). **Bottom** = the donation/mediashare popup, forced — the popup box (appearance/disappearance detector, colour-overlay fallback) expanded to the panel aspect with blurred-background fill; the webcam inset is excluded so the face never duplicates top+bottom. Degrades to the gameplay bottom if forced but no popup box is found.

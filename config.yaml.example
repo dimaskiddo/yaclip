@@ -42,9 +42,10 @@ downloader:
 clip_selection:
   mode: "auto"                         # auto = AI detects clips | manual = user provides timestamps
   auto_strategy: "hybrid"              # For auto mode only: ai | heatmap | hybrid
-  candidate_multiplier: 2              # RMS/heatmap produces N spikes; LLM receives top (target_clips × multiplier)
-                                       # e.g. 5 clips × 2 = top 10 candidates sent to LLM, rest discarded
-                                       # Min: 1 (exact count, no selection) | Recommended: 2 | Max: 5
+  candidate_margin: 2                  # RMS/heatmap produces N spikes; LLM receives top (target_clips + margin)
+                                       # e.g. 5 clips + 2 = top 7 candidates sent to LLM, rest discarded
+                                       # Additive (not ×): 15 clips + 2 = 17, not 30 — keeps STT cost bounded
+                                       # Min: 0 (exact count, no selection) | Recommended: 2 | Max: 15
   require_review_before_render: true   # Show review panel before rendering starts
   heatmap_threshold_percentile: 85     # Minimum heatmap spike percentile to qualify as a clip candidate
   min_clips: 1
@@ -68,7 +69,7 @@ video_processing:
   content_type_override: "auto"        # auto | PODCAST | JUST_CHAT | GAMING_SOLO | GAMING_COLLAB | DONATION_OVERLAY
   detection_confidence_threshold: 0.6  # Below this, detection falls back to PODCAST and logs a warning
   auto_face_tracking: true             # Smooth face-centered crop for all layout modes
-  preserve_donation_overlays: true     # Master on/off for donation/MediaShare handling. true = auto-detect
+  preserve_donation_overlays: false    # Master on/off for donation/MediaShare handling. true = auto-detect
                                        #   popups, route clips to DONATION_OVERLAY layout, and composite
                                        #   Trakteer/MediaShare alerts. false = skip all donation scans
                                        #   (faster) and never auto-route to DONATION_OVERLAY.

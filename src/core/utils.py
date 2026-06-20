@@ -69,7 +69,7 @@ class SystemUtils:
     @staticmethod
     def get_ffmpeg_path() -> str:
         """Resolve FFmpeg binary from workspace/bin, falling back to system 'ffmpeg'."""
-        bin_dir = Path(str(BIN_DIR)).resolve()
+        bin_dir = BIN_DIR.resolve()
 
         if os.name == "nt":
             ffmpeg_exe = bin_dir / "ffmpeg.exe"

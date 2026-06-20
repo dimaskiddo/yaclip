@@ -35,8 +35,9 @@ class LocalLLMProvider:
     def _analyze_transcript_llama(
         self,
         transcript: str,
-        content_type: str = "PODCAST",
+        content_type: str | None = "PODCAST",
         target_duration: int = 60,
+        target_clips: int = 5,
         llm: Llama | None = None,
     ) -> list[dict]:
         """Uses local Llama model to analyze transcript and extract highlights."""
@@ -50,7 +51,8 @@ class LocalLLMProvider:
             content_type=content_type, target_duration=target_duration
         )
         user_prompt = (
-            f"Transcript:\n{transcript}\n\nPlease analyze and return the JSON array."
+            f"Transcript:\n{transcript}\n\n"
+            f"Please analyze and identify up to {target_clips} highlight clips, then return the JSON array."
         )
 
         try:
@@ -91,7 +93,7 @@ class LocalLLMProvider:
         self,
         candidates_text: str,
         target_clips: int,
-        content_type: str = "PODCAST",
+        content_type: str | None = "PODCAST",
         target_duration: int = 60,
         llm: Llama | None = None,
     ) -> list[dict]:
@@ -113,16 +115,9 @@ class LocalLLMProvider:
 
         user_prompt = (
             f"Here are the candidate segments:\n\n{candidates_text}\n\n"
-            f"Please select the best {target_clips} clips. For each selected clip, output an object in a JSON array. "
-            "Each object MUST contain:\n"
-            "- `candidate_index`: (integer) the index of the candidate this clip is chosen from (1-based index)\n"
-            "- `start_time`: (float) the start time relative to the candidate's transcript (where 0.0 is the start of that candidate's transcript)\n"
-            "- `end_time`: (float) the end time relative to the candidate's transcript\n"
-            "- `title`: (string, max 50 chars) a catchy title for the clip\n"
-            "- `reasoning`: (string) one sentence explaining why this clip is selected and how it compares to other candidates\n\n"
-            "Here are the specific requirements for clip extraction:\n"
+            f"Select the best {target_clips} clips. Return JSON array with fields as specified below.\n"
             f"{base_sys_prompt}\n\n"
-            "Format the response ONLY as a valid JSON array, with no other text or markdown wrappers."
+            "Format response ONLY as a valid JSON array, no markdown wrappers."
         )
 
         try:
@@ -162,14 +157,15 @@ class LocalLLMProvider:
     def analyze_transcript(
         self,
         transcript: str,
-        content_type: str = "PODCAST",
+        content_type: str | None = "PODCAST",
         target_duration: int = 60,
+        target_clips: int = 5,
         llm: Llama | None = None,
     ) -> list[dict]:
         """Analyzes transcript using local Llama model to extract highlights."""
         try:
             return self._analyze_transcript_llama(
-                transcript, content_type, target_duration, llm=llm
+                transcript, content_type, target_duration, target_clips, llm=llm
             )
         finally:
             if llm is None:
@@ -180,7 +176,7 @@ class LocalLLMProvider:
         self,
         candidates_text: str,
         target_clips: int,
-        content_type: str = "PODCAST",
+        content_type: str | None = "PODCAST",
         target_duration: int = 60,
         llm: Llama | None = None,
     ) -> list[dict]:

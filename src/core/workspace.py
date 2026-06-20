@@ -137,27 +137,41 @@ def ensure_workspace_integrity() -> None:
     logger.info("Workspace check complete. All required tools and directories are ready.")
 
 
-def run_purge_cycle(force: bool = False, specific_target: str | None = None) -> None:
-    """Run a single cache purge check sequentially, deleting stale files based on retention settings."""
+def run_purge_cycle(force: bool = False, specific_target: str | list[str] | None = None) -> None:
+    """Run a single cache purge check sequentially, deleting stale files based on retention settings.
 
+    Args:
+        force: When True, bypass retention and dry-run settings.
+        specific_target: Directory name(s) to purge (e.g. "tmp" or ["clips", "tmp"]).
+            When None, all purgeable directories are processed.
+    """
     from src.core.config import load_config
     config = load_config()
     cleanup_cfg = config.workspace_cleanup
     if not cleanup_cfg.enabled and not force:
         return
 
+    targets_set: set[str] | None = None
+    if isinstance(specific_target, str):
+        targets_set = {specific_target}
+    elif specific_target is not None:
+        targets_set = set(specific_target)
+
     protected_dirs = set(cleanup_cfg.protected_dirs)
 
-    if specific_target and specific_target in protected_dirs:
-        logger.warning(f"Workspace Cleaner - Can't clean cache directory '{specific_target}' because it is protected.")
-        return
+    if targets_set:
+        blocked = targets_set & protected_dirs
+        if blocked:
+            for d in sorted(blocked):
+                logger.warning(f"Workspace Cleaner - Can't clean cache directory '{d}' because it is protected.")
+            return
 
     if force:
-        target_str = f"'{specific_target}'" if specific_target else "all targets"
+        target_str = ", ".join(sorted(targets_set)) if targets_set else "all targets"
         logger.warning(f"Workspace Cleaner - Starting FORCED manual cache purge for {target_str} (ignoring retention/dry-run)...")
     else:
         logger.info("Workspace Cleaner - Starting scheduled cache purge cycle...")
-        
+
     dry_run = False if force else cleanup_cfg.dry_run
     retention = cleanup_cfg.retention_days
 
@@ -176,7 +190,7 @@ def run_purge_cycle(force: bool = False, specific_target: str | None = None) -> 
     ]
 
     for dir_name, days, recursive in targets:
-        if specific_target and dir_name != specific_target:
+        if targets_set and dir_name not in targets_set:
             continue
 
         if not force and days == -1:

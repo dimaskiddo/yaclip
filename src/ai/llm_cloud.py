@@ -32,7 +32,7 @@ class CloudLLMProvider:
             )
 
     def _analyze_transcript_openai(
-        self, transcript: str, content_type: str = "PODCAST", target_duration: int = 60
+        self, transcript: str, content_type: str | None = "PODCAST", target_duration: int = 60, target_clips: int = 5
     ) -> list[dict]:
         """Uses OpenAI to analyze transcript and extract highlights."""
         try:
@@ -47,7 +47,8 @@ class CloudLLMProvider:
             content_type=content_type, target_duration=target_duration
         )
         user_prompt = (
-            f"Transcript:\n{transcript}\n\nPlease analyze and return the JSON array."
+            f"Transcript:\n{transcript}\n\n"
+            f"Please analyze and identify up to {target_clips} highlight clips, then return the JSON array."
         )
 
 
@@ -78,7 +79,7 @@ class CloudLLMProvider:
             raise AIProviderError(f"OpenAI clip selection failed: {e}") from e
 
     def _analyze_transcript_gemini(
-        self, transcript: str, content_type: str = "PODCAST", target_duration: int = 60
+        self, transcript: str, content_type: str | None = "PODCAST", target_duration: int = 60, target_clips: int = 5
     ) -> list[dict]:
         """Uses Gemini to analyze transcript and extract highlights."""
         try:
@@ -102,7 +103,7 @@ class CloudLLMProvider:
         prompt = (
             f"{system_prompt}\n\n"
             f"Transcript:\n{transcript}\n\n"
-            "Analyze the transcript and return ONLY the requested JSON array."
+            f"Analyze the transcript, identify up to {target_clips} clips, and return ONLY the requested JSON array."
         )
 
         try:
@@ -123,7 +124,7 @@ class CloudLLMProvider:
         self,
         candidates_text: str,
         target_clips: int,
-        content_type: str = "PODCAST",
+        content_type: str | None = "PODCAST",
         target_duration: int = 60,
     ) -> list[dict]:
         """Uses OpenAI to compare and select the best clips from candidates in a single batched call."""
@@ -146,16 +147,9 @@ class CloudLLMProvider:
 
         user_prompt = (
             f"Here are the candidate segments:\n\n{candidates_text}\n\n"
-            f"Please select the best {target_clips} clips. For each selected clip, output an object in a JSON array. "
-            "Each object MUST contain:\n"
-            "- `candidate_index`: (integer) the index of the candidate this clip is chosen from (1-based index)\n"
-            "- `start_time`: (float) the start time relative to the candidate's transcript (where 0.0 is the start of that candidate's transcript)\n"
-            "- `end_time`: (float) the end time relative to the candidate's transcript\n"
-            "- `title`: (string, max 50 chars) a catchy title for the clip\n"
-            "- `reasoning`: (string) one sentence explaining why this clip is selected and how it compares to other candidates\n\n"
-            "Here are the specific requirements for clip extraction:\n"
+            f"Select the best {target_clips} clips. Return JSON array with fields as specified below.\n"
             f"{base_sys_prompt}\n\n"
-            "Format the response ONLY as a valid JSON array, with no other text or markdown wrappers."
+            "Format response ONLY as a valid JSON array, no markdown wrappers."
         )
 
 
@@ -189,7 +183,7 @@ class CloudLLMProvider:
         self,
         candidates_text: str,
         target_clips: int,
-        content_type: str = "PODCAST",
+        content_type: str | None = "PODCAST",
         target_duration: int = 60,
     ) -> list[dict]:
         """Uses Gemini to compare and select the best clips from candidates in a single batched call."""
@@ -220,16 +214,9 @@ class CloudLLMProvider:
         prompt = (
             f"{system_prompt}\n\n"
             f"Here are the candidate segments:\n\n{candidates_text}\n\n"
-            f"Please select the best {target_clips} clips. For each selected clip, output an object in a JSON array. "
-            "Each object MUST contain:\n"
-            "- `candidate_index`: (integer) the index of the candidate this clip is chosen from (1-based index)\n"
-            "- `start_time`: (float) the start time relative to the candidate's transcript (where 0.0 is the start of that candidate's transcript)\n"
-            "- `end_time`: (float) the end time relative to the candidate's transcript\n"
-            "- `title`: (string, max 50 chars) a catchy title for the clip\n"
-            "- `reasoning`: (string) one sentence explaining why this clip is selected and how it compares to other candidates\n\n"
-            "Here are the specific requirements for clip extraction:\n"
+            f"Select the best {target_clips} clips. Return JSON array with fields as specified below.\n"
             f"{base_sys_prompt}\n\n"
-            "Format the response ONLY as a valid JSON array, with no other text or markdown wrappers."
+            "Format response ONLY as a valid JSON array, no markdown wrappers."
         )
 
         try:
@@ -247,16 +234,16 @@ class CloudLLMProvider:
             raise AIProviderError(f"Gemini batch clip selection failed: {e}") from e
 
     def analyze_transcript(
-        self, transcript: str, content_type: str = "PODCAST", target_duration: int = 60
+        self, transcript: str, content_type: str | None = "PODCAST", target_duration: int = 60, target_clips: int = 5
     ) -> list[dict]:
         """Analyzes transcript using configured cloud provider and extracts highlights."""
         if self.provider == "google":
             return self._analyze_transcript_gemini(
-                transcript, content_type, target_duration
+                transcript, content_type, target_duration, target_clips
             )
         elif self.provider == "openai" or self.base_url:
             return self._analyze_transcript_openai(
-                transcript, content_type, target_duration
+                transcript, content_type, target_duration, target_clips
             )
         else:
             raise NotImplementedError(
@@ -267,7 +254,7 @@ class CloudLLMProvider:
         self,
         candidates_text: str,
         target_clips: int,
-        content_type: str = "PODCAST",
+        content_type: str | None = "PODCAST",
         target_duration: int = 60,
     ) -> list[dict]:
         """Compares and selects clips from candidates using configured cloud provider."""
