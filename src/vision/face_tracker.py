@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import urllib.request
-import numpy as np
-
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import numpy as np
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -15,7 +15,7 @@ from src.core.constants import (
     AV_SYNC_WINDOW_SECONDS,
     COCO_CLASS_PERSON,
     COHERENCE_MIN,
-    ContentType,
+    COLLAB_CROP_HEIGHT_FRAC,
     FACE_COUNT_MARGIN,
     FACE_LANDMARKER_MAX_FACES,
     GROUP_FRAMING_FIT_FACTOR,
@@ -30,18 +30,22 @@ from src.core.constants import (
     LIP_ACTIVITY_WINDOW_SECONDS,
     MAR_VERTICAL_PAIRS,
     MAR_WIDTH_PAIR,
+    MIN_CROP_DIMENSION,
     MIN_SHOT_SECONDS,
     PAN_SMOOTHING_FACTOR,
+    PODCAST_CROP_ASPECT,
     PODCAST_DETECTION_FPS,
+    SOLO_CROP_HEIGHT_FRAC,
     SPEAKER_HOLD_SECONDS,
     SPEAKER_SWITCH_MARGIN,
     STACK2_PANEL_ASPECT,
     STACK3_PANEL_ASPECT,
     VOICE_ACTIVITY_FLOOR_FACTOR,
+    ContentType,
 )
-from src.core.utils import SystemUtils
-from src.media.energy import AudioEnergyAnalyzer
+from src.core.utils import SystemUtils, box_iou, make_even
 from src.core.workspace import MODELS_DIR
+from src.media.energy import AudioEnergyAnalyzer
 
 
 class FaceTracker:
@@ -106,12 +110,12 @@ class FaceTracker:
 
         # Downsample detection to save CPU/GPU.  PODCAST samples faster so active-speaker
         # detection can resolve syllable-rate (~3-5 Hz) mouth movement; other types use 5 fps.
-        sample_fps = PODCAST_DETECTION_FPS if (content_type == ContentType.PODCAST and not fast) else 5
+        sample_fps = (
+            PODCAST_DETECTION_FPS if (content_type == ContentType.PODCAST and not fast) else 5
+        )
         detection_interval = max(1, int(fps / sample_fps))
 
-        raw_detections: list[
-            dict
-        ] = []  # List of dicts: {"frame_idx": int, "faces": list}
+        raw_detections: list[dict] = []  # List of dicts: {"frame_idx": int, "faces": list}
 
         # PODCAST uses MediaPipe FaceLandmarker (lip-landmark speaker detection) so it can
         # identify and cut to the active speaker when 2+ faces are present.  All other types
@@ -123,7 +127,12 @@ class FaceTracker:
             )
         elif content_type == ContentType.PODCAST:
             raw_detections = self._track_speaker_mesh(
-                cap, start_frame, end_frame, detection_interval, width, height,
+                cap,
+                start_frame,
+                end_frame,
+                detection_interval,
+                width,
+                height,
                 person_count=person_count,
             )
             # Audio-visual sync: per-detection-step loudness envelope for the clip window.
@@ -133,7 +142,9 @@ class FaceTracker:
                     str(video_path), start_time, end_time, detection_interval / fps
                 )
             except Exception as e:
-                logger.warning(f"Audio envelope unavailable, using visual-only speaker detection: {e}")
+                logger.warning(
+                    f"Audio envelope unavailable, using visual-only speaker detection: {e}"
+                )
                 audio_rms = []
         else:
             raw_detections = self._track_standard_detection(
@@ -144,8 +155,16 @@ class FaceTracker:
 
         # Interpolate detections frame-by-frame
         crops = self._generate_smooth_crops(
-            raw_detections, start_frame, end_frame, fps, width, height, content_type,
-            audio_rms=audio_rms, detection_interval=detection_interval, fast_mode=fast,
+            raw_detections,
+            start_frame,
+            end_frame,
+            fps,
+            width,
+            height,
+            content_type,
+            audio_rms=audio_rms,
+            detection_interval=detection_interval,
+            fast_mode=fast,
         )
         return crops
 
@@ -292,7 +311,9 @@ class FaceTracker:
             )
 
         num_faces = max(1, min(person_count + FACE_COUNT_MARGIN, FACE_LANDMARKER_MAX_FACES))
-        logger.info(f"Speaker tracking: {person_count} person(s) in video, tracking up to {num_faces} speakers.")
+        logger.info(
+            f"Speaker tracking: {person_count} person(s) in video, tracking up to {num_faces} speakers."
+        )
 
         base_options = python.BaseOptions(model_asset_path=str(model_path))
         options = vision.FaceLandmarkerOptions(
@@ -349,6 +370,7 @@ class FaceTracker:
         mouth width is degenerate.  Landmark indices come from ``MAR_VERTICAL_PAIRS`` /
         ``MAR_WIDTH_PAIR`` (constants).
         """
+
         def _dist(a: int, b: int) -> float:
             pa, pb = landmarks[a], landmarks[b]
             return float(np.hypot(pa.x - pb.x, pa.y - pb.y))
@@ -376,7 +398,7 @@ class FaceTracker:
                 # Best IoU match first.
                 fid, best_iou = -1, IOU_MATCH_MIN
                 for j, prev in enumerate(track_boxes):
-                    iou = self._iou(box, prev)
+                    iou = box_iou(box, prev)
                     if iou >= best_iou:
                         fid, best_iou = j, iou
                 # Fallback: nearest center within 12% of frame width.
@@ -431,18 +453,6 @@ class FaceTracker:
         if a_arr.std() < 1e-9 or b_arr.std() < 1e-9:
             return 0.0
         return max(0.0, float(np.corrcoef(a_arr, b_arr)[0, 1]))
-
-    @staticmethod
-    def _iou(box_a: tuple, box_b: tuple) -> float:
-        """Intersection-over-Union of two ``(x, y, w, h)`` boxes."""
-        ax, ay, aw, ah = box_a
-        bx, by, bw, bh = box_b
-        ix1, iy1 = max(ax, bx), max(ay, by)
-        ix2, iy2 = min(ax + aw, bx + bw), min(ay + ah, by + bh)
-        iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
-        inter = iw * ih
-        union = aw * ah + bw * bh - inter
-        return inter / union if union > 0 else 0.0
 
     @staticmethod
     def _audio_correlation_weight(
@@ -539,8 +549,7 @@ class FaceTracker:
         # Audio-visual sync: voiced gate + per-face correlation weight.
         voiced = self._voiced_mask(audio_rms, n)
         weights = {
-            fid: self._audio_correlation_weight(motion[fid], audio_rms, voiced)
-            for fid in all_fids
+            fid: self._audio_correlation_weight(motion[fid], audio_rms, voiced) for fid in all_fids
         }
 
         # Stable, clip-level two-shot decision.
@@ -580,7 +589,9 @@ class FaceTracker:
                 step_centers.append(
                     {
                         "frame_idx": frame_idx,
-                        "target_x": int((min(r[0] for r in ranges) + max(r[1] for r in ranges)) / 2),
+                        "target_x": int(
+                            (min(r[0] for r in ranges) + max(r[1] for r in ranges)) / 2
+                        ),
                         "target_y": int(sum(cys) / len(cys) - mean_h * HEADROOM_FACTOR),
                         "speaker_id": GROUP_SPEAKER_ID,
                     }
@@ -662,34 +673,30 @@ class FaceTracker:
         """
         if not detections:
             # Fallback to static center crops
-            return self._generate_fallback_crops(
-                start_frame, end_frame, fps, width, height
-            )
+            return self._generate_fallback_crops(start_frame, end_frame, fps, width, height)
 
         # Target crop dimensions depend on content type.
         # Facecam crop is pre-shaped to the destination panel aspect so the downstream
         # scale (1080x960 for 2-stack, 1080x640 for collab) adds zero distortion.
         if content_type == ContentType.PODCAST:
             # 9:16 full-height vertical pillar
-            crop_w = int(height * (9.0 / 16.0))
+            crop_w = int(height * PODCAST_CROP_ASPECT)
             crop_h = height
         elif content_type == ContentType.GAMING_COLLAB:
             # Mode C facecam panel is 1080x640 (aspect 1.6875)
-            crop_h = int(height * 0.4)
+            crop_h = int(height * COLLAB_CROP_HEIGHT_FRAC)
             crop_w = int(crop_h * STACK3_PANEL_ASPECT)
         else:
             # Mode B 2-stack facecam panel is 1080x960 (aspect 1.125) for GAMING_SOLO/JUST_CHAT.
             # Crop ~half the source height around the tracked face → crop-fill zoom on the cam.
-            crop_h = int(height * 0.5)
+            crop_h = int(height * SOLO_CROP_HEIGHT_FRAC)
             crop_w = int(crop_h * STACK2_PANEL_ASPECT)
 
         # Ensure crop fits within source frame
-        crop_w = max(100, min(crop_w, width))
-        crop_h = max(100, min(crop_h, height))
-        if crop_w % 2 != 0:
-            crop_w -= 1
-        if crop_h % 2 != 0:
-            crop_h -= 1
+        crop_w = max(MIN_CROP_DIMENSION, min(crop_w, width))
+        crop_h = max(MIN_CROP_DIMENSION, min(crop_h, height))
+        crop_w = make_even(crop_w)
+        crop_h = make_even(crop_h)
 
         # Detection steps occur every ``detection_interval`` frames → convert seconds to steps.
         steps_per_second = fps / max(1, detection_interval)
@@ -778,8 +785,13 @@ class FaceTracker:
                     # Commit the switch only after the debounce hold threshold is met.
                     if pending_count >= hold_steps:
                         seg = _close_segment(
-                            committed_sid, seg_xs, seg_ys, seg_start,
-                            sc["frame_idx"], last_seg_cx, last_seg_cy
+                            committed_sid,
+                            seg_xs,
+                            seg_ys,
+                            seg_start,
+                            sc["frame_idx"],
+                            last_seg_cx,
+                            last_seg_cy,
                         )
                         segments.append(seg)
                         last_seg_cx, last_seg_cy = seg["cx"], seg["cy"]
@@ -851,10 +863,9 @@ class FaceTracker:
         self, start_frame: int, end_frame: int, fps: float, width: int, height: int
     ) -> list[dict]:
         """Generate static center 9:16 crop coordinates."""
-        crop_w = int(height * (9.0 / 16.0))
-        crop_w = max(100, min(crop_w, width))
-        if crop_w % 2 != 0:
-            crop_w -= 1
+        crop_w = int(height * PODCAST_CROP_ASPECT)
+        crop_w = max(MIN_CROP_DIMENSION, min(crop_w, width))
+        crop_w = make_even(crop_w)
 
         x_min = (width - crop_w) // 2
         crops = []

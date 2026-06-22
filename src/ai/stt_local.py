@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import gc
 import json
-
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from faster_whisper import WhisperModel
 
 from pathlib import Path
+
 from loguru import logger
 
 from src.ai.prompts import get_language_prompt
@@ -25,9 +25,7 @@ from src.core.workspace import DATA_DIR
 
 def segments_to_transcript(segments: list[dict]) -> str:
     """Flatten word-level segments into the ``[start - end] text`` lines the LLM expects."""
-    return "\n".join(
-        f"[{s['start']:.2f} - {s['end']:.2f}] {s['text']}" for s in segments
-    )
+    return "\n".join(f"[{s['start']:.2f} - {s['end']:.2f}] {s['text']}" for s in segments)
 
 
 def _norm_token(word: str) -> str:
@@ -52,9 +50,7 @@ def _is_hallucinated_segment(seg: object) -> bool:
     tokens = [
         _norm_token(w.word) for w in (getattr(seg, "words", None) or []) if _norm_token(w.word)
     ]
-    if len(tokens) > STT_REPEAT_TOKEN_MAX and len(set(tokens)) <= 1:
-        return True
-    return False
+    return bool(len(tokens) > STT_REPEAT_TOKEN_MAX and len(set(tokens)) <= 1)
 
 
 def save_words_cache(video_id: str, candidates: list[dict]) -> None:
@@ -71,8 +67,7 @@ def save_words_cache(video_id: str, candidates: list[dict]) -> None:
             encoding="utf-8",
         )
         logger.info(
-            f"Saved word timing data ({len(candidates)} clip(s)): "
-            f"{SystemUtils.display_path(path)}"
+            f"Saved word timing data ({len(candidates)} clip(s)): {SystemUtils.display_path(path)}"
         )
     except OSError as e:
         logger.warning(f"Could not save word timing data to {path.name}: {e}")
@@ -164,9 +159,7 @@ class LocalSTTProvider:
             kwargs["initial_prompt"] = primer
         return kwargs
 
-    def _transcribe_whisper(
-        self, audio_path: str, model: WhisperModel | None = None
-    ) -> str:
+    def _transcribe_whisper(self, audio_path: str, model: WhisperModel | None = None) -> str:
         """Run faster-whisper locally to extract transcript with timestamps."""
         try:
             from faster_whisper import WhisperModel
@@ -181,9 +174,7 @@ class LocalSTTProvider:
 
         if model is None:
             logger.info("Loading local transcription model...")
-            model = WhisperModel(
-                self.model_size, device=device_config, compute_type=c_type
-            )
+            model = WhisperModel(self.model_size, device=device_config, compute_type=c_type)
         else:
             logger.info("Reusing local transcription model...")
 
@@ -206,7 +197,9 @@ class LocalSTTProvider:
             logger.debug(line)
 
         if dropped:
-            logger.info(f"Filtered out {dropped} non-speech segment(s) (laughter, noise, or repetition).")
+            logger.info(
+                f"Filtered out {dropped} non-speech segment(s) (laughter, noise, or repetition)."
+            )
         logger.info("Local transcription complete.")
         return "\n".join(transcript_lines)
 
@@ -241,9 +234,7 @@ class LocalSTTProvider:
 
         if model is None:
             logger.info("Loading local transcription model for subtitle segments...")
-            model = WhisperModel(
-                self.model_size, device=device_config, compute_type=c_type
-            )
+            model = WhisperModel(self.model_size, device=device_config, compute_type=c_type)
 
         language = self.config.video_processing.subtitles.language
         kwargs = self._build_transcribe_kwargs(language)
@@ -274,7 +265,9 @@ class LocalSTTProvider:
                 }
             )
         if dropped:
-            logger.info(f"Filtered out {dropped} non-speech segment(s) (laughter, noise, or repetition).")
+            logger.info(
+                f"Filtered out {dropped} non-speech segment(s) (laughter, noise, or repetition)."
+            )
         logger.info(f"Transcribed {len(out)} spoken segment(s) with word timings.")
         return out
 
@@ -315,4 +308,3 @@ class LocalSTTProvider:
             if model is None:
                 logger.info("Releasing transcription memory...")
                 gc.collect()
-

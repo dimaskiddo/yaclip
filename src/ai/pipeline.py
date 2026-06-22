@@ -4,16 +4,20 @@ import concurrent.futures
 import gc
 import json
 import time
-
 from pathlib import Path
 from typing import Any
+
 from loguru import logger
 
 from src.ai.api_client import retry_api_call
 from src.ai.heatmap import HeatmapAnalyzer
 from src.ai.llm_cloud import CloudLLMProvider
 from src.ai.llm_local import LocalLLMProvider
-from src.ai.prompts import get_system_prompt, strip_json_markdown
+from src.ai.prompts import (
+    build_detection_evidence_block,
+    get_system_prompt,
+    strip_json_markdown,
+)
 from src.ai.stt_cloud import CloudSTTProvider
 from src.ai.stt_local import (
     LocalSTTProvider,
@@ -46,16 +50,12 @@ class AIPipeline:
         stt_cloud_google = (
             (stt_provider in ("cloud", "auto"))
             and stt_cfg.cloud.provider.lower() == "google"
-            and bool(
-                stt_cfg.cloud.api_key and stt_cfg.cloud.api_key != "your-api-key-here"
-            )
+            and bool(stt_cfg.cloud.api_key and stt_cfg.cloud.api_key != "your-api-key-here")
         )
         llm_cloud_google = (
             (llm_provider in ("cloud", "auto"))
             and llm_cfg.cloud.provider.lower() == "google"
-            and bool(
-                llm_cfg.cloud.api_key and llm_cfg.cloud.api_key != "your-api-key-here"
-            )
+            and bool(llm_cfg.cloud.api_key and llm_cfg.cloud.api_key != "your-api-key-here")
         )
         return stt_cloud_google and llm_cloud_google
 
@@ -66,6 +66,7 @@ class AIPipeline:
         target_duration: int,
         target_clips: int,
         detected_type: ContentType | None = None,
+        detection_evidence: dict[str, object] | None = None,
     ) -> list[dict[str, Any]]:
         """Runs a single unified Gemini call that handles both STT and LLM analysis."""
         try:
@@ -80,7 +81,7 @@ class AIPipeline:
         model_name = llm_cloud_cfg.model or stt_cloud_cfg.model
 
         genai.configure(api_key=api_key)
-        logger.info("Starting combined Gemini transcription and AI clip selection...")
+        logger.info("Starting cloud AI transcription and clip selection...")
 
         @retry_api_call(max_retries=3)
         def _upload() -> object:
@@ -88,9 +89,7 @@ class AIPipeline:
 
         @retry_api_call(max_retries=3)
         def _generate(uploaded_file: object, system_prompt: str, user_prompt: str) -> object:
-            model = genai.GenerativeModel(
-                model_name=model_name, system_instruction=system_prompt
-            )
+            model = genai.GenerativeModel(model_name=model_name, system_instruction=system_prompt)
             return model.generate_content([uploaded_file, user_prompt])
 
         video_id = Path(audio_path).stem
@@ -106,7 +105,6 @@ class AIPipeline:
             if uploaded_file.state.name == "FAILED":
                 raise RuntimeError("Gemini failed to process the uploaded file.")
 
-
             base_system_prompt = get_system_prompt(
                 content_type=content_type, target_duration=target_duration
             )
@@ -117,7 +115,13 @@ class AIPipeline:
                 f"Please identify up to {target_clips} of the most engaging/viral segments."
             )
 
+            # Prepend detection evidence when the algorithm was uncertain.
+            evidence_block = ""
+            if detected_type is None and detection_evidence:
+                evidence_block = build_detection_evidence_block(detection_evidence)
+
             user_prompt = (
+                f"{evidence_block}"
                 f"Format your output ONLY as a JSON object with the following structure:\n"
                 "{\n"
                 '  "transcript": "Write the full timestamped transcript text here. Use format: [start_seconds - end_seconds] spoken text, one line per segment.",\n'
@@ -149,9 +153,7 @@ class AIPipeline:
             clips = data.get("clips", [])
             # Enforce target_clips: LLM may return more than requested
             if len(clips) > target_clips:
-                logger.info(
-                    f"Clamping clip count from {len(clips)} to requested {target_clips}."
-                )
+                logger.info(f"Reducing clip count from {len(clips)} to {target_clips}.")
                 clips = clips[:target_clips]
             # Normalise content_type per clip (same pattern as the hybrid path)
             for cc in clips:
@@ -163,7 +165,16 @@ class AIPipeline:
                         cc["content_type"] = resolved
                     else:
                         cc.pop("content_type", None)
-            logger.info(f"Combined Gemini analysis found {len(clips)} clip(s).")
+
+                    # Post-hoc validation with raw detection evidence.
+                    if detection_evidence:
+                        self._validate_clip_content_type(
+                            cc,
+                            detection_evidence,
+                            clips.index(cc) + 1,
+                            audio_path=audio_path,
+                        )
+            logger.info(f"Cloud AI found {len(clips)} clips from the video.")
             return clips
 
         except Exception as e:
@@ -177,7 +188,11 @@ class AIPipeline:
                     logger.warning(f"Failed to delete file {uploaded_file.name}: {e}")
 
     def run_stt_transcription(
-        self, audio_path: str, force: bool = False, whisper_model: object | None = None, cache_dir: str | Path | None = None
+        self,
+        audio_path: str,
+        force: bool = False,
+        whisper_model: object | None = None,
+        cache_dir: str | Path | None = None,
     ) -> str:
         """Helper to run STT transcription based on config, automatically falling back if requested."""
         stt_cfg = self.config.ai_pipeline.stt
@@ -193,16 +208,25 @@ class AIPipeline:
                 return cloud_provider.transcribe(audio_path, force=force)
             except Exception as e:
                 if provider == "auto":
-                    logger.warning(f"Cloud transcription failed: {e}. Switching to local transcription.")
+                    logger.warning(
+                        f"Cloud transcription failed: {e}. Switching to local transcription."
+                    )
                 else:
                     raise e
 
         # Local STT path
         local_provider = LocalSTTProvider()
-        return local_provider.transcribe(audio_path, force=force, model=whisper_model, cache_dir=cache_dir)
+        return local_provider.transcribe(
+            audio_path, force=force, model=whisper_model, cache_dir=cache_dir
+        )
 
     def run_llm_analysis(
-        self, transcript: str, content_type: str | None, target_duration: int, target_clips: int = 5, llama_model: object | None = None
+        self,
+        transcript: str,
+        content_type: str | None,
+        target_duration: int,
+        target_clips: int = 5,
+        llama_model: object | None = None,
     ) -> list[dict[str, Any]]:
         """Helper to run LLM transcript analysis based on config, automatically falling back if requested."""
         llm_cfg = self.config.ai_pipeline.llm
@@ -264,9 +288,7 @@ class AIPipeline:
                 )
             except Exception as e:
                 if provider == "auto":
-                    logger.warning(
-                        f"Cloud AI batch analysis failed: {e}. Switching to local AI."
-                    )
+                    logger.warning(f"Cloud AI batch analysis failed: {e}. Switching to local AI.")
                 else:
                     raise e
 
@@ -320,6 +342,70 @@ class AIPipeline:
         return name if name in allowed else None
 
     @staticmethod
+    def _validate_clip_content_type(
+        clip: dict[str, Any],
+        detection_evidence: dict[str, object],
+        candidate_index: int,
+        audio_path: str = "",
+    ) -> None:
+        """Post-hoc LLM output validation: algorithmic signals override LLM picks.
+
+        Used when ``detected_type`` was None (uncertain) and the LLM decided
+        per-clip.  Rules:
+          1. Audio ~1 speaker + LLM returned GAMING_COLLAB → impossible.
+             Force to GAMING_SOLO (if gameplay) or PODCAST.
+          2. Audio ≥2 speakers + gameplay_present + webcam_count≥2 → force
+             GAMING_COLLAB (LLM cannot downgrade).
+
+        Args:
+            clip: A single clip dict from the LLM response.
+            detection_evidence: Structured evidence from the video-level detector.
+            candidate_index: 1-based index for logging.
+            audio_path: Path to the audio chunk (batch path) or full audio
+                (Gemini path) for speaker counting.
+        """
+        resolved = clip.get("content_type")
+        # Must be a valid string — already normalised by _normalise_base_content_type.
+        if not isinstance(resolved, str) or resolved not in {
+            ContentType.PODCAST.value,
+            ContentType.JUST_CHAT.value,
+            ContentType.GAMING_SOLO.value,
+            ContentType.GAMING_COLLAB.value,
+        }:
+            return
+
+        gameplay_present = bool(detection_evidence.get("gameplay_present", False))
+        webcam_count = int(detection_evidence.get("webcam_count", 0))
+
+        if not audio_path:
+            return
+
+        # Rule 1: 1 speaker cannot be COLLAB.
+        if resolved == ContentType.GAMING_COLLAB.value:
+            from src.media.energy import AudioEnergyAnalyzer
+
+            speakers = AudioEnergyAnalyzer().estimate_speaker_count(audio_path)
+            if speakers < 2:
+                original = resolved
+                resolved = (
+                    ContentType.GAMING_SOLO.value if gameplay_present else ContentType.PODCAST.value
+                )
+                clip["content_type"] = resolved
+                logger.info(
+                    f"Clip {candidate_index} corrected from collaboration to single layout "
+                    f"(audio has 1 speaker)."
+                )
+                return
+
+        # Rule 2: 2+ speakers + gameplay + 2+ webcams → force COLLAB.
+        if gameplay_present and webcam_count >= 2 and resolved != ContentType.GAMING_COLLAB.value:
+            clip["content_type"] = ContentType.GAMING_COLLAB.value
+            logger.info(
+                f"Clip {candidate_index} set to collaboration layout "
+                f"(gameplay with {webcam_count} webcams)."
+            )
+
+    @staticmethod
     def _enforce_duration(
         start: float,
         end: float,
@@ -351,6 +437,7 @@ class AIPipeline:
         video_path: str | None = None,
         force: bool = False,
         detected_type: ContentType | None = None,
+        detection_evidence: dict[str, object] | None = None,
     ) -> list[dict[str, Any]]:
         """
         Main AI Orchestrator. Evaluates config to route between Cloud and Local logic.
@@ -365,6 +452,9 @@ class AIPipeline:
             detected_type: Video-level content type from ``ContentTypeDetector.detect_content_type``.
                 When confident, it's used for all clips and threaded to the LLM prompt.
                 When None (uncertain), the LLM decides per-clip.
+            detection_evidence: Structured evidence from ``ContentTypeDetectionResult.evidence``.
+                Injected into the LLM prompt when ``detected_type`` is None (uncertain)
+                so the LLM has raw detection numbers and doesn't hallucinate.
         """
         active_pipeline_event.set()
         try:
@@ -372,14 +462,15 @@ class AIPipeline:
             mode_val = clip_cfg.mode.lower()
             strategy = clip_cfg.auto_strategy.lower()
 
-            logger.info(
-                f"Clip selection mode: {mode_val.upper()}, strategy: {strategy.upper()}"
-            )
+            strategy_label = {
+                "hybrid": "hybrid",
+                "heatmap": "replay data",
+                "ai": "full AI",
+            }.get(strategy, strategy)
+            logger.info(f"Running in {strategy_label} mode to find the best clips.")
 
             if mode_val == "manual":
-                logger.info(
-                    "Manual mode: skipping AI clip selection."
-                )
+                logger.info("Manual mode: skipping AI clip selection.")
                 return []
 
             # Resolve content type for the system prompt. The video-level detector's result
@@ -397,9 +488,7 @@ class AIPipeline:
 
             # Check for unified Gemini path (Only when STT and LLM are both cloud Google)
             if self.is_unified_gemini_possible():
-                logger.info(
-                    "Gemini is configured for both transcription and AI — using combined pipeline for best performance."
-                )
+                logger.info("Using cloud AI for both transcription and clip selection.")
                 try:
                     return self.run_unified_gemini(
                         audio_path=audio_path,
@@ -407,6 +496,7 @@ class AIPipeline:
                         target_duration=target_duration,
                         target_clips=target_clips,
                         detected_type=detected_type,
+                        detection_evidence=detection_evidence,
                     )
                 except Exception as e:
                     logger.error(
@@ -415,7 +505,7 @@ class AIPipeline:
 
             # Decoupled Pipeline
             if strategy == "ai":
-                logger.info("AI strategy: transcribing full audio and running AI analysis.")
+                logger.info("Transcribing the full audio for AI analysis.")
                 transcript = self.run_stt_transcription(audio_path, force=force)
                 return self.run_llm_analysis(
                     transcript,
@@ -427,13 +517,11 @@ class AIPipeline:
             video_id = Path(audio_path).stem
 
             # Extract Spikes (Heatmap or Energy)
-            logger.info("Finding most-replayed and loud moments in the video...")
+            logger.info("Scanning video for most engaging moments.")
             heatmap_analyzer = HeatmapAnalyzer()
             spikes = heatmap_analyzer.analyze_heatmap(video_id)
             if not spikes:
-                logger.info(
-                    "No YouTube Most Replayed data found. Analysing audio for loud moments instead."
-                )
+                logger.info("No replay data available, using audio energy instead.")
                 energy_analyzer = AudioEnergyAnalyzer()
                 spikes = energy_analyzer.analyze_audio_energy(audio_path)
 
@@ -450,15 +538,11 @@ class AIPipeline:
                 )
 
             if strategy == "heatmap":
-                logger.info(
-                    "Heatmap strategy: using Most Replayed/audio peaks as clip positions (no AI selection)."
-                )
+                logger.info("Using replay data peaks directly without AI ranking.")
                 return spikes
 
             # Slice and Refine Spikes (Hybrid strategy)
-            logger.info(
-                f"Found {len(spikes)} candidate moments. Selecting top candidates for analysis..."
-            )
+            logger.info(f"Found {len(spikes)} candidate sections across the video.")
 
             # Sort spikes by score descending (highest priority first)
             spikes.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
@@ -470,7 +554,7 @@ class AIPipeline:
             top_candidates = spikes[:pool_size]
 
             logger.info(
-                f"Selected top {len(top_candidates)} of {len(spikes)} candidates (target + {candidate_margin} margin)."
+                f"Selected top {len(top_candidates)} from {len(spikes)} candidate sections for AI analysis."
             )
 
             slicer = AudioSlicer()
@@ -498,20 +582,24 @@ class AIPipeline:
                 success = slicer.slice_audio_chunk(audio_path, s_start, s_end, chunk_path)
                 return (i, spike, chunk_path, s_start, s_end, success)
 
-            logger.info("Cutting audio clips from candidate moments...")
+            logger.info("Slicing audio from candidate sections.")
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
                 # Preserve order by mapping
                 results = list(executor.map(_slice_chunk, enumerate(top_candidates)))
 
             for i, spike, chunk_path, s_start, s_end, success in results:
                 if not success:
-                    logger.error(f"Failed to cut audio clip for candidate {i + 1}. Using original time bounds instead.")
+                    logger.error(
+                        f"Failed to cut audio clip for candidate {i + 1}. Using original time bounds instead."
+                    )
                     refined_clips.append(spike)
                 else:
                     sliced_chunks.append((i, spike, chunk_path, s_start, s_end))
 
             if not sliced_chunks:
-                logger.warning("Could not cut any audio clips from candidates. Using original time positions instead.")
+                logger.warning(
+                    "Could not cut any audio clips from candidates. Using original time positions instead."
+                )
                 return top_candidates
 
             # Step 2: Transcribe all sliced chunks (STT)
@@ -521,9 +609,7 @@ class AIPipeline:
             # If running STT locally, load the WhisperModel ONCE and reuse it
             stt_provider = self.config.ai_pipeline.stt.provider.lower()
             stt_api_key = self.config.ai_pipeline.stt.cloud.api_key
-            has_stt_credentials = bool(
-                stt_api_key and stt_api_key != "your-api-key-here"
-            )
+            has_stt_credentials = bool(stt_api_key and stt_api_key != "your-api-key-here")
             use_local_stt = (stt_provider == "local") or (
                 stt_provider == "auto" and not has_stt_credentials
             )
@@ -532,17 +618,12 @@ class AIPipeline:
                 try:
                     from faster_whisper import WhisperModel
 
-
                     whisper_model_size = self.config.ai_pipeline.stt.local.model_size
                     device_config = SystemUtils.resolve_device(
                         self.config.ai_pipeline.stt.local.device
                     )
-                    c_type = (
-                        "float32" if whisper_model_size in ("tiny", "base") else "int8"
-                    )
-                    logger.info(
-                        f"Loading local transcription model ({whisper_model_size}) for candidate batch..."
-                    )
+                    c_type = "float32" if whisper_model_size in ("tiny", "base") else "int8"
+                    logger.info(f"Loading speech-to-text model ({whisper_model_size})...")
                     whisper_model = WhisperModel(
                         whisper_model_size, device=device_config, compute_type=c_type
                     )
@@ -557,13 +638,9 @@ class AIPipeline:
 
             # Local STT keeps word-level segments (for the subtitle word cache) only when subtitles
             # will actually render; otherwise it transcribes text-only for selection.
-            local_stt = (
-                LocalSTTProvider() if (use_local_stt and subs_will_render) else None
-            )
+            local_stt = LocalSTTProvider() if (use_local_stt and subs_will_render) else None
             if use_local_stt and not subs_will_render:
-                logger.info(
-                    "Subtitles disabled for this video type. Transcribing audio for AI selection only (no word timings needed)."
-                )
+                logger.info("Subtitles are turned off, transcribing for AI selection only.")
 
             def _offset_segments(segs: list[dict], off: float) -> list[dict]:
                 """Shift relative segment/word times onto the absolute video timeline."""
@@ -582,9 +659,7 @@ class AIPipeline:
 
             def _transcribe_chunk(data: tuple) -> tuple | None:
                 i, spike, chunk_path, s_start, s_end = data
-                logger.info(
-                    f"Transcribing candidate {i + 1}/{len(sliced_chunks)} for AI clip selection..."
-                )
+                logger.info(f"Transcribing candidate section {i + 1}/{len(sliced_chunks)}.")
                 try:
                     if local_stt is not None:
                         # One whisper pass: relative segments → LLM text + absolute words for cache.
@@ -606,26 +681,24 @@ class AIPipeline:
                     return (i, spike, chunk_path, s_start, s_end, None, None, e)
 
             if use_local_stt:
-                logger.info("Transcribing candidates using local model (one at a time to preserve memory)...")
+                logger.info("Transcribing candidate sections with local speech-to-text.")
                 stt_results = [_transcribe_chunk(data) for data in sliced_chunks]
             else:
-                logger.info("Transcribing candidates using cloud service (running in parallel)...")
+                logger.info("Transcribing candidate sections with cloud speech-to-text.")
                 with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
                     stt_results = list(executor.map(_transcribe_chunk, sliced_chunks))
 
             word_cache: list[dict] = []
             for i, spike, chunk_path, s_start, s_end, transcript, abs_segs, err in stt_results:
                 if err:
-                    logger.error(f"Transcription failed for candidate {i + 1}: {err}. Using original time position instead.")
+                    logger.error(
+                        f"Transcription failed for candidate {i + 1}: {err}. Using original time position instead."
+                    )
                     refined_clips.append(spike)
                 else:
-                    transcribed_slices.append(
-                        (i, spike, chunk_path, s_start, s_end, transcript)
-                    )
+                    transcribed_slices.append((i, spike, chunk_path, s_start, s_end, transcript))
                     if abs_segs is not None:
-                        word_cache.append(
-                            {"start": s_start, "end": s_end, "segments": abs_segs}
-                        )
+                        word_cache.append({"start": s_start, "end": s_end, "segments": abs_segs})
 
             # Persist the candidate word-segments so the renderer can skip its own STT pass.
             if word_cache:
@@ -633,7 +706,7 @@ class AIPipeline:
 
             # Cleanup Whisper model memory before loading LLM (RAM safety)
             if whisper_model is not None:
-                logger.info("Releasing local Whisper model memory...")
+                logger.debug("Released local speech-to-text model memory.")
                 del whisper_model
                 gc.collect()
 
@@ -647,22 +720,39 @@ class AIPipeline:
 
                 analyzer = VisualAnalyzer()
                 mediashare_cache_entries: list[dict] = []
+
+                # When the video is a known gaming collaboration, lock the webcam pair
+                # so per-candidate log summaries show both webcams consistently.
+                collab_cams: list = []
+                if detected_type is not None and detected_type == ContentType.GAMING_COLLAB:
+                    collab_cams = analyzer.detect_facecams(Path(video_path))
+                    if len(collab_cams) >= 2:
+                        logger.debug(
+                            f"Passing {len(collab_cams)} locked webcams "
+                            f"to per-candidate scene analysis."
+                        )
+
                 try:
                     for idx, (_, _, _, s_start, s_end, _) in enumerate(transcribed_slices):
                         try:
                             res = analyzer.analyze_window(
-                                Path(video_path), s_start, s_end
+                                Path(video_path),
+                                s_start,
+                                s_end,
+                                facecam_boxes=collab_cams if len(collab_cams) >= 2 else None,
                             )
                             visual_by_index[idx] = res["descriptor"]
                             # Collect donation scan results so the renderer can reuse them instead
                             # of rescanning each clip window (avoids the duplicate dense frame scan).
                             if self.config.video_processing.preserve_donation_overlays:
-                                mediashare_cache_entries.append({
-                                    "start": s_start,
-                                    "end": s_end,
-                                    "mediashare_present": res.get("mediashare_present", False),
-                                    "mediashare_box": res.get("mediashare_box"),
-                                })
+                                mediashare_cache_entries.append(
+                                    {
+                                        "start": s_start,
+                                        "end": s_end,
+                                        "mediashare_present": res.get("mediashare_present", False),
+                                        "mediashare_box": res.get("mediashare_box"),
+                                    }
+                                )
                         except Exception as ve:
                             logger.warning(f"Scene analysis failed for candidate {idx + 1}: {ve}")
                 finally:
@@ -678,18 +768,11 @@ class AIPipeline:
                 # Construct candidate transcripts text block
                 prompt_parts = []
                 speaker_analyzer = AudioEnergyAnalyzer()
-                for idx, (
-                    i,
-                    spike,
-                    chunk_path,
-                    s_start,
-                    s_end,
-                    transcript,
-                ) in enumerate(transcribed_slices):
+                for idx, (_, _, chunk_path, s_start, s_end, transcript) in enumerate(
+                    transcribed_slices
+                ):
                     visual_line = visual_by_index.get(idx)
-                    visual_block = (
-                        f"Visual context: {visual_line}\n" if visual_line else ""
-                    )
+                    visual_block = f"Visual context: {visual_line}\n" if visual_line else ""
                     # Lightweight audio speaker-count hint (≈1 vs ≈2+ voices).
                     speakers = speaker_analyzer.estimate_speaker_count(chunk_path)
                     audio_line = (
@@ -705,14 +788,21 @@ class AIPipeline:
                     )
                 # Prepend video/game metadata context so the LLM knows the show/game.
                 meta_block = self._load_metadata_context(Path(audio_path).stem)
-                candidates_text = meta_block + "\n".join(prompt_parts)
+                # Prepend detection evidence when algorithm was uncertain so the LLM
+                # has the raw numbers, not just the per-clip natural-language descriptors.
+                evidence_block = ""
+                if detected_type is None and detection_evidence:
+                    evidence_block = build_detection_evidence_block(detection_evidence)
+                    logger.debug(
+                        f"Injecting detection evidence into LLM prompt: "
+                        f"{' '.join(f'{k}={v}' for k, v in detection_evidence.items())}"
+                    )
+                candidates_text = evidence_block + meta_block + "\n".join(prompt_parts)
 
                 llama_model = None
                 llm_provider = self.config.ai_pipeline.llm.provider.lower()
                 llm_api_key = self.config.ai_pipeline.llm.cloud.api_key
-                has_llm_credentials = bool(
-                    llm_api_key and llm_api_key != "your-api-key-here"
-                )
+                has_llm_credentials = bool(llm_api_key and llm_api_key != "your-api-key-here")
                 use_local_llm = (llm_provider == "local") or (
                     llm_provider == "auto" and not has_llm_credentials
                 )
@@ -721,15 +811,12 @@ class AIPipeline:
                     try:
                         from llama_cpp import Llama
 
-
                         llm_model_name = self.config.ai_pipeline.llm.local.model_name
                         resolved_path = AIUtils.resolve_llm_model_path(llm_model_name)
                         device_config = self.config.ai_pipeline.llm.local.device.lower()
                         n_gpu = self.config.ai_pipeline.llm.local.n_gpu_layers
 
-                        logger.info(
-                            "Loading local AI reasoning model for batch clip selection..."
-                        )
+                        logger.info("Loading local AI model for clip selection.")
                         llama_model = Llama(
                             model_path=resolved_path,
                             n_ctx=4096,
@@ -754,9 +841,9 @@ class AIPipeline:
                         try:
                             cand_idx = int(cc.get("candidate_index", 1)) - 1
                             if 0 <= cand_idx < len(transcribed_slices):
-                                _, spike, chunk_path, s_start, s_end, _ = (
-                                    transcribed_slices[cand_idx]
-                                )
+                                _, spike, chunk_path, s_start, s_end, _ = transcribed_slices[
+                                    cand_idx
+                                ]
 
                                 rel_start = float(cc.get("start_time", 0.0))
                                 rel_end = float(cc.get("end_time", s_end - s_start))
@@ -806,16 +893,21 @@ class AIPipeline:
                                     else:
                                         cc.pop("content_type", None)
 
+                                    # Post-hoc validation with raw detection evidence.
+                                    if detection_evidence:
+                                        self._validate_clip_content_type(
+                                            cc,
+                                            detection_evidence,
+                                            cand_idx + 1,
+                                            audio_path=str(chunk_path),
+                                        )
+
                                 if "Heatmap" not in cc.get("reasoning", ""):
-                                    cc["reasoning"] += (
-                                        " (Extracted via Heatmap/Energy Spike)."
-                                    )
+                                    cc["reasoning"] += " (Extracted via Heatmap/Energy Spike)."
 
                                 refined_clips.append(cc)
                         except Exception as parse_e:
-                            logger.error(
-                                f"Failed to parse mapped clip candidate: {parse_e}"
-                            )
+                            logger.error(f"Failed to parse mapped clip candidate: {parse_e}")
 
                 except Exception as e:
                     logger.error(
@@ -828,18 +920,11 @@ class AIPipeline:
 
                     # Cleanup Llama model memory (RAM safety)
                     if llama_model is not None:
-                        logger.info("Releasing local Llama model memory...")
+                        logger.debug("Released local AI model memory.")
                         del llama_model
                         gc.collect()
 
             # Sort chronological and filter duplicates
-            # Enforce target_clips: LLM may return more than requested
-            if len(refined_clips) > target_clips:
-                logger.info(
-                    f"Clamping clip count from {len(refined_clips)} to requested {target_clips}."
-                )
-                refined_clips = refined_clips[:target_clips]
-
             refined_clips.sort(key=lambda x: float(x["start_time"]))
 
             final_clips = []
@@ -852,9 +937,12 @@ class AIPipeline:
                     final_clips.append(c)
                     last_end = float(c["end_time"])
 
-            logger.info(
-                f"Clip selection complete. {len(final_clips)} clip(s) ready to render."
-            )
+            # Enforce target_clips: dedup first, then clamp to requested count
+            if len(final_clips) > target_clips:
+                logger.info(f"Reducing clip count from {len(final_clips)} to {target_clips}.")
+                final_clips = final_clips[:target_clips]
+
+            logger.info(f"AI finished selecting {len(final_clips)} clips, ready for rendering.")
             return final_clips
 
         finally:

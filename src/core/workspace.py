@@ -7,9 +7,9 @@ import shutil
 import threading
 import urllib.request
 import zipfile
-
 from datetime import datetime, timedelta
 from pathlib import Path
+
 from loguru import logger
 
 from src.core.exceptions import CacheInitError
@@ -19,17 +19,22 @@ WORKSPACE_DIR = Path("workspace").resolve()
 BIN_DIR = WORKSPACE_DIR / "bin"
 FONTS_DIR = WORKSPACE_DIR / "fonts"
 MODELS_DIR = WORKSPACE_DIR / "models"
-HF_DIR = MODELS_DIR / "hf"
 AUDIOS_DIR = WORKSPACE_DIR / "audios"
 VIDEOS_DIR = WORKSPACE_DIR / "videos"
 SUBTITLES_DIR = WORKSPACE_DIR / "subtitles"  # .ass subtitle files only
-DATA_DIR = WORKSPACE_DIR / "data"            # STT transcripts + AI/cache JSON
+DATA_DIR = WORKSPACE_DIR / "data"  # STT transcripts + AI/cache JSON
 CLIPS_DIR = WORKSPACE_DIR / "clips"
 LOGS_DIR = WORKSPACE_DIR / "logs"
 TMP_DIR = WORKSPACE_DIR / "tmp"
 
 # Global pipeline execution guard — set while any pipeline or download is active
 active_pipeline_event: threading.Event = threading.Event()
+
+
+def _binary_exists(name: str, bin_dir: Path = BIN_DIR) -> bool:
+    """Check if a binary exists in bin_dir, handling platform extension."""
+    exe = bin_dir / (name + ".exe" if os.name == "nt" else name)
+    return exe.exists()
 
 
 def ensure_workspace_integrity() -> None:
@@ -40,7 +45,6 @@ def ensure_workspace_integrity() -> None:
             BIN_DIR,
             FONTS_DIR,
             MODELS_DIR,
-            HF_DIR,
             VIDEOS_DIR,
             AUDIOS_DIR,
             SUBTITLES_DIR,
@@ -54,13 +58,7 @@ def ensure_workspace_integrity() -> None:
         raise CacheInitError(f"Failed to create cache directories: {e}") from e
 
     # Check for FFmpeg binaries
-    ffmpeg_missing = False
-    if os.name == "nt":
-        if not (BIN_DIR / "ffmpeg.exe").exists():
-            ffmpeg_missing = True
-    else:
-        if not (BIN_DIR / "ffmpeg").exists():
-            ffmpeg_missing = True
+    ffmpeg_missing = not _binary_exists("ffmpeg")
 
     if ffmpeg_missing:
         logger.info("Downloading video processing tool (FFmpeg) to workspace/bin...")
@@ -76,13 +74,7 @@ def ensure_workspace_integrity() -> None:
             )
 
     # Check for Bun
-    bun_missing = False
-    if os.name == "nt":
-        if not (BIN_DIR / "bun.exe").exists():
-            bun_missing = True
-    else:
-        if not (BIN_DIR / "bun").exists():
-            bun_missing = True
+    bun_missing = not _binary_exists("bun")
 
     if bun_missing:
         logger.info("Downloading Bun JavaScript runtime to workspace/bin...")
@@ -127,9 +119,7 @@ def ensure_workspace_integrity() -> None:
     if not font_file.exists():
         logger.info("Downloading default high-impact font to workspace/fonts...")
         try:
-            font_url = (
-                "https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf"
-            )
+            font_url = "https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf"
             urllib.request.urlretrieve(font_url, font_file)
         except Exception as e:
             logger.error(f"Failed to download default font: {e}")
@@ -146,6 +136,7 @@ def run_purge_cycle(force: bool = False, specific_target: str | list[str] | None
             When None, all purgeable directories are processed.
     """
     from src.core.config import load_config
+
     config = load_config()
     cleanup_cfg = config.workspace_cleanup
     if not cleanup_cfg.enabled and not force:
@@ -159,16 +150,20 @@ def run_purge_cycle(force: bool = False, specific_target: str | list[str] | None
 
     protected_dirs = set(cleanup_cfg.protected_dirs)
 
-    if targets_set:
+    if targets_set is not None:
         blocked = targets_set & protected_dirs
         if blocked:
             for d in sorted(blocked):
-                logger.warning(f"Workspace Cleaner - Can't clean cache directory '{d}' because it is protected.")
+                logger.warning(
+                    f"Workspace Cleaner - Can't clean cache directory '{d}' because it is protected."
+                )
             return
 
     if force:
         target_str = ", ".join(sorted(targets_set)) if targets_set else "all targets"
-        logger.warning(f"Workspace Cleaner - Starting FORCED manual cache purge for {target_str} (ignoring retention/dry-run)...")
+        logger.warning(
+            f"Workspace Cleaner - Starting FORCED manual cache purge for {target_str} (ignoring retention/dry-run)..."
+        )
     else:
         logger.info("Workspace Cleaner - Starting scheduled cache purge cycle...")
 
@@ -186,7 +181,7 @@ def run_purge_cycle(force: bool = False, specific_target: str | list[str] | None
         ("data", retention.data, False),
         ("tmp", retention.tmp, True),
         ("clips", -1, False),  # -1 means never auto-delete unless forced
-        ("logs", -1, False),   # Handled by loguru's own retention policy
+        ("logs", -1, False),  # Handled by loguru's own retention policy
     ]
 
     for dir_name, days, recursive in targets:
@@ -234,14 +229,10 @@ def run_purge_cycle(force: bool = False, specific_target: str | list[str] | None
             except Exception as e:
                 # Ignore errors if file is already deleted by another process
                 if not isinstance(e, FileNotFoundError):
-                    logger.warning(
-                        f"Workspace Cleaner - Failed to process/delete file {path}: {e}"
-                    )
+                    logger.warning(f"Workspace Cleaner - Failed to process/delete file {path}: {e}")
 
     if files_deleted > 0 or total_freed_bytes > 0:
         freed_mb = total_freed_bytes / (1024 * 1024)
-        logger.info(
-            f"Workspace Cleaner - Purged {files_deleted} files, freeing {freed_mb:.2f} MB."
-        )
+        logger.info(f"Workspace Cleaner - Purged {files_deleted} files, freeing {freed_mb:.2f} MB.")
     else:
         logger.info("Workspace Cleaner - Purge cycle completed. No stale files found.")

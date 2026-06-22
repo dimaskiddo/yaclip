@@ -15,7 +15,8 @@ DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
     "Visual context describes on-screen activity. Donation overlay = MUST include at least one. "
     "Strong action = higher value. Never invent details.\n\n"
     "{content_type_line}\n\n"
-    "Return JSON array. Fields: candidate_index (int, 1-based), start_time (float s), end_time (float s), "
+    "Return JSON array. Fields: candidate_index (int, 1-based), start_time (float, sec from candidate start), "
+    "end_time (float, sec from candidate start), "
     "title (<=50 chars), content_type (PODCAST|JUST_CHAT|GAMING_SOLO|GAMING_COLLAB), "
     "reasoning (one sentence)."
 )
@@ -101,16 +102,52 @@ LANGUAGE_MAP = {
 }
 
 
-_CONTENT_TYPE_CONFIDENT_LINE = (
-    "Content type: {content_type}. Use for all clips."
-)
+_CONTENT_TYPE_CONFIDENT_LINE = "Content type: {content_type}. Use for all clips."
 
 _CONTENT_TYPE_UNCERTAIN_LINE = (
     "Content type: UNCERTAIN. Decide per clip from audio+visual+transcript.\n"
     "Rules (priority): 1) Audio ~1 speaker = solo (never collab). "
     "2) Game characters are NOT people — only count webcam faces. "
-    "3) Cross-check visual person count against audio."
+    "3) Cross-check visual person count against audio.\n"
+    "4) Detection evidence block above provides whole-video algorithmic signal — "
+    "weigh it above per-clip visual descriptors. "
+    "If webcam_count>=2 AND gameplay_present=True, the video is GAMING_COLLAB."
 )
+
+
+def build_detection_evidence_block(evidence: dict[str, object]) -> str:
+    """Format detection evidence as a compact keyword-labeled block for the LLM prompt.
+
+    The LLM sees this when the algorithm was uncertain, so it has the raw
+    numbers the algorithm used — not just the natural-language descriptors
+    from ``_build_descriptor()``.  This prevents hallucination (e.g.
+    classifying a gameplay+2-webcam video as PODCAST).
+
+    Example output:
+        Detection evidence (whole video):
+        gameplay_present=True webcam_count=2 HUD_score=0.0032 gaming_hint=True donation_detected=False open_area_frac=0.52 non_person_motion=8.3
+    """
+    if not evidence:
+        return ""
+
+    # Stable key order for deterministic prompts.
+    key_order = [
+        "gameplay_present",
+        "webcam_count",
+        "hud_score",
+        "hud_detected",
+        "gaming_hint",
+        "donation_detected",
+        "open_area_frac",
+        "non_person_motion",
+    ]
+    ordered = [(k, evidence[k]) for k in key_order if k in evidence]
+    # Append any unexpected keys at the end.
+    extra = [(k, evidence[k]) for k in evidence if k not in key_order]
+    ordered.extend(extra)
+
+    parts = [f"{k}={v}" for k, v in ordered]
+    return "Detection evidence (whole video):\n" + " ".join(parts) + "\n"
 
 
 def get_system_prompt(content_type: str | None = "PODCAST", target_duration: int = 60) -> str:
@@ -143,6 +180,22 @@ def get_language_prompt(language: str) -> str | None:
     lang_code = language.lower()
     lang_code = LANGUAGE_MAP.get(lang_code, lang_code)
     return LANGUAGE_PROMPTS.get(lang_code)
+
+
+def build_batch_user_prompt(candidates_text: str, target_clips: int, base_sys_prompt: str) -> str:
+    """Build the user prompt for batch (multi-candidate) LLM clip selection.
+
+    Used by both cloud (OpenAI / Gemini) and local LLM providers to avoid
+    duplicating the same prompt template across three files.
+    """
+    return (
+        f"Here are the candidate segments:\n\n{candidates_text}\n\n"
+        f"Select the best {target_clips} clips. "
+        "Timestamps are relative to candidate window start (0.0 = start of the candidate's segment).\n"
+        f"Return JSON array with fields as specified below.\n"
+        f"{base_sys_prompt}\n\n"
+        "Format response ONLY as a valid JSON array, no markdown wrappers."
+    )
 
 
 def strip_json_markdown(text: str) -> str:

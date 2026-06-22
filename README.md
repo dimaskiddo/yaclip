@@ -21,6 +21,39 @@ It works on **Windows, macOS, Linux, and WSL2**, and is designed to run well eve
 
 ---
 
+## 🧬 Technology & Algorithms
+
+YaClip brings together computer vision, audio processing, and AI in a single automated pipeline. Here's what powers it:
+
+### 🎯 Content Type Detection Engine
+Before any clip is selected, YaClip analyzes the whole video to determine what type of content it is — podcast, gaming solo, gaming collaboration, or live stream. It uses **YOLOv8n** (Ultralytics COCO) to detect people, webcams, and screen regions across 25 sampled frames, plus **HUD analysis** (temporal variance + spatial gradient) to detect gameplay UI elements like health bars and minimaps. A dedicated **webcam filter** separates real streamer webcams from in-game characters by persistence, area fraction, edge proximity, and spatial separation — eliminating the #1 cause of false collaboration detection. When signals are too weak, structured detection evidence is passed to an LLM for the final decision.
+
+### 🎥 Intelligent Scene Analysis
+YaClip's visual engine performs dense per-candidate window analysis using YOLOv8n to extract facecam regions, gameplay boxes, and donation popups. A dedicated **MediaShare donation detection** module scans at ~2 fps with appearance/disappearance logic and a **box-centre jitter gate** that rejects drifting gameplay motion while catching static donation cards. Two spatial guards (aspect gate, cam-exclusion zone) prevent false positives from webcam borders or game HUD elements.
+
+### 👤 Active Speaker Tracking (Podcast Mode)
+For podcast and panel content with multiple speakers, YaClip uses **MediaPipe FaceLandmarker** to track up to 8 faces simultaneously. The **Mouth-Aspect-Ratio (MAR)** signal — computed from inner-lip vertical landmarks divided by mouth width — measures speech activity independently of face size. A **per-clip RMS audio envelope** gates speaker switching to voiced moments only, and **Pearson correlation** between mouth movement windows and audio windows (`AV_SYNC_WINDOW_SECONDS`) determines which face is actually speaking moment-to-moment. An **occlusion-aware hold** prevents jumping to a smiling non-speaker when the talker's lips are hidden behind a mic. **Two-shot grouping** frames both speakers together when they sit close enough (median span and gap tests), avoiding rapid cuts. **Exponential Moving Average (EMA) pan** at τ≈1.1s glides the crop from one speaker to the next — no snap cuts.
+
+### 🎮 Smart Gaming Layouts
+Three layout modes adapt to the content: **Mode A (single vertical)** for podcasts, **Mode B (2-stack — facecam top, gameplay bottom)** for solo gaming and live streams, and **Mode C (3-stack — primary facecam, gameplay center, collaborator bottom)** for gaming collaborations. The gameplay region uses a **static motion-centroid crop** (`_motion_region`) computed from visual analysis — centred on the action, zoomed by configurable `gameplay_zoom`, and locked for the whole clip so the viewer's eye stays steady. Collaboration clips exclude both webcams from the gameplay crop to prevent any "double facecam" bleeding.
+
+### ⚡ Candidate Pre-Ranking & Hybrid Selection
+YaClip ranks candidate moments before any AI cost. **YouTube Most Replayed heatmap data** (saved during download) or an **FFmpeg RMS energy pipeline** (8 kHz mono PCM) produces a scored spike list. Only the top `target_clips + margin` candidates are transcribed and sent to the AI — cutting STT and LLM cost by up to 95% on a 2-hour video with 25 candidate windows. The margin is **additive** (not a multiplier), so cost stays bounded even at high clip counts.
+
+### 🧠 Hybrid AI Pipeline
+STT (speech-to-text) and LLM (clip selection) are configured independently — each can be **cloud** (Google Gemini, OpenAI) or **local** (faster-whisper, llama-cpp-python). The most powerful combination is **local STT + cloud LLM**: free high-quality transcription from faster-whisper paired with Gemini's or GPT's clip-ranking ability. When both use Google Gemini, audio is uploaded once and processed in a single unified call. The system detects the content type algorithmically first and only defers to the LLM when uncertain — and when it does, it injects **structured detection evidence** (webcam count, gameplay flag, HUD score, open area fraction) into the prompt so the LLM never hallucinates wrong layouts.
+
+### 📝 Word-by-Word Subtitle Rendering
+Subtitles use the **Advanced SubStation Alpha (ASS)** format with one Dialogue event per word. The active word is rendered **bold + 12% larger + highlight-coloured** while the rest of the line stays normal — a karaoke-style focus effect. Whisper output passes through a **hallucination filter** that drops segments with high compression ratios, high no-speech probability, or single-token repetition loops. An optional **language-locking primer** sends a native-language transcription instruction (supporting ~34 ISO 639-1 languages) to sharpen accuracy on specified languages.
+
+### 🔒 Crash-Proof Rendering Pipeline
+Rendering follows a strict 3-pass memory-safe order: **regions (YOLO) → words (Whisper) → encode (FFmpeg)**, with each model freed and garbage-collected before the next loads. If a GPU encoder (NVENC/QSV/VideoToolbox) fails at runtime, the system detects the hardware failure signature in FFmpeg's stderr and automatically retries with **libx264 CPU encoding** — a clip never fails to render due to GPU issues. Word-level timestamps from the selection phase are cached and reused in the rendering phase, eliminating a redundant Whisper pass on full cache hits.
+
+### 📦 Portable Cache & Boot Integrity
+Every runtime dependency — FFmpeg, Bun JS runtime, subtitle fonts, AI models — is auto-downloaded into the `./workspace/` directory on first boot. The **HuggingFace Hub cache** is redirected to `./workspace/models/hf/` so all model downloads stay local. A **sequential purge engine** with per-directory retention settings (videos: 3 days, tmp: 1 day, clips: never) prevents unbounded disk growth. Everything runs through a strict virtual environment with zero system-level writes.
+
+---
+
 ## 🎬 How It Works
 
 When you give YaClip a YouTube URL, it goes through these steps automatically:
@@ -30,7 +63,7 @@ When you give YaClip a YouTube URL, it goes through these steps automatically:
 3. **Find moments** — uses YouTube's own most-replayed data or audio energy peaks to locate the best candidate sections
 4. **Transcribe** — converts the audio of those sections to text
 5. **AI picks the best clips** — sends the transcripts to an AI model which selects the most engaging moments and gives each one a title
-6. **Review** — shows you the proposed clips before rendering anything; you can edit, delete, or approve
+6. **Review** — shows you the proposed clips before rendering anything; you can edit, delete, or approve. CLI renders directly without a review gate.
 7. **Render** — builds the final vertical video with subtitles and smart framing
 8. **Done** — clips saved and ready to upload
 
@@ -340,7 +373,7 @@ docker run --rm \
   -v "$PWD/config.yaml:/app/config.yaml" \
   dimaskiddo/yaclip clip "https://www.youtube.com/watch?v=<id>"
 
-# 4. Or open the browser interface (planned — stub only in this alpha):
+# 4. Or open the browser interface :
 docker run --rm -p 7860:7860 \
   -v "$PWD/workspace:/app/workspace" \
   -v "$PWD/config.yaml:/app/config.yaml" \
@@ -355,9 +388,9 @@ Then open `http://localhost:7860` in your browser. *(WebUI is not yet implemente
 
 ## 🕹️ How to Use YaClip
 
-### 🌐 Browser Interface *(planned — not available in this alpha)*
+### 🌐 Browser Interface
 
-> **Note:** The browser interface is designed and planned for the next phase. In the current alpha release, running `python app.py` without arguments starts a stub that logs a placeholder message. Use the Terminal Commands below to run clips.
+> **Note:** The browser interface is not available yet. Running `python app.py` without arguments starts a placeholder. Use the Terminal Commands below to run clips.
 
 When the WebUI is implemented, it will start with:
 
@@ -369,7 +402,7 @@ Then open **`http://127.0.0.1:7860`** in your browser.
 
 > **WSL2 users:** open this URL in your **Windows** browser, not inside WSL.
 
-#### Planned Tabs:
+#### Tabs:
 *   **Clipper** — Paste a YouTube URL, choose how many clips you want, how long they should be, and what language the subtitles should be in. Switch to Manual mode if you want to enter your own timestamps instead of letting AI choose.
 *   **Review & Render** — Before anything is exported, YaClip shows you the proposed clips with their titles and timestamps. You can edit or delete any of them before clicking Render.
 *   **Settings** — Change any setting from the browser without editing the config file directly.
@@ -413,13 +446,22 @@ python app.py config
 
 ## 🧪 For Developers — Running Tests
 
-If you are contributing to YaClip or want to run the test suite:
-
 ```bash
-pytest
-```
+# Activate environment first
+source .venv/bin/activate
 
-Tests cover: timestamp parsing, settings validation, clip boundary checks, video filter construction, and content type detection logic.
+# Install dev dependencies (one time)
+uv pip install --no-cache -r requirements-dev.txt
+
+# Run all tests
+pytest tests/
+
+# Run with coverage
+pytest tests/ --cov=src --cov-report=term-missing
+
+# Run integration tests only
+pytest tests/ -m integration
+```
 
 ---
 

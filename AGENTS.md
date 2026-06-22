@@ -16,14 +16,14 @@ The application features both a **CLI** and a **WebUI** (Gradio). It must be cro
 
 ---
 
-## 📋 Workflow, Phased Execution & Task Tracking (CRITICAL)
+## 📋 Workflow & Task Tracking (CRITICAL)
 
-This is a complex ground-up project. The agent MUST NOT attempt to write the entire codebase in a single response. Operate strictly in phases.
+This is a complex ground-up project. The agent MUST NOT attempt to write the entire codebase in a single response. Check TASKS.md before each stage.
 
-1. **Phase 1 — Project Initialization & Planning:** Create `TASKS.md` and the `./docs/` directory first. Map the entire build into a phased checklist in `TASKS.md` (e.g., Phase 2: Foundation/Cache/Config, Phase 3: Ingestion Engine, Phase 4: AI Brain & Detection, Phase 5: Rendering Engine, Phase 6: CLI/WebUI). Simultaneously generate `./docs/ARCHITECTURE.md` and `./docs/WORKFLOWS.md`.
+1. **Project Initialization & Planning:** Create `TASKS.md` and the `./docs/` directory first. Map the build into a checklist in `TASKS.md`. Simultaneously generate `./docs/ARCHITECTURE.md` and `./docs/WORKFLOWS.md`.
 2. **State Sync:** Always read `TASKS.md` before starting any new session to orient to the current project state.
 3. **Immutability:** NEVER rework or touch items marked done (`[x]`) in `TASKS.md` unless explicitly instructed.
-4. **Auto-Update:** Update `TASKS.md` immediately after successfully testing a feature, before moving to the next phase.
+4. **Auto-Update:** Update `TASKS.md` immediately after successfully testing a feature.
 
 ---
 
@@ -116,8 +116,8 @@ Each component has its own `provider` setting:
 - **WebUI:** Implemented with `gradio`. Must be visually clean and logically organized into tabs: **Clipper**, **Review & Render**, **Settings**, and **Maintenance**.
 - **Gradio Task Queuing (CRITICAL):** Always initialize with `.queue().launch()`. Never use `.launch()` alone — this causes socket timeouts on long video jobs.
 - **WSL Compatibility:** Gradio MUST bind to `127.0.0.1:7860` (configurable) so headless Linux/WSL environments expose the UI to the host Windows browser cleanly.
-- **Execution Routing:** `app.py` is entry/routing only (load config → environment → logging) and delegates to the Typer app in `src/interfaces/cli.py`. If `sys.argv` has CLI arguments → route to Typer; if run bare → launch Gradio (stub in alpha). CLI commands: `clip <URL>` (the pipeline, with `--clips/--duration/--language/--output-dir/--force/--debug` overrides), `config`, `cache status`, `cache purge [--dry-run]`, `serve` (WebUI stub — not yet implemented). `clean-workspace` remains as a hidden back-compat alias of `cache purge`.
-- **WebUI parity (next phase, REQUIREMENT):** every `config.yaml` field MUST be editable from the Gradio WebUI, with each control's **default loaded from `config.yaml`** — `config.yaml` stays the single source of truth, and the UI is an editor over it (a session override or a save-back), never a competing config store.
+- **Execution Routing:** `app.py` is entry/routing only (load config → environment → logging) and delegates to the Typer app in `src/interfaces/cli.py`. If `sys.argv` has CLI arguments → route to Typer; if run bare → launch Gradio. CLI commands: `clip <URL>` (the pipeline, with `--clips/--duration/--language/--output-dir/--force/--debug` overrides), `config`, `cache status`, `cache purge [--dry-run]`, `serve` . `clean-workspace` remains as a hidden back-compat alias of `cache purge`.
+- **WebUI parity
 
 ---
 
@@ -203,19 +203,19 @@ Detection runs **once** before clip selection or rendering, aggregating evidence
 
 5. **Decision Tree:**
    - Gameplay confirmed + `< 2` webcams → **`GAMING_SOLO`** (confident).
-   - Gameplay confirmed + `≥ 2` webcams → **`None` (uncertain)** — defer to the LLM, which also sees transcript, audio speaker count, and game metadata to resolve SOLO vs COLLAB.
+   - Gameplay confirmed + `≥ 2` webcams → **`GAMING_COLLAB`** (confident — `detect_facecams` already filters out game characters, so ≥2 genuine webcams + gameplay is definitively collab).
    - No gameplay + `≥ 2` persistent faces → **`PODCAST`**.
    - No gameplay + 1 face + donation alerts → **`JUST_CHAT`**.
    - No gameplay + 1 face → **`PODCAST`**.
-   - Ambiguous (no faces, no gameplay, no donation) → **`None` (uncertain)**.
+   - Ambiguous (no faces, no gameplay, no donation) → **`None`** (uncertain — defer to LLM with structured detection evidence injected into prompt).
 
-6. **LLM Fallback (uncertain only)** — When the detector returns `None`, the batched selection LLM classifies each clip. The prompt includes: the video-level hint ("uncertain — decide per clip"), audio speaker count (`Audio: ~N speakers` via `AudioEnergyAnalyzer.estimate_speaker_count`), visual context descriptors, and game/show metadata. The LLM's `content_type` output is used directly. When the detector returns a confident type, it is forced on all clips.
+6. **LLM Fallback (uncertain only)** — When the detector returns `None`, the batched selection LLM classifies each clip. The prompt includes: **structured detection evidence block** with raw numbers (`gameplay_present`, `webcam_count`, `hud_score`, `gaming_hint`, `open_area_frac`, `non_person_motion`, `donation_detected`), the video-level hint, audio speaker count, visual context descriptors, and game/show metadata. The LLM's `content_type` output is **post-validated** — audio ~1 speaker can never be COLLAB (forced to SOLO/PODCAST), and audio ≥2 speakers + gameplay + ≥2 webcams forces COLLAB. When the detector returns a confident type, it is forced on all clips and no evidence is sent to the LLM.
 
 **Key difference from per-clip classification:** whole-video evidence is far more reliable — 25 frames across the full video length vs 6 frames in a 60s clip. `detect_facecams` replaces raw `face_count`, eliminating the cutscene-NPC false positive. `gaming_hint` relaxes the open-area threshold for close-up gaming streams. HUD score adds a third corroboration signal.
 
 #### 6.2 Detection Output & Downstream Routing
 
-The detected `ContentType` is threaded from `ContentTypeDetector.detect_content_type()` → `cli.py` → `AIPipeline.process_audio(detected_type=...)` → `ClipRenderer.render_clips(content_type=...)`. The routing table:
+The detected `ContentType` is threaded from `ContentTypeDetector.detect_content_type_full()` → `cli.py` → `AIPipeline.process_audio(detected_type=..., detection_evidence=...)` → `ClipRenderer.render_clips(content_type=...)`. When the detector returns a confident type (`is_confident=True`), evidence is not passed to the LLM. When uncertain (`None`), the evidence dict goes to the LLM prompt to prevent hallucination.
 
 | Detected Type | Layout Mode | Face Switching | Donation Handling |
 |---|---|---|---|
@@ -575,7 +575,7 @@ os.system(f"ffmpeg -i {input_path} {output_path}")
 
 #### 11.12 Toolchain: Linting, Formatting & Type Checking
 
-Configured in `pyproject.toml` from Phase 1. Not optional.
+Configured in `pyproject.toml`. Not optional.
 
 - **`ruff`** — replaces `flake8`, `isort`, `black`. Configure: `line-length=100`, `target-version="py310"`, rule sets `E`, `F`, `I`, `UP`, `B`, `SIM`.
 - **`mypy`** — `--strict` mode. Zero errors permitted in production code. `ignore_missing_imports=true` for untyped third-party libs.
@@ -611,10 +611,10 @@ Configured in `pyproject.toml` from Phase 1. Not optional.
 
 ```
 yaclip/
-├── app.py                       # Entry point: routes to Typer CLI or Gradio WebUI (stub)
+├── app.py                       # Entry point: routes to Typer CLI or Gradio WebUI
 ├── config.yaml                  # User configuration (gitignored — copy from config.yaml.example)
 ├── config.yaml.example          # Distributable config template
-├── TASKS.md                     # Phase execution backlog and task tracking
+├── TASKS.md                     # Task tracking backlog
 ├── requirements.txt             # pip3 compatibility
 ├── requirements-dev.txt         # Dev/test dependencies
 ├── pyproject.toml               # uv/pip deps + ruff/mypy config
@@ -623,7 +623,7 @@ yaclip/
 ├── docs/
 │   ├── ARCHITECTURE.md          # System design and component overview
 │   └── WORKFLOWS.md             # Pipeline diagrams and operational flows
-├── tests/                       # Mirrors src/ structure (planned)
+├── tests/                       # Mirrors src/ structure
 │   ├── conftest.py              # Shared pytest fixtures
 │   ├── core/
 │   ├── media/
@@ -664,9 +664,9 @@ yaclip/
 │   │   ├── layout_builder.py         # ContentType + VisualAnalyzer regions → FFmpeg layout spec
 │   │   └── overlay_detector.py       # Appearance/disappearance novelty detection (median baseline diff; cam-exclusion guards)
 │   └── interfaces/
-│       ├── cli.py               # Typer CLI commands: clip, config, cache status/purge, serve (stub), clean-workspace (alias)
-│       ├── webui.py             # [PLANNED] Gradio layout: Clipper, Review & Render, Settings, Maintenance tabs
-│       └── components.py        # [PLANNED] Reusable Gradio component factories
+│       ├── cli.py               # Typer CLI commands: clip, config, cache status/purge, serve, clean-workspace (alias)
+│       ├── webui.py             # Gradio layout: Clipper, Review & Render, Settings, Maintenance tabs
+│       └── components.py        # Reusable Gradio component factories
 └── workspace/
     ├── bin/                     # FFmpeg, Bun JS runtime (auto-downloaded on first boot)
     ├── fonts/                   # .ttf subtitle fonts (Anton.ttf auto-downloaded)

@@ -4,9 +4,9 @@ import json
 import re
 import shutil
 import sys
-import yt_dlp
-
 from pathlib import Path
+
+import yt_dlp
 from loguru import logger
 
 from src.core.config import load_config
@@ -112,7 +112,11 @@ class VideoDownloader:
         }
 
     def download_video(
-        self, url: str, output_dir: str, progress_callback: object | None = None, force: bool = False
+        self,
+        url: str,
+        output_dir: str,
+        progress_callback: object | None = None,
+        force: bool = False,
     ) -> dict[str, str]:
         """
         Download a video and extract its audio track dynamically pulling settings
@@ -165,9 +169,7 @@ class VideoDownloader:
 
                     if progress_callback:
                         clean_percent = (
-                            re.sub(r"\x1b\[[0-9;]*m", "", percent_str)
-                            .replace("%", "")
-                            .strip()
+                            re.sub(r"\x1b\[[0-9;]*m", "", percent_str).replace("%", "").strip()
                         )
                         try:
                             percent = float(clean_percent)
@@ -191,9 +193,7 @@ class VideoDownloader:
                 if tmp_profile:
                     ydl_opts["cookiesfrombrowser"] = (browser, tmp_profile, None, None)
                 else:
-                    logger.warning(
-                        "WSL cookie resolution failed, proceeding without cookies..."
-                    )
+                    logger.warning("WSL cookie resolution failed, proceeding without cookies...")
             else:
                 ydl_opts["cookiesfrombrowser"] = (browser, None, None, None)
 
@@ -214,11 +214,9 @@ class VideoDownloader:
                     rel_video_path = SystemUtils.display_path(final_video_path)
 
                     if download_occurred[0]:
-                        logger.info(f"Successfully downloaded video: {rel_video_path}")
+                        logger.info("Video downloaded successfully.")
                     else:
-                        logger.info(
-                            f"Video file already exists, skipping download: {rel_video_path}"
-                        )
+                        logger.info("Video already downloaded, using existing file.")
 
                     # Extract and save Heatmap data if available
                     heatmap_data = info.get("heatmap")
@@ -228,27 +226,21 @@ class VideoDownloader:
                         heatmap_path.write_text(
                             json.dumps(heatmap_data, indent=2), encoding="utf-8"
                         )
-                        logger.info(
-                            f"Saved YouTube Most Replayed heatmap data ({len(heatmap_data)} points)"
-                        )
+                        logger.info("Replay heatmap data saved from YouTube.")
 
                     # Capture lightweight metadata (game/show context for the LLM).
                     metadata = self._extract_metadata(info)
                     meta_path = DATA_DIR / f"{video_id}_metadata.json"
                     meta_path.parent.mkdir(parents=True, exist_ok=True)
-                    meta_path.write_text(
-                        json.dumps(metadata, indent=2), encoding="utf-8"
-                    )
-                    logger.info(
-                        f"Saved video metadata (category={metadata.get('categories')})"
-                    )
+                    meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+                    cats = metadata.get("categories", [])
+                    cats_str = ", ".join(cats) if isinstance(cats, list) else str(cats or "unknown")
+                    logger.info(f"Video category detected as {cats_str}.")
 
                     # Use our custom FFmpeg command to extract the audio
 
                     audio_extractor = AudioExtractor()
-                    final_audio_path = audio_extractor.extract_audio(
-                        final_video_path, force=force
-                    )
+                    final_audio_path = audio_extractor.extract_audio(final_video_path, force=force)
 
                     return {
                         "video_path": str(final_video_path),

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import gc
-
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -9,10 +8,10 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
-from src.ai.prompts import get_system_prompt
-from src.core.utils import AIUtils
+from src.ai.prompts import build_batch_user_prompt, get_system_prompt
 from src.core.config import load_config
 from src.core.exceptions import AIProviderError
+from src.core.utils import AIUtils
 
 
 class LocalLLMProvider:
@@ -81,9 +80,7 @@ class LocalLLMProvider:
             logger.debug(f"Raw local AI response: {response_text}")
 
             parsed_clips = AIUtils.parse_json_array(response_text)
-            logger.info(
-                f"Local AI found {len(parsed_clips)} clip(s) to extract."
-            )
+            logger.info(f"Local AI found {len(parsed_clips)} clip(s) to extract.")
             return parsed_clips
         except Exception as e:
             logger.error(f"Failed to read local AI response as JSON: {e}")
@@ -113,12 +110,7 @@ class LocalLLMProvider:
             f"Your task is to compare these candidates and select the best {target_clips} segments to render as final clips."
         )
 
-        user_prompt = (
-            f"Here are the candidate segments:\n\n{candidates_text}\n\n"
-            f"Select the best {target_clips} clips. Return JSON array with fields as specified below.\n"
-            f"{base_sys_prompt}\n\n"
-            "Format response ONLY as a valid JSON array, no markdown wrappers."
-        )
+        user_prompt = build_batch_user_prompt(candidates_text, target_clips, base_sys_prompt)
 
         try:
             if llm is None:
@@ -146,9 +138,7 @@ class LocalLLMProvider:
             logger.debug(f"Raw local AI response: {response_text}")
 
             parsed_clips = AIUtils.parse_json_array(response_text)
-            logger.info(
-                f"Local AI selected {len(parsed_clips)} clip(s) from the batch."
-            )
+            logger.info(f"Local AI selected {len(parsed_clips)} clip(s) from the batch.")
             return parsed_clips
         except Exception as e:
             logger.error(f"Failed to read local AI batch response as JSON: {e}")

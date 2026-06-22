@@ -5,8 +5,8 @@ import importlib.util
 import os
 import shutil
 import sys
-
 from pathlib import Path
+
 from loguru import logger
 
 from src.core.constants import MEDIAPIPE_GL_LIBS
@@ -31,9 +31,7 @@ def _has_usable_gpu() -> bool:
         # This is the conservative choice — a user with CUDA on WSL sets the
         # opt-in env var (see guard_triton_segfault below).
         return False
-    if shutil.which("nvidia-smi") is not None:
-        return True
-    return False
+    return shutil.which("nvidia-smi") is not None
 
 
 def guard_triton_segfault() -> None:
@@ -105,9 +103,9 @@ def setup_environment() -> None:
     # face_landmarker_graph.cc info lines, inference_feedback_manager warnings, and the
     # "Created TensorFlow Lite XNNPACK delegate" info.  Without this, every FaceLandmarker
     # load dumps ~10 lines of C++ noise to stderr.
-    os.environ["GLOG_minloglevel"] = "3"
-    os.environ["GLOG_alsologtostderr"] = "0"
-    os.environ["GLOG_logtostderr"] = "0"
+    os.environ["GLOG_minloglevel"] = "3"  # noqa: SIM112 — GLOG uses lowercase env vars
+    os.environ["GLOG_alsologtostderr"] = "0"  # noqa: SIM112
+    os.environ["GLOG_logtostderr"] = "0"  # noqa: SIM112
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
     # Guard against the MediaPipe × triton SIGSEGV (see guard_triton_segfault docstring).

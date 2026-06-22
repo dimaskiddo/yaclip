@@ -1,39 +1,31 @@
 from __future__ import annotations
 
-import numpy as np
-
 from pathlib import Path
+
+import numpy as np
 from loguru import logger
 
 from src.core.config import load_config
-
-
-# A genuine donation/MediaShare popup is transient and bounded — it appears then disappears against
-# an otherwise steady background. Persistent elements (chat list, the full-width bottom ticker, the
-# facecam, the game sky) sit in the baseline and never register as novelty. These gates keep only
-# bounded, transient intervals.
-MIN_POPUP_SECONDS = 1.0  # Below this a novelty blip is noise, not an alert.
-MAX_POPUP_SECONDS = 15.0  # Donation alerts are short; longer = persistent background.
-POPUP_WINDOW_COVERAGE = 0.7  # Reject intervals covering >=70% of the window (background, not popup).
-
-# Appearance/disappearance scan parameters.
-SCAN_PAD_SECONDS = 3.0  # Pad the window so a popup spanning the clip is still a scan minority.
-SMALL_W, SMALL_H = 480, 270  # Downscaled analysis resolution (fast median + diff).
-MIN_SCAN_FRAMES = 5  # Need enough frames to build a meaningful median baseline.
-NOVELTY_THRESH = 30  # Per-pixel abs-diff vs baseline that counts as "changed".
-MIN_POPUP_AREA_FRAC = 0.025  # A donation card is a sizeable block, not a moving character.
-MAX_POPUP_AREA_FRAC = 0.40  # Larger than this is a scene change, not an alert card.
-POPUP_ASPECT_MIN, POPUP_ASPECT_MAX = 1.5, 6.0  # Alert cards are clearly wider than tall.
-
-# Static-vs-moving discriminator: a real donation card holds the SAME on-screen position while shown,
-# so its per-frame novelty box barely drifts. Gameplay novelty (camera pan, moving character) drifts
-# frame-to-frame. Reject an interval whose box centre jitter (mean deviation from the mean centre,
-# normalised by the frame diagonal) exceeds this — that is moving gameplay, not a popup.
-POPUP_MAX_JITTER = 0.035
-
-# Geometric exclusions for persistent furniture that is NOT a popup.
-BOTTOM_STRIP_FRAC = 0.88  # Boxes centred below this (full-width scrolling ticker) are dropped.
-FULLWIDTH_FRAC = 0.70  # Boxes spanning >=70% of the width (ticker / lower-thirds) are dropped.
+from src.core.constants import (
+    BOTTOM_STRIP_FRAC,
+    FULLWIDTH_FRAC,
+    MAX_POPUP_AREA_FRAC,
+    MAX_POPUP_SECONDS,
+    MIN_POPUP_AREA_FRAC,
+    MIN_POPUP_SECONDS,
+    MIN_SCAN_FRAMES,
+    NOVELTY_THRESH,
+    OVERLAY_MAX_GAP_SECONDS,
+    OVERLAY_MAX_SCAN_SAMPLES,
+    OVERLAY_MORPH_KERNEL_SIZE,
+    OVERLAY_SMALL_H,
+    OVERLAY_SMALL_W,
+    POPUP_ASPECT_MAX,
+    POPUP_ASPECT_MIN,
+    POPUP_MAX_JITTER,
+    POPUP_WINDOW_COVERAGE,
+    SCAN_PAD_SECONDS,
+)
 
 
 class OverlayDetector:
@@ -100,9 +92,9 @@ class OverlayDetector:
                 ret, frame = cap.read()
                 if not ret:
                     break
-                small = cv2.resize(frame, (SMALL_W, SMALL_H))
+                small = cv2.resize(frame, (OVERLAY_SMALL_W, OVERLAY_SMALL_H))
                 samples.append(((idx / fps) - start_time, small))
-                if len(samples) >= 200:  # bound cost on long windows
+                if len(samples) >= OVERLAY_MAX_SCAN_SAMPLES:  # bound cost on long windows
                     break
         finally:
             cap.release()
@@ -112,13 +104,11 @@ class OverlayDetector:
 
         # Per-pixel median baseline = the persistent background; transient popups are excluded.
         baseline = np.median(np.stack([s for _, s in samples]), axis=0).astype(np.uint8)
-        scale_x, scale_y = width / SMALL_W, height / SMALL_H
+        scale_x, scale_y = width / OVERLAY_SMALL_W, height / OVERLAY_SMALL_H
 
         active_frames: list[tuple[float, tuple[int, int, int, int]]] = []
         for t, small in samples:
-            box = self._novelty_box(
-                small, baseline, scale_x, scale_y, width, height, facecam_box
-            )
+            box = self._novelty_box(small, baseline, scale_x, scale_y, width, height, facecam_box)
             if box is not None:
                 active_frames.append((t, box))
 
@@ -180,12 +170,12 @@ class OverlayDetector:
         diff = cv2.absdiff(small, baseline)
         gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
         _, thresh = cv2.threshold(gray, NOVELTY_THRESH, 255, cv2.THRESH_BINARY)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_RECT, (OVERLAY_MORPH_KERNEL_SIZE, OVERLAY_MORPH_KERNEL_SIZE)
+        )
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
 
-        contours, _ = cv2.findContours(
-            thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         frame_area = float(width * height)
         best: tuple[int, int, int, int] | None = None
         best_area = 0.0
@@ -243,7 +233,7 @@ class OverlayDetector:
             return []
 
         diag = max(1.0, float((width**2 + height**2) ** 0.5))
-        max_gap = 1.5  # seconds; bridge brief detection dropouts within one popup
+        max_gap = OVERLAY_MAX_GAP_SECONDS
         intervals: list[dict] = []
         cur_start = cur_end = active_frames[0][0]
         cur_boxes = [active_frames[0][1]]

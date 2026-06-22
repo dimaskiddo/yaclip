@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import gc
-import numpy as np
-
 from pathlib import Path
+
+import numpy as np
 from loguru import logger
 
 from src.core.config import load_config
@@ -15,10 +15,22 @@ from src.core.constants import (
     FACECAM_MIN_AREA_FRAC,
     FACECAM_MIN_PERSISTENCE,
     FACECAM_MIN_SEP_FRAC,
+    FACECAM_PICK_MIN_PERSISTENCE,
+    GAMEPLAY_PAN_DEADZONE_FRAC,
+    GAMEPLAY_PAN_EMA,
+    GAMEPLAY_PAN_MAX_DEVIATION_FRAC,
+    GAMEPLAY_PAN_MAX_VELOCITY_FRAC,
+    MOTION_GRID_H,
+    MOTION_GRID_W,
+    MOTION_INTENSITY_HIGH,
+    MOTION_INTENSITY_MODERATE,
+    OPEN_AREA_GRID_COLS,
+    OPEN_AREA_GRID_ROWS,
     PERSON_COUNT_CONF_MIN,
     STACK2_PANEL_ASPECT,
+    YOLO_CLUSTER_DIST_FRAC,
 )
-from src.core.utils import SystemUtils, make_even
+from src.core.utils import SystemUtils, boxes_overlap, make_even
 from src.core.workspace import MODELS_DIR
 
 
@@ -47,7 +59,9 @@ class VisualAnalyzer:
         try:
             from ultralytics import YOLO
         except ImportError as e:
-            logger.warning(f"Object detection package not installed ({e}) — scene detection disabled.")
+            logger.warning(
+                f"Object detection package not installed ({e}) — scene detection disabled."
+            )
             return None
 
         model_path = MODELS_DIR / self.cfg.model_name
@@ -141,8 +155,10 @@ class VisualAnalyzer:
             exclude_boxes = [facecam_box] if facecam_box is not None else []
 
         # A YOLO "screen" box that overlaps the facecam is the webcam in a border — not a popup.
-        if screen_box is not None and facecam_box is not None and self._boxes_overlap(
-            screen_box, facecam_box, 0.3
+        if (
+            screen_box is not None
+            and facecam_box is not None
+            and boxes_overlap(screen_box, facecam_box, 0.3)
         ):
             screen_box = None
 
@@ -161,9 +177,7 @@ class VisualAnalyzer:
                 f"(mediashare_present={mediashare_present})."
             )
         elif self.config.video_processing.preserve_donation_overlays:
-            ms_events, ms_box = self._scan_mediashare(
-                video_path, start_time, end_time, facecam_box
-            )
+            ms_events, ms_box = self._scan_mediashare(video_path, start_time, end_time, facecam_box)
             mediashare_box = ms_box or screen_box
             mediashare_present = bool(ms_events)
         else:
@@ -261,7 +275,7 @@ class VisualAnalyzer:
         # Motion bursts: 3 short windows across the middle 80%.
         # Each burst = 6 consecutive frames at ~2 fps apart.  Person regions zeroed.
         burst_motions: list[float] = []
-        small_w, small_h = 320, 180
+        small_w, small_h = MOTION_GRID_W, MOTION_GRID_H
         scale_x, scale_y = width / small_w, height / small_h
         mask_rects = [
             (
@@ -320,9 +334,7 @@ class VisualAnalyzer:
             "person_count": person_count,
         }
 
-    def detect_stable_facecam(
-        self, video_path: Path
-    ) -> tuple[int, int, int, int] | None:
+    def detect_stable_facecam(self, video_path: Path) -> tuple[int, int, int, int] | None:
         """Detect one stable facecam box for the whole video (sampled across its length).
 
         The webcam is positionally static, so a single box reused for every clip keeps the
@@ -361,9 +373,12 @@ class VisualAnalyzer:
         persons, _, _max = self._detect_regions(frames, width, height)
         box = self._pick_facecam(persons, width, height)
         if box is None:
-            logger.info("No fixed webcam found in video. Webcam position will be detected per clip.")
+            logger.info(
+                "No fixed webcam found in video. Webcam position will be detected per clip."
+            )
             return None
-        logger.info(f"Webcam position locked for the whole video: {box}")
+        position = self._where(box, width, height)
+        logger.info(f"Primary webcam locked at {position}, assigned for Top Panel.")
         return box
 
     def detect_facecams(
@@ -425,13 +440,19 @@ class VisualAnalyzer:
                 break
 
         boxes = [(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in cams]
-        logger.info(f"Webcam detection complete: {len(boxes)} webcam(s) found.")
+        if not boxes:
+            logger.warning("No webcam detected in the video.")
+        elif len(boxes) == 1:
+            pos = self._where(boxes[0], width, height)
+            logger.info(f"1 webcam detected at {pos}.")
+        else:
+            positions = [self._where(b, width, height) for b in boxes]
+            pos_list = ", ".join(f"webcam {i + 1} {p}" for i, p in enumerate(positions))
+            logger.info(f"{len(boxes)} webcams detected: {pos_list}.")
         return boxes
 
     @staticmethod
-    def _edge_score(
-        box: tuple[float, float, float, float], width: int, height: int
-    ) -> float:
+    def _edge_score(box: tuple[float, float, float, float], width: int, height: int) -> float:
         """1 − (centre's distance to the nearest frame edge)/(min(w,h)/2).
 
         ~0 for an interior game character (far from every border), high for a webcam hugging any
@@ -466,27 +487,6 @@ class VisualAnalyzer:
             "descriptor": "No visual signal available.",
         }
 
-    def _boxes_overlap(
-        self,
-        a: tuple[float, float, float, float],
-        b: tuple[float, float, float, float],
-        thresh: float,
-    ) -> bool:
-        """True if box a overlaps box b — IoU > thresh OR a's centre lies inside b."""
-        ax, ay, aw, ah = a
-        bx, by, bw, bh = b
-        # Centre of a inside b
-        acx, acy = ax + aw / 2, ay + ah / 2
-        if bx <= acx <= bx + bw and by <= acy <= by + bh:
-            return True
-        # Intersection-over-union
-        ix0, iy0 = max(ax, bx), max(ay, by)
-        ix1, iy1 = min(ax + aw, bx + bw), min(ay + ah, by + bh)
-        iw, ih = max(0.0, ix1 - ix0), max(0.0, iy1 - iy0)
-        inter = iw * ih
-        union = aw * ah + bw * bh - inter
-        return union > 0 and (inter / union) > thresh
-
     def _scan_mediashare(
         self,
         video_path: Path,
@@ -515,9 +515,7 @@ class VisualAnalyzer:
             return [], None
 
         if facecam_box is not None:
-            kept = [
-                iv for iv in intervals if not self._boxes_overlap(iv["box"], facecam_box, 0.3)
-            ]
+            kept = [iv for iv in intervals if not boxes_overlap(iv["box"], facecam_box, 0.3)]
             dropped = len(intervals) - len(kept)
             if dropped:
                 logger.info(
@@ -528,10 +526,7 @@ class VisualAnalyzer:
         if not intervals:
             return [], None
 
-        events = [
-            (start_time + iv["start_time"], start_time + iv["end_time"])
-            for iv in intervals
-        ]
+        events = [(start_time + iv["start_time"], start_time + iv["end_time"]) for iv in intervals]
         # Representative box = the longest-active interval's box.
         longest = max(intervals, key=lambda iv: iv["end_time"] - iv["start_time"])
         b = longest["box"]
@@ -599,10 +594,18 @@ class VisualAnalyzer:
 
         # Smooth, static-first tuning.
         frame_center = width / 2.0
-        target_ema = 0.2  # smooth the motion target so it doesn't jitter frame-to-frame
-        deadzone = 0.06 * width  # hold still until the target drifts past this from the crop centre
-        max_vel = 0.012 * width  # then glide at most this many px per keyframe (slow, imperceptible)
-        max_dev = 0.12 * width  # crop centre may drift at most ±12% of width from frame centre
+        target_ema = (
+            GAMEPLAY_PAN_EMA  # smooth the motion target so it doesn't jitter frame-to-frame
+        )
+        deadzone = (
+            GAMEPLAY_PAN_DEADZONE_FRAC * width
+        )  # hold still until the target drifts past this from the crop centre
+        max_vel = (
+            GAMEPLAY_PAN_MAX_VELOCITY_FRAC * width
+        )  # then glide at most this many px per keyframe (slow, imperceptible)
+        max_dev = (
+            GAMEPLAY_PAN_MAX_DEVIATION_FRAC * width
+        )  # crop centre may drift at most ±12% of width from frame centre
         # Horizontal bounds that keep the crop clear of every cam that overlaps it vertically (no
         # duplicate cam). Cams fully above/below the crop band need no horizontal exclusion.
         min_left, max_left = 0.0, float(width - crop_w)
@@ -618,7 +621,7 @@ class VisualAnalyzer:
         if max_left < min_left:  # cams too central to fully exclude → fall back to frame bounds
             min_left, max_left = 0.0, float(width - crop_w)
 
-        small_w, small_h = 320, 180
+        small_w, small_h = MOTION_GRID_W, MOTION_GRID_H
         scale_x = width / small_w
         scale_y = height / small_h
         # Pre-compute each cam's region in the small motion grid so its movement never pulls the pan.
@@ -651,9 +654,7 @@ class VisualAnalyzer:
                 ret, frame = cap.read()
                 if not ret:
                     break
-                gray = cv2.cvtColor(
-                    cv2.resize(frame, (small_w, small_h)), cv2.COLOR_BGR2GRAY
-                )
+                gray = cv2.cvtColor(cv2.resize(frame, (small_w, small_h)), cv2.COLOR_BGR2GRAY)
                 if prev is not None:
                     diff = cv2.GaussianBlur(cv2.absdiff(gray, prev), (21, 21), 0)
                     for mx0, mx1, my0, my1 in mask_rects:
@@ -691,9 +692,7 @@ class VisualAnalyzer:
         motion_level = float(np.mean(levels)) if levels else 0.0
         return track, repr_box, motion_level
 
-    def _sample_frames(
-        self, cap: object, start_time: float, end_time: float
-    ) -> list[np.ndarray]:
+    def _sample_frames(self, cap: object, start_time: float, end_time: float) -> list[np.ndarray]:
         """Sample up to ``sample_frames`` frames evenly across the window."""
         import cv2
 
@@ -761,7 +760,7 @@ class VisualAnalyzer:
             clustered = self._cluster_boxes(screen_dets, width, height, len(frames))
             for cand in clustered:
                 box = cand["box"]
-                if any(self._boxes_overlap(box, p["box"], 0.3) for p in persons):
+                if any(boxes_overlap(box, p["box"], 0.3) for p in persons):
                     continue
                 screen_box = (int(box[0]), int(box[1]), int(box[2]), int(box[3]))
                 break
@@ -778,7 +777,7 @@ class VisualAnalyzer:
         """Cluster detections across frames into persistent regions (sorted by area desc)."""
 
         diag = float(np.sqrt(width**2 + height**2))
-        thr = 0.15 * diag
+        thr = YOLO_CLUSTER_DIST_FRAC * diag
         clusters: list[list[tuple[float, float, float, float]]] = []
 
         def center(b: tuple[float, float, float, float]) -> tuple[float, float]:
@@ -819,7 +818,9 @@ class VisualAnalyzer:
         game character, while a single central speaker is still selected.
         """
 
-        candidates = [p for p in persons if p["persistence"] >= 0.5] or persons
+        candidates = [
+            p for p in persons if p["persistence"] >= FACECAM_PICK_MIN_PERSISTENCE
+        ] or persons
         if not candidates:
             return None
         if len(candidates) == 1:
@@ -860,7 +861,7 @@ class VisualAnalyzer:
         cams = [b for b in (exclude_boxes or []) if b is not None]
         crop_w, crop_h, crop_y = self._gameplay_crop_geom(cams, width, height, aspect)
 
-        small_w, small_h = 320, 180
+        small_w, small_h = MOTION_GRID_W, MOTION_GRID_H
         scale_x, scale_y = width / small_w, height / small_h
         motion = np.zeros((small_h, small_w), dtype=np.float32)
         prev = None
@@ -893,7 +894,7 @@ class VisualAnalyzer:
         Small ≈ people fill the frame (talking-heads); large ≈ open screen space for a game. Feeds the
         gameplay gate in ``ContentTypeDetector.classify_from_analysis``.
         """
-        grid_cols, grid_rows = 16, 9
+        grid_cols, grid_rows = OPEN_AREA_GRID_COLS, OPEN_AREA_GRID_ROWS
         cell_w = width / grid_cols
         cell_h = height / grid_rows
         covered: set[tuple[int, int]] = set()
@@ -926,7 +927,13 @@ class VisualAnalyzer:
             else:
                 parts.append("Donation overlay (screen inset) visible")
         level = a["motion_level"]
-        intensity = "high" if level > 12 else "moderate" if level > 4 else "low"
+        intensity = (
+            "high"
+            if level > MOTION_INTENSITY_HIGH
+            else "moderate"
+            if level > MOTION_INTENSITY_MODERATE
+            else "low"
+        )
         parts.append(f"{intensity} on-screen motion")
         return "; ".join(parts) + "."
 
@@ -940,10 +947,12 @@ class VisualAnalyzer:
         n = a["face_count"]
         people = f"{n} {'person' if n == 1 else 'people'}"
         parts = [people]
+        cam_idx = 1
         if a["facecam_box"]:
-            parts.append(f"webcam {self._where(a['facecam_box'], w, h)}")
+            parts.append(f"webcam {cam_idx} {self._where(a['facecam_box'], w, h)}")
+            cam_idx += 1
         if a.get("collab_box"):
-            parts.append(f"second webcam {self._where(a['collab_box'], w, h)}")
+            parts.append(f"webcam {cam_idx} {self._where(a['collab_box'], w, h)}")
         if a["mediashare_present"]:
             events = a.get("mediashare_events") or []
             if events:
@@ -952,7 +961,13 @@ class VisualAnalyzer:
             else:
                 parts.append("donation overlay visible")
         level = a["motion_level"]
-        intensity = "high" if level > 12 else "moderate" if level > 4 else "low"
+        intensity = (
+            "high"
+            if level > MOTION_INTENSITY_HIGH
+            else "moderate"
+            if level > MOTION_INTENSITY_MODERATE
+            else "low"
+        )
         parts.append(f"{intensity} motion")
         return f"Scene [{start_time:.1f}–{end_time:.1f}s]: {', '.join(parts)}."
 

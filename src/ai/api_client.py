@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
+from typing import Any, TypeVar
 
-from typing import Any, Callable, TypeVar
 from loguru import logger
 
 T = TypeVar("T")
@@ -36,9 +37,7 @@ def retry_api_call(
                     time.sleep(delay)
                     delay *= backoff_factor
 
-            logger.error(
-                f"Cloud service request failed after {max_retries} attempts. Giving up."
-            )
+            logger.error(f"Cloud service request failed after {max_retries} attempts. Giving up.")
             raise last_err
 
         return wrapper

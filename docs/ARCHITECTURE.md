@@ -127,18 +127,19 @@ Content type is detected **once per video**, before clip selection or rendering.
 |---|---|---|
 | 1. Config override | `content_type_override ≠ "auto"` | Configured value (skips all detection) |
 | 2. Gameplay gate | `open_area_frac ≥ 0.45` (or `≥ 0.30` with `gaming_hint`) **AND** (`non_person_motion ≥ 4.0` **OR** `gaming_hint` **OR** `has_hud`) | Confirmed gameplay |
-| 3. Webcam count | `detect_facecams` (filtered by persistence/area/edge/separation — rejects game characters) | `< 2` → `GAMING_SOLO`; `≥ 2` → **`None`** (uncertain, defer to LLM) |
+| 3. Webcam count | `detect_facecams` (filtered by persistence/area/edge/separation — rejects game characters) | `< 2` → `GAMING_SOLO`; `≥ 2` → **`GAMING_COLLAB`** (confident — only genuine webcams survive filtering) |
 | 4. No gameplay | `≥ 2` persistent faces → `PODCAST`; 1 face + donation → `JUST_CHAT`; 1 face → `PODCAST` | Concrete type |
-| 5. Default | No signals matched | **`None`** (uncertain) |
-| 6. LLM fallback (uncertain only) | When detector returns `None`, the batched selection LLM decides per-clip from visual context + audio speaker count + transcript + game metadata | `PODCAST` / `JUST_CHAT` / `GAMING_SOLO` / `GAMING_COLLAB` |
+| 5. Default | No signals matched | **`None`** (uncertain — defer to LLM with structured detection evidence block) |
+| 6. LLM fallback (uncertain only) | When detector returns `None`, the batch LLM receives a **structured evidence block** (`gameplay_present`, `webcam_count`, `hud_score`, `gaming_hint`, `open_area_frac`, `non_person_motion`, `donation_detected`) plus audio speaker count, visual descriptors, and game metadata. LLM output is **post-validated**: ~1 speaker can't be COLLAB; ≥2 speakers + gameplay + ≥2 webcams forces COLLAB. | `PODCAST` / `JUST_CHAT` / `GAMING_SOLO` / `GAMING_COLLAB` |
 
 Key improvements over the original per-clip approach:
 - **`detect_facecams` replaces raw `face_count`** for the SOLO↔COLLAB split, eliminating cutscene-NPC false positives.
 - **`gaming_hint` relaxes the open-area threshold** (0.30 vs 0.45) for close-up cam shots in gaming streams.
 - **HUD score** adds a third corroboration signal alongside `gaming_hint` for the motion bypass.
-- **Uncertain = `None` (LLM decides)** instead of defaulting to PODCAST.
+- **Gameplay + ≥2 webcams = GAMING_COLLAB** (confident, not None — `detect_facecams` already excludes NPCs).
+- **LLM fallback still used** for truly ambiguous cases, but with full detection evidence injected into the prompt and post-validation rules preventing hallucination.
 
-The detected `ContentType` is threaded from `ContentTypeDetector.detect_content_type()` → `cli.py` → `AIPipeline.process_audio(detected_type=...)` → `ClipRenderer.render_clips(content_type=...)`.
+The detected `ContentType` is threaded from `ContentTypeDetector.detect_content_type_full()` → `cli.py` → `AIPipeline.process_audio(detected_type=..., detection_evidence=...)` → `ClipRenderer.render_clips(content_type=...)`. When the detector returns a confident type, evidence is not sent to the LLM.
 
 **Downstream routing table:**
 
@@ -260,13 +261,11 @@ Font resolved from `./workspace/fonts/`. Full styling configurable: `font_size` 
 
 ### 7. Multi-Interface Modularity
 
-**CLI** (`typer`, in `src/interfaces/cli.py`; `app.py` is entry/routing only): `clip <URL>` (download → AI selection → render, with `--clips/--duration/--language/--output-dir/--force/--debug` overrides that patch the config singleton for the run), `config` (dump validated config, keys masked), `cache status` / `cache purge [--dry-run]`, `serve` (WebUI stub — not yet implemented). `clean-workspace` is a hidden back-compat alias of `cache purge`.
+**CLI** (`typer`, in `src/interfaces/cli.py`; `app.py` is entry/routing only): `clip <URL>` (download → AI selection → render, with `--clips/--duration/--language/--output-dir/--force/--debug` overrides that patch the config singleton for the run), `config` (dump validated config, keys masked), `cache status` / `cache purge [--dry-run]`, `serve` 
 
-> **Alpha state:** The CLI (`clip`, `config`, `cache`, `serve`) is the currently implemented interface. The Review Gate (`require_review_before_render` config flag) is present in config but not yet enforced — rendering runs directly in the CLI path without an interactive review step.
+**WebUI parity:** every `config.yaml` field must be editable in the Gradio UI, with each control defaulting from `config.yaml` — config stays the single source of truth.
 
-**WebUI parity (next phase, requirement):** every `config.yaml` field must be editable in the Gradio UI, with each control defaulting from `config.yaml` — config stays the single source of truth.
-
-**WebUI** (`gradio`, planned — `src/interfaces/webui.py` and `components.py` not yet implemented): 4-tab dashboard:
+**WebUI** (`gradio`): 4-tab dashboard:
 - **Clipper** — URL input, mode toggle (Auto/Manual), timestamp area (Manual), clip count + duration sliders (Auto), subtitle language selector.
 - **Review & Render** — Clip proposals table with ContentType display and override; per-clip approve/edit/delete; render trigger.
 - **Settings** — Live config view and overrides.
@@ -290,7 +289,7 @@ Single `config.yaml` at project root. All runtime behaviour is derived from conf
 | Section | Owner Module | Purpose |
 |---|---|---|
 | `logging` | `src/core/logger.py` | Loguru level, rotation, file path |
-| `web_server` | `src/interfaces/webui.py` | Gradio host, port, share |
+| `web_server` | `src/core/config.py` → resolved by CLI/WebUI at runtime | Gradio host, port, share |
 | `ai_pipeline` | `src/ai/pipeline.py` | Cloud/local mode, provider, model names |
 | `downloader` | `src/media/downloader.py` | Resolution, format, cookies |
 | `clip_selection` | `src/ai/pipeline.py` | Mode (auto/manual), strategy, review gate, clip counts, durations |

@@ -12,38 +12,8 @@ mediapipe
 huggingface_hub
 llama-cpp-python
 faster-whisper
-# =============================================================================
-# PyTorch — CPU version (recommended for most users)
-# =============================================================================
-# YaClip installs the CPU-only version of PyTorch by default. This works on
-# all platforms including Windows, macOS, Linux, and WSL2. It is smaller
-# (~300 MB vs ~5 GB for the GPU version) and avoids a known crash that occurs
-# when the GPU version is installed on a machine without a compatible NVIDIA GPU.
-#
-# Do you have an NVIDIA GPU and want faster AI processing?
-#   After running "pip install -r requirements.txt", run this extra command:
-#
-#     pip install torch==2.12.0+cu121 torchvision==0.27.0+cu121 \
-#       --index-url https://download.pytorch.org/whl/cu121
-#
-#   Then add YACLIP_FORCE_TRITON=1 to your environment variables.
-# =============================================================================
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.12.0+cpu
 torchvision==0.27.0+cpu
-
-# =============================================================================
-# OpenCV — display-free (server/WSL safe) version
-# =============================================================================
-# OpenCV is the computer vision library used for face tracking and video
-# analysis. Some other packages installed above (ultralytics, mediapipe) will
-# silently replace this with a version that requires a display server — which
-# crashes on WSL2 and headless Linux servers.
-#
-# After running "pip install -r requirements.txt", always run this one extra
-# command to make sure the correct version stays installed:
-#
-#   pip install --force-reinstall --no-deps opencv-python-headless
-# =============================================================================
 opencv-python-headless
 ultralytics

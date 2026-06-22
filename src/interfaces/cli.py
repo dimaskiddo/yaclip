@@ -13,11 +13,10 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 
 import typer
 import yaml
-
-from pathlib import Path
 from loguru import logger
 
 from src.core.config import load_config
@@ -94,12 +93,18 @@ def _run_pipeline(url: str, force: bool, debug: bool) -> None:
         # webcam count, HUD, donation overlay). Returns None when uncertain → LLM decides.
         from src.vision.content_type_detector import ContentTypeDetector
 
-        content_type = ContentTypeDetector().detect_content_type(Path(video_path_str))
+        detection_result = ContentTypeDetector().detect_content_type_full(Path(video_path_str))
+        content_type = detection_result.content_type
 
         logger.info("--- STEP 2: AI CLIP SELECTION ---")
         clips = AIPipeline().process_audio(
-            audio_path, video_path=video_path_str, force=force,
+            audio_path,
+            video_path=video_path_str,
+            force=force,
             detected_type=content_type,
+            detection_evidence=(
+                detection_result.evidence if not detection_result.is_confident else None
+            ),
         )
 
         video_id = Path(audio_path).stem
@@ -128,7 +133,7 @@ def _run_pipeline(url: str, force: bool, debug: bool) -> None:
             Path(video_path_str), formatted, content_type=content_type
         )
 
-        logger.info(f"Pipeline complete! Rendered {len(rendered)} clip(s).")
+        logger.info(f"Pipeline complete, {len(rendered)} clip(s) rendered.")
         for f in rendered:
             logger.info(f" -> {SystemUtils.display_path(f)}")
     except DetectionError as e:
@@ -145,7 +150,9 @@ def _run_pipeline(url: str, force: bool, debug: bool) -> None:
 @cli.command("clip")
 def clip(
     url: str = typer.Argument(..., help="YouTube URL to clip"),
-    clips: int | None = typer.Option(None, "--clips", "-n", help="Number of clips (overrides config)"),
+    clips: int | None = typer.Option(
+        None, "--clips", "-n", help="Number of clips (overrides config)"
+    ),
     duration: int | None = typer.Option(
         None, "--duration", "-t", help="Target clip duration in seconds (overrides config)"
     ),
@@ -161,7 +168,9 @@ def clip(
     output_dir: str | None = typer.Option(
         None, "--output-dir", "-o", help="Output directory for rendered clips"
     ),
-    force: bool = typer.Option(False, "--force", "-f", help="Re-download / re-transcribe, ignoring caches"),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Re-download / re-transcribe, ignoring caches"
+    ),
     debug: bool = typer.Option(False, "--debug", "-d", help="Keep workspace/tmp scratch files"),
 ) -> None:
     """Download a video, auto-select highlights, and render vertical 9:16 clips."""
@@ -177,9 +186,7 @@ def show_config() -> None:
 
     def _mask(node: object) -> object:
         if isinstance(node, dict):
-            return {
-                k: ("***" if k == "api_key" and v else _mask(v)) for k, v in node.items()
-            }
+            return {k: ("***" if k == "api_key" and v else _mask(v)) for k, v in node.items()}
         if isinstance(node, list):
             return [_mask(v) for v in node]
         return node
@@ -204,18 +211,19 @@ def cache_status() -> None:
     for name, path in targets.items():
         files = [p for p in path.rglob("*") if p.is_file()] if path.exists() else []
         size_mb = sum(p.stat().st_size for p in files) / (1024 * 1024)
-        oldest = (
-            f"{(now - min(p.stat().st_mtime for p in files)) / 86400:.1f}d" if files else "-"
-        )
+        oldest = f"{(now - min(p.stat().st_mtime for p in files)) / 86400:.1f}d" if files else "-"
         typer.echo(f"{name:<12}{size_mb:>12.1f}{len(files):>8}{oldest:>12}")
 
 
 @cache_app.command("purge")
 def cache_purge(
-    target: list[str] | None = typer.Argument(
-        None, help="Space-separated dirs to purge (videos|audios|subtitles|data|tmp|clips|logs); all if omitted"
+    target: list[str] | None = typer.Argument(  # noqa: B008
+        None,
+        help="Space-separated dirs to purge (videos|audios|subtitles|data|tmp|clips|logs); all if omitted",
     ),
-    concern: bool = typer.Option(False, "--concern", help="Will run the purging with user concern confirmed"),
+    concern: bool = typer.Option(
+        False, "--concern", help="Will run the purging with user concern confirmed"
+    ),
 ) -> None:
     """Manually purge the workspace cache (bypasses retention)."""
     if not concern:
@@ -226,7 +234,9 @@ def cache_purge(
 
 @cli.command("clean-workspace", hidden=True)
 def clean_workspace(
-    target: list[str] = typer.Argument(None, help="Space-separated workspace directories to clean"),
+    target: list[str] = typer.Argument(  # noqa: B008
+        None, help="Space-separated workspace directories to clean"
+    ),
 ) -> None:
     """Deprecated alias of `cache purge`."""
     run_purge_cycle(force=True, specific_target=target)
@@ -237,8 +247,7 @@ def serve(
     host: str = typer.Option("127.0.0.1", help="Host IP to bind Gradio to"),
     port: int = typer.Option(7860, help="Port to bind Gradio to"),
 ) -> None:
-    """Launch the Gradio WebUI (not implemented yet — next phase)."""
+    """Launch the Gradio WebUI (placeholder — next phase)."""
     ensure_workspace_integrity()
     run_purge_cycle()
-    logger.info("WebUI mode detected (not fully implemented yet).")
-    logger.info(f"Mock serving on http://{host}:{port}...")
+    logger.info(f"WebUI not yet implemented. Starting on http://{host}:{port}...")

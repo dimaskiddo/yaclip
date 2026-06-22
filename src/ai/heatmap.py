@@ -20,9 +20,7 @@ class HeatmapAnalyzer:
         """
         heatmap_file = DATA_DIR / f"{video_id}_heatmap_youtube.json"
         if not heatmap_file.exists():
-            logger.info(
-                f"No Most Replayed data found for {video_id}. Skipping Most Replayed clip extraction."
-            )
+            logger.info("No replay data available.")
             return []
 
         try:
@@ -99,6 +97,6 @@ class HeatmapAnalyzer:
             valid_clips.append(clip)
 
         if valid_clips:
-            logger.info(f"Extracted {len(valid_clips)} clip(s) from YouTube Most Replayed data.")
+            logger.info(f"Found {len(valid_clips)} candidate sections from replay data.")
 
         return valid_clips

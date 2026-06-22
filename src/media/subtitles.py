@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+
 from loguru import logger
 
 from src.core.config import load_config
@@ -34,9 +35,7 @@ class SubtitleGenerator:
             logger.info("Subtitles are disabled in config. Skipping subtitle file generation.")
             return False
 
-        logger.info(
-            f"Generating subtitle file at: {SystemUtils.display_path(output_ass_path)}"
-        )
+        logger.info(f"Generating subtitle file at: {SystemUtils.display_path(output_ass_path)}")
 
         # Uppercase improves caption readability at a glance (configurable).
         force_upper = self.config.video_processing.subtitles.uppercase

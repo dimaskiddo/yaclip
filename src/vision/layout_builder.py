@@ -4,6 +4,7 @@ from loguru import logger
 
 from src.core.config import load_config
 from src.core.constants import (
+    FACECAM_DOMINANT_AREA_FRAC,
     FACECAM_EDGE_SCORE_MIN,
     FACECAM_FIT_FACTOR,
     FACECAM_MAX_AREA_FRAC,
@@ -15,7 +16,7 @@ from src.core.constants import (
     ContentType,
     LayoutMode,
 )
-from src.core.utils import make_even
+from src.core.utils import boxes_overlap, make_even
 
 
 class LayoutBuilder:
@@ -103,11 +104,9 @@ class LayoutBuilder:
         box = analysis.get("facecam_box")
         if not box:
             return False
-        return (box[2] * box[3]) > 0.55 * (width * height)
+        return (box[2] * box[3]) > FACECAM_DOMINANT_AREA_FRAC * (width * height)
 
-    def _facecam_single_vertical_crops(
-        self, analysis: dict, width: int, height: int
-    ) -> list[dict]:
+    def _facecam_single_vertical_crops(self, analysis: dict, width: int, height: int) -> list[dict]:
         """Synthesize a single static 9:16 crop centred on the facecam for Mode A rendering."""
         box = analysis.get("facecam_box")
         crop_w = make_even(min(width, int(round(height * (9.0 / 16.0)))))
@@ -166,7 +165,9 @@ class LayoutBuilder:
                 width, height, STACK2_PANEL_ASPECT
             )
             spec["bottom_track"] = analysis.get("gameplay_track") or []
-            logger.info("Layout: webcam top, gameplay bottom (no popup box found — using gameplay fallback).")
+            logger.info(
+                "Layout: webcam top, gameplay bottom (no popup box found — using gameplay fallback)."
+            )
 
     # ---------------------------------------------------------------- Mode C
 
@@ -184,8 +185,13 @@ class LayoutBuilder:
         collab_box = analysis.get("collab_box")
         if collab_box is not None:
             spec["collab_crop"] = self._expand_box_to_aspect(
-                int(collab_box[0]), int(collab_box[1]), int(collab_box[2]), int(collab_box[3]),
-                width, height, STACK3_PANEL_ASPECT,
+                int(collab_box[0]),
+                int(collab_box[1]),
+                int(collab_box[2]),
+                int(collab_box[3]),
+                width,
+                height,
+                STACK3_PANEL_ASPECT,
             )
             spec["gameplay_crop"] = analysis.get("gameplay_box") or self._center_crop(
                 width, height, STACK3_PANEL_ASPECT
@@ -201,9 +207,7 @@ class LayoutBuilder:
         frame_area = float(width * height)
 
         def _not_primary(box: tuple) -> bool:
-            return facecam_box is None or not self._boxes_overlap(
-                tuple(box), tuple(facecam_box), 0.3
-            )
+            return facecam_box is None or not boxes_overlap(tuple(box), tuple(facecam_box), 0.3)
 
         def _edge_cam(box: tuple) -> bool:
             area_frac = (float(box[2]) * float(box[3])) / frame_area
@@ -221,8 +225,13 @@ class LayoutBuilder:
 
         if collab_src is not None:
             spec["collab_crop"] = self._expand_box_to_aspect(
-                int(collab_src[0]), int(collab_src[1]), int(collab_src[2]), int(collab_src[3]),
-                width, height, STACK3_PANEL_ASPECT,
+                int(collab_src[0]),
+                int(collab_src[1]),
+                int(collab_src[2]),
+                int(collab_src[3]),
+                width,
+                height,
+                STACK3_PANEL_ASPECT,
             )
         else:
             spec["collab_crop"] = self._center_crop(width, height, STACK3_PANEL_ASPECT)
@@ -237,9 +246,7 @@ class LayoutBuilder:
 
     # --------------------------------------------------------------- Helpers
 
-    def _facecam_crop(
-        self, analysis: dict, width: int, height: int, aspect: float
-    ) -> dict:
+    def _facecam_crop(self, analysis: dict, width: int, height: int, aspect: float) -> dict:
         """Facecam box expanded to the destination panel aspect (or centre fallback)."""
         box = analysis.get("facecam_box")
         if not box:
@@ -264,40 +271,17 @@ class LayoutBuilder:
         facecam_box = analysis.get("facecam_box")
         for od in overlay_data:
             ox, oy, ow, oh = od["box"]
-            if facecam_box and self._boxes_overlap(
-                (ox, oy, ow, oh), facecam_box, 0.3
-            ):
+            if facecam_box and boxes_overlap((ox, oy, ow, oh), facecam_box, 0.3):
                 continue
             return (int(ox), int(oy), int(ow), int(oh))
         return None
-
-    def _boxes_overlap(
-        self,
-        a: tuple[float, float, float, float],
-        b: tuple[float, float, float, float],
-        thresh: float,
-    ) -> bool:
-        """True if box a overlaps box b — IoU > thresh OR a's centre lies inside b."""
-        ax, ay, aw, ah = a
-        bx, by, bw, bh = b
-        acx, acy = ax + aw / 2, ay + ah / 2
-        if bx <= acx <= bx + bw and by <= acy <= by + bh:
-            return True
-        ix0, iy0 = max(ax, bx), max(ay, by)
-        ix1, iy1 = min(ax + aw, bx + bw), min(ay + ah, by + bh)
-        iw, ih = max(0.0, ix1 - ix0), max(0.0, iy1 - iy0)
-        inter = iw * ih
-        union = aw * ah + bw * bh - inter
-        return union > 0 and (inter / union) > thresh
 
     def _set_facecam_top(self, spec: dict, analysis: dict, width: int, height: int) -> None:
         """Compute the always-fit top-panel facecam crop on the spec."""
         crop, _ = self._facecam_panel_crop(analysis, width, height)
         spec["facecam_crop"] = crop
 
-    def _facecam_panel_crop(
-        self, analysis: dict, width: int, height: int
-    ) -> tuple[dict, str]:
+    def _facecam_panel_crop(self, analysis: dict, width: int, height: int) -> tuple[dict, str]:
         """Facecam top crop — prominent and panel-aspect, crop-filled sharp (no blur, no bars).
 
         Expand the cam box by FACECAM_FIT_FACTOR (comfortable context margin) and shape it to the

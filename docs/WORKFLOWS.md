@@ -10,7 +10,7 @@ This document details the step-by-step data flow of the YaClip pipeline — how 
 flowchart TD
     Start([Execute app.py]) --> Route{Arguments?}
 
-    Route -- "No args" --> WebUI([Launch Gradio WebUI\nplanned — currently a stub])
+    Route -- "No args" --> WebUI([Launch Gradio WebUI])
     Route -- "CLI args" --> CLI([Execute Typer Command])
 
     WebUI --> Boot
@@ -57,7 +57,7 @@ flowchart TD
         SampleFrames --> GameplayGate{Gameplay confirmed?<br/>open_area + motion/HUD/gaming_hint}
         GameplayGate -- Yes --> CamCheck{detect_facecams<br/>≥ 2 webcams?}
         CamCheck -- "No → confident" --> GamingSolo[ContentType = GAMING_SOLO]
-        CamCheck -- "Yes → uncertain" --> Uncertain1[None — defer to LLM]
+        CamCheck -- "Yes → confident" --> GamingCollab[ContentType = GAMING_COLLAB]
         GameplayGate -- No --> FaceCheck{≥ 2 faces?}
         FaceCheck -- Yes --> PodcastType[ContentType = PODCAST]
         FaceCheck -- "1 face + donation" --> JustChat[ContentType = JUST_CHAT]
@@ -213,16 +213,32 @@ flowchart TD
 
 ---
 
-### 3. Content Type Classification (per clip)
+### 3. Content Type Classification (video-level, once)
 **Module**: `src/vision/content_type_detector.py`
 
-Classified **per clip**, not once per video — each clip window is judged on its own content (a stream can mix solo gameplay, cutscenes, and face-cam reactions). `classify_from_analysis(analysis, gaming_hint)` reuses the per-clip `VisualAnalyzer.analyze_window` result (no extra sampling).
+Detected **once per video** (25 sampled frames across the middle 80%), before clip selection or rendering — the diagram above is correct. Aggregating evidence across the whole video is far more reliable than per-clip classification, which suffers from noisy signals in short 60s windows.
 
-**Step 1 — Visual classifier (primary):** the gameplay gate needs **both** `open_area_frac ≥ 0.45` (room for a game screen) AND (`non_person_motion ≥ 4.0` OR the YouTube "Gaming" `gaming_hint`). Confirmed gameplay with a single webcam ⇒ `GAMING_SOLO`. No gameplay: two+ persistent faces ⇒ `PODCAST`; single face + donation popup ⇒ `JUST_CHAT`; single face ⇒ `PODCAST`. The classifier returns **`None` (inconclusive)** when the call is too close — most importantly when gameplay is confirmed but the SOLO↔COLLAB **cam count is borderline** (a person box that could be a real 2nd webcam OR an on-screen game character/cutscene NPC), or the gameplay gate sits near threshold.
+**Primary path — `detect_content_type(video_path)`:**
+1. Config override check: if `content_type_override` is set (not `"auto"`), return it immediately — no detection runs.
+2. Frame sampling: 25 evenly-spaced frames from middle 80% of the video.
+3. Gaming detection via three corroboration signals:
+   - `VisualAnalyzer.detect_gameplay_presence()` — open_area_frac (non-person screen area ≥ 0.45, or ≥ 0.30 with `gaming_hint`) + non_person_motion.
+   - `gaming_hint` (YouTube "Gaming" category) relaxes the open-area threshold.
+   - HUD score — static graphic UI elements (health bars, minimaps) corroborate gameplay.
+4. Webcam count via `VisualAnalyzer.detect_facecams()` — reliable persistent cams, filtered by area/edge/separation (replaces raw YOLO person count which over-counts game characters).
+5. Decision tree:
+   - Gameplay + < 2 webcams → `GAMING_SOLO`
+   - Gameplay + ≥ 2 webcams → **`GAMING_COLLAB`** (confident — `detect_facecams` already filters out NPCs)
+   - No gameplay + ≥ 2 persistent faces → `PODCAST`
+   - No gameplay + 1 face + donation alerts → `JUST_CHAT`
+   - No gameplay + 1 face → `PODCAST`
+   - Ambiguous → `None` (uncertain — defer to LLM)
 
-**Step 2 — LLM fallback (only the `None` clips):** in auto mode the per-candidate verdict rides the **existing batched selection LLM call** as a `Visual classification:` line (concrete type or "uncertain") next to an `Audio: ~N speakers` note (lightweight pitch heuristic, `AudioEnergyAnalyzer.estimate_speaker_count`). For "uncertain" candidates the LLM decides `content_type` from the visual descriptor + audio speaker count + transcript + game/show metadata — a cutscene NPC is not a 2nd streamer, so single-streamer gameplay stays `GAMING_SOLO`. No extra model call. The confident visual verdict always wins; the LLM only fills the gaps.
+**Fallback path — `classify_from_analysis(analysis, gaming_hint)`:**
+Only invoked when the video-level detector returned `None` (manual mode clips, or uncertain cases). Reuses the clip's `VisualAnalyzer.analyze_window` result (no extra sampling). Now also returns `GAMING_COLLAB` confidently for gameplay + ≥2 faces. For auto mode, uncertain clips ride the existing batched selection LLM as a `Visual classification:` line — the LLM decides `content_type` from the visual descriptor + audio speaker count + transcript, with a **structured detection evidence block** plus post-validation rules.
 
-**Step 3 — Donation promotion & fallback (disabled by default):** on top of the base type, any clip whose window contains a transient mediashare/donation popup is promoted to `DONATION_OVERLAY` (gated by `preserve_donation_overlays`, which defaults to `false`; excluding `donation_overlay_exclude_types`). A clip still unresolved (manual mode, or no usable LLM value) defaults to `PODCAST`. The user can override the per-clip type via the WebUI review panel.
+**Step — Donation promotion (per-clip, on top of base type):**
+A clip whose window contains a transient mediashare/donation popup is promoted to `DONATION_OVERLAY` (gated by `preserve_donation_overlays`, default false; excluded types in `donation_overlay_exclude_types`). An unresolved clip (manual mode, no LLM value) defaults to `PODCAST`. The user can override per-clip type via the WebUI review panel.
 
 Each clip's `ContentType` rides on the clip proposal and is passed to all downstream rendering modules.
 
@@ -291,7 +307,7 @@ STT and LLM run as two independent steps. Each resolves its own provider from co
 ---
 
 ### 6. Review Gate
-**Module**: `src/interfaces/webui.py` *(planned — not yet implemented; `require_review_before_render` config flag is present but rendering runs directly in the current CLI path)*
+**Module**: `src/interfaces/webui.py`
 
 When `clip_selection.require_review_before_render: true` (default):
 - All clip proposals displayed in the Gradio **Review & Render** tab: Title, Reasoning, Start, End, and the **detected ContentType**.
@@ -366,7 +382,7 @@ Shared flags `-profile:v high -level 4.1 -pix_fmt yuv420p -r 30 -g 60 -movflags 
 
 ### 9. Delivery
 
-**WebUI** *(planned)*: Final clips will appear in the **Review & Render** tab output section with HTML5 video preview and per-clip download buttons.
+**WebUI**  Final clips will appear in the **Review & Render** tab output section with HTML5 video preview and per-clip download buttons.
 
 **CLI** *(current)*: Final clip paths logged to terminal via loguru at INFO level.
 

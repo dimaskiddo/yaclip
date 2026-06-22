@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import re
 import subprocess
-
 from pathlib import Path
+
 from loguru import logger
 
 from src.core.config import load_config

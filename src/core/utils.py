@@ -4,9 +4,9 @@ import json
 import os
 import platform
 import subprocess
-
 from pathlib import Path
 from typing import Any
+
 from loguru import logger
 
 from src.core.exceptions import AIProviderError
@@ -18,15 +18,43 @@ def make_even(value: int) -> int:
     return value if value % 2 == 0 else value - 1
 
 
+def box_iou(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+    """Intersection-over-Union of two (x, y, w, h) boxes."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ix1, iy1 = max(ax, bx), max(ay, by)
+    ix2, iy2 = min(ax + aw, bx + bw), min(ay + ah, by + bh)
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    union = aw * ah + bw * bh - inter
+    return inter / union if union > 0 else 0.0
+
+
+def boxes_overlap(
+    a: tuple[float, float, float, float],
+    b: tuple[float, float, float, float],
+    thresh: float = 0.3,
+) -> bool:
+    """True if box a overlaps box b — IoU > thresh OR a's centre lies inside b."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    acx, acy = ax + aw / 2, ay + ah / 2
+    if bx <= acx <= bx + bw and by <= acy <= by + bh:
+        return True
+    return box_iou(a, b) > thresh
+
+
 class SystemUtils:
-    _device_logged: bool = False  # so the resolved compute device is logged once, not per model load
+    _device_logged: bool = (
+        False  # so the resolved compute device is logged once, not per model load
+    )
 
     @staticmethod
     def is_wsl() -> bool:
         """Detect if running inside Windows Subsystem for Linux."""
         if platform.system() == "Linux":
             try:
-                with open("/proc/version", "r") as f:
+                with open("/proc/version") as f:
                     version_info = f.read().lower()
                     if "microsoft" in version_info or "wsl" in version_info:
                         return True
@@ -71,10 +99,7 @@ class SystemUtils:
         """Resolve FFmpeg binary from workspace/bin, falling back to system 'ffmpeg'."""
         bin_dir = BIN_DIR.resolve()
 
-        if os.name == "nt":
-            ffmpeg_exe = bin_dir / "ffmpeg.exe"
-        else:
-            ffmpeg_exe = bin_dir / "ffmpeg"
+        ffmpeg_exe = bin_dir / "ffmpeg.exe" if os.name == "nt" else bin_dir / "ffmpeg"
 
         if ffmpeg_exe.exists():
             return str(ffmpeg_exe)
@@ -84,9 +109,7 @@ class SystemUtils:
         if alt.exists():
             return str(alt)
 
-        logger.warning(
-            "FFmpeg binary not found in workspace/bin. Falling back to system 'ffmpeg'."
-        )
+        logger.warning("FFmpeg binary not found in workspace/bin. Falling back to system 'ffmpeg'.")
         return "ffmpeg"
 
     @staticmethod
@@ -102,6 +125,7 @@ class SystemUtils:
         resolved = "cpu"
         try:
             import torch
+
             if torch.cuda.is_available():
                 resolved = "cuda"
         except ImportError:
@@ -156,9 +180,7 @@ class AIUtils:
                         )
 
                 logger.info(f"Locating model {filename} from HuggingFace repo {repo_id}...")
-                return hf_hub_download(
-                    repo_id=repo_id, filename=filename
-                )
+                return hf_hub_download(repo_id=repo_id, filename=filename)
 
             except Exception as e:
                 logger.error(f"Failed to download/resolve model from HuggingFace Hub: {e}")

@@ -1,20 +1,30 @@
 from __future__ import annotations
 
-import yaml
-
 from pathlib import Path
+
+import yaml
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from src.core.exceptions import ConfigValidationError
-from src.core.workspace import LOGS_DIR, CLIPS_DIR
+from src.core.workspace import CLIPS_DIR, LOGS_DIR
 
 CONFIG_PATH = Path("config.yaml")
 
 # Friendly subtitle-alignment names → ASS numpad code (1-9). Raw ints are also accepted.
 ALIGNMENT_NAMES = {
-    "bottom-left": 1, "bottom-center": 2, "bottom-centre": 2, "bottom-right": 3,
-    "middle-left": 4, "center": 5, "centre": 5, "middle-center": 5, "middle-right": 6,
-    "top-left": 7, "top-center": 8, "top-centre": 8, "top-right": 9,
+    "bottom-left": 1,
+    "bottom-center": 2,
+    "bottom-centre": 2,
+    "bottom-right": 3,
+    "middle-left": 4,
+    "center": 5,
+    "centre": 5,
+    "middle-center": 5,
+    "middle-right": 6,
+    "top-left": 7,
+    "top-center": 8,
+    "top-centre": 8,
+    "top-right": 9,
 }
 
 
@@ -33,7 +43,7 @@ def hex_to_ass_color(value: str) -> str:
         rr, gg, bb = h[0:2], h[2:4], h[4:6]
         aa = f"{255 - int(h[6:8], 16):02X}"
     else:
-        return value  # malformed → let it through (renders as-is / surfaces the typo)
+        return value   # malformed → let it through (renders as-is / surfaces the typo)
     return f"&H{aa}{bb}{gg}{rr}".upper()
 
 
@@ -64,6 +74,7 @@ class STTCloudConfig(BaseModel):
     provider: str = Field(default="google")
     api_key: str = Field(default="your-api-key-here")
     model: str = Field(default="gemini-2.5-flash")
+    timeout: int = Field(default=300, ge=30, le=600)
 
 
 class STTLocalConfig(BaseModel):
@@ -82,6 +93,7 @@ class LLMCloudConfig(BaseModel):
     base_url: str | None = Field(default=None)
     api_key: str = Field(default="your-api-key-here")
     model: str = Field(default="gemini-2.5-flash")
+    timeout: int = Field(default=300, ge=30, le=600)
 
 
 class LLMLocalConfig(BaseModel):
@@ -121,13 +133,13 @@ class ClipSelectionConfig(BaseModel):
     # Clip length = [default, default + margin]. `default` is the target/floor; `margin` is how much
     # longer a clip may run than the target. min/max are NOT per-clip bounds — they are the allowed
     # RANGE of the duration slider in the (future) Gradio WebUI.
-    min_clip_duration_seconds: int = Field(default=30)   # WebUI duration-slider lower bound
+    min_clip_duration_seconds: int = Field(default=30)  # WebUI duration-slider lower bound
     max_clip_duration_seconds: int = Field(default=180)  # WebUI duration-slider upper bound
     default_clip_duration_seconds: int = Field(default=60)  # target clip length (and floor)
     clip_length_margin_seconds: int = Field(default=15, ge=0)  # a clip may run up to default+margin
 
     @model_validator(mode="after")
-    def _coherent_durations(self) -> "ClipSelectionConfig":
+    def _coherent_durations(self) -> ClipSelectionConfig:
         """Keep min ≤ default ≤ max (slider bounds) and margin ≥ 0."""
         if self.min_clip_duration_seconds > self.max_clip_duration_seconds:
             self.min_clip_duration_seconds, self.max_clip_duration_seconds = (
@@ -158,7 +170,9 @@ class SubtitleConfig(BaseModel):
     bold: bool = Field(default=True)
     shadow: bool = Field(default=True)
     alignment: int = Field(default=2)  # accepts names like "bottom-center" (→ ASS numpad int)
-    margin_v: int = Field(default=760)  # bottom margin in px; for bottom-center alignment: 760px up from canvas bottom = ~60% down from top
+    margin_v: int = Field(
+        default=760
+    )  # bottom margin in px; for bottom-center alignment: 760px up from canvas bottom = ~60% down from top
 
     @field_validator("primary_color", "highlight_color", "outline_color", mode="before")
     @classmethod
@@ -176,7 +190,9 @@ class RegionDetectionConfig(BaseModel):
     model_name: str = Field(default="yolov8n.pt")
     sample_frames: int = Field(default=4, ge=1, le=20)
     device: str = Field(default="auto")
-    gameplay_follow_motion: bool = Field(default=False)  # false = static centred crop; true = animated motion-following pan
+    gameplay_follow_motion: bool = Field(
+        default=False
+    )  # false = static centred crop; true = animated motion-following pan
     gameplay_zoom: float = Field(default=1.25, ge=1.0, le=2.0)  # >1 zooms the gameplay crop tighter
 
 
@@ -203,9 +219,7 @@ class VideoProcessingConfig(BaseModel):
         default_factory=lambda: ["PODCAST", "GAMING_COLLAB"]
     )
     default_resolution: str = Field(default="1080p")
-    region_detection: RegionDetectionConfig = Field(
-        default_factory=RegionDetectionConfig
-    )
+    region_detection: RegionDetectionConfig = Field(default_factory=RegionDetectionConfig)
     subtitles: SubtitleConfig = Field(default_factory=SubtitleConfig)
 
 
@@ -222,9 +236,7 @@ class WorkspaceCleanupConfig(BaseModel):
     run_on_startup: bool = Field(default=True)
     dry_run: bool = Field(default=False)
     retention_days: RetentionDaysConfig = Field(default_factory=RetentionDaysConfig)
-    protected_dirs: list[str] = Field(
-        default_factory=lambda: ["bin", "fonts", "models"]
-    )
+    protected_dirs: list[str] = Field(default_factory=lambda: ["bin", "fonts", "models"])
 
 
 class AppConfig(BaseModel):
@@ -253,12 +265,10 @@ def load_config(force_reload: bool = False) -> AppConfig:
         )
 
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
     except Exception as e:
-        raise ConfigValidationError(
-            f"Failed to read/parse {CONFIG_PATH} as YAML: {e}"
-        ) from e
+        raise ConfigValidationError(f"Failed to read/parse {CONFIG_PATH} as YAML: {e}") from e
 
     try:
         _config_cache = AppConfig.model_validate(data)

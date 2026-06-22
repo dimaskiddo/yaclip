@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import gc
 import subprocess
-
 from collections.abc import Callable
 from pathlib import Path
+
 from loguru import logger
 
 from src.ai.stt_local import LocalSTTProvider, load_mediashare_cache, load_words_cache
@@ -74,8 +74,7 @@ class ClipRenderer:
         clip_proposals = [
             c
             for c in clip_proposals
-            if float(c.get("end_time", 0.0)) - float(c.get("start_time", 0.0))
-            >= MIN_CLIP_SECONDS
+            if float(c.get("end_time", 0.0)) - float(c.get("start_time", 0.0)) >= MIN_CLIP_SECONDS
         ]
         if not clip_proposals:
             logger.warning("No valid clips to render after dropping degenerate proposals.")
@@ -93,9 +92,7 @@ class ClipRenderer:
         analyses = self._analyze_regions(video_path, clip_proposals, clip_types)
 
         # For manual mode (no LLM call) — any clip still without a type gets a visual fallback.
-        clip_types = self._finalize_clip_types(
-            video_path, clip_proposals, clip_types, analyses
-        )
+        clip_types = self._finalize_clip_types(video_path, clip_proposals, clip_types, analyses)
 
         # Promote any clip whose window contains a mediashare/donation popup to DONATION_OVERLAY
         # (mediashare_present is only known after Pass 1). Done before Pass 2 so a promoted clip is
@@ -103,9 +100,7 @@ class ClipRenderer:
         clip_types = self._apply_donation_override(clip_proposals, clip_types, analyses)
 
         # Pass 2 — per-clip subtitle segments (whisper loaded once, released after).
-        segments_per_clip = self._transcribe_subtitles(
-            video_path, clip_proposals, clip_types
-        )
+        segments_per_clip = self._transcribe_subtitles(video_path, clip_proposals, clip_types)
 
         # Pass 3 — layout + render.
         return self._render_pass(
@@ -125,7 +120,7 @@ class ClipRenderer:
         cmd = build_cmd(encoder)
         logger.debug(f"FFmpeg render command: {' '.join(cmd)}")
         try:
-            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
             return
         except subprocess.CalledProcessError as e:
             stderr = e.stderr or ""
@@ -137,7 +132,7 @@ class ClipRenderer:
                 f"GPU encoder '{encoder}' failed — retrying this clip with CPU (libx264)."
             )
             cpu_cmd = build_cmd("cpu")
-            subprocess.run(cpu_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            subprocess.run(cpu_cmd, capture_output=True, text=True, check=True)
             logger.info("CPU fallback render succeeded.")
 
     # ------------------------------------------------------------- Content Type
@@ -150,12 +145,12 @@ class ClipRenderer:
         try:
             return ContentType(override.upper())
         except ValueError:
-            logger.warning(f"Invalid content_type_override '{override}' — ignoring, will auto-detect.")
+            logger.warning(
+                f"Invalid content_type_override '{override}' — ignoring, will auto-detect."
+            )
             return None
 
-    def _initial_clip_type(
-        self, clip: dict, override: ContentType | None
-    ) -> ContentType | None:
+    def _initial_clip_type(self, clip: dict, override: ContentType | None) -> ContentType | None:
         """Override wins; else an explicit/LLM-assigned per-clip type; else None (resolved later)."""
         if override is not None:
             return override
@@ -188,9 +183,12 @@ class ClipRenderer:
                 ctype = self.detector.classify_from_analysis(analyses[idx], gaming_hint)
                 if ctype is None:
                     ctype = ContentType.PODCAST
-                    logger.info(f"Clip {idx + 1}: content type unclear — defaulting to PODCAST.")
+                    logger.info(f"Clip {idx + 1} video type undetermined, using standard framing.")
                 else:
-                    logger.info(f"Clip {idx + 1}: content type detected as {ctype.value}.")
+                    from src.core.constants import CONTENT_TYPE_HUMAN_NAMES
+
+                    human_name = CONTENT_TYPE_HUMAN_NAMES.get(ctype.value, ctype.value.lower())
+                    logger.info(f"Clip {idx + 1} video type detected as {human_name}.")
                 if ctype == ContentType.GAMING_COLLAB and analyses[idx].get("collab_box") is None:
                     collab_pending.append(idx)
             out.append(ctype)
@@ -211,7 +209,7 @@ class ClipRenderer:
             collab_cams = analyzer.detect_facecams(video_path)
             if len(collab_cams) < 2:
                 logger.info(
-                    "Collaborative clip(s) detected but no webcam pair found — keeping single-cam framing."
+                    "Collaboration layout needed but only 1 webcam found, using single webcam framing."
                 )
                 return
             stable = analyzer.detect_stable_facecam(video_path)
@@ -248,7 +246,9 @@ class ClipRenderer:
             try:
                 exclude_types.add(ContentType(name))
             except ValueError:
-                logger.warning(f"donation_overlay_exclude_types: unknown content type '{name}' — skipped.")
+                logger.warning(
+                    f"donation_overlay_exclude_types: unknown content type '{name}' — skipped."
+                )
 
         out = list(clip_types)
         for idx, analysis in enumerate(analyses):
@@ -259,7 +259,9 @@ class ClipRenderer:
                 continue
             if analysis.get("mediashare_present"):
                 out[idx] = ContentType.DONATION_OVERLAY
-                logger.info(f"Clip {idx + 1}: donation overlay detected — switching to donation layout.")
+                logger.info(
+                    f"Clip {idx + 1} donation popup detected, using donation overlay layout."
+                )
         return out
 
     # ----------------------------------------------------------------- Pass 1
@@ -288,6 +290,12 @@ class ClipRenderer:
                 if any(t == ContentType.GAMING_COLLAB for t in clip_types)
                 else []
             )
+            # Log explicit panel assignment for collaboration layout.
+            if len(collab_cams) >= 2:
+                pri_pos = analyzer._where(collab_cams[0], 1920, 1080)
+                sec_pos = analyzer._where(collab_cams[1], vw, vh)
+                logger.info(f"Primary webcam at {pri_pos}, assigned for Top Panel.")
+                logger.info(f"Secondary webcam at {sec_pos}, assigned for Bottom Panel.")
             for idx, clip in enumerate(clips):
                 is_collab = clip_types[idx] == ContentType.GAMING_COLLAB
                 # Collab centre uses the wider 3-stack panel aspect; everyone else the 2-stack one.
@@ -309,7 +317,9 @@ class ClipRenderer:
                         clip["end_time"],
                         track_gameplay=follow,
                         facecam_override=stable_facecam,
-                        facecam_boxes=collab_cams if (is_collab and len(collab_cams) >= 2) else None,
+                        facecam_boxes=collab_cams
+                        if (is_collab and len(collab_cams) >= 2)
+                        else None,
                         gameplay_aspect=aspect,
                         mediashare_cached=mediashare_cached,
                     )
@@ -334,9 +344,12 @@ class ClipRenderer:
         best: dict | None = None
         for cand in cache.get("candidates", []):
             cs, ce = float(cand["start"]), float(cand["end"])
-            if cs - 0.5 <= start and end <= ce + 0.5:
-                if best is None or (ce - cs) < (float(best["end"]) - float(best["start"])):
-                    best = cand
+            if (
+                cs - 0.5 <= start
+                and end <= ce + 0.5
+                and (best is None or (ce - cs) < (float(best["end"]) - float(best["start"])))
+            ):
+                best = cand
         if best is None:
             return None
         box = best.get("mediashare_box")
@@ -361,7 +374,7 @@ class ClipRenderer:
         sub_cfg = self.config.video_processing.subtitles
         results: list[list[dict]] = [[] for _ in clips]
         if not sub_cfg.enabled:
-            logger.info("Subtitles disabled; skipping transcription pass.")
+            logger.info("Subtitles are turned off, skipping transcription.")
             return results
 
         cache = load_words_cache(video_path.stem)
@@ -369,7 +382,9 @@ class ClipRenderer:
         for idx, clip in enumerate(clips):
             # Skip subtitles on the cramped 3-stack collab layout unless explicitly enabled.
             if clip_types[idx] == ContentType.GAMING_COLLAB and not sub_cfg.collab_enabled:
-                logger.info(f"Clip {idx + 1}: collaborative gaming layout — subtitles are disabled for this video type.")
+                logger.info(
+                    "Subtitles skipped for collaboration layout as screen space is limited."
+                )
                 continue
             cand = (
                 self._match_cached_words(cache, clip["start_time"], clip["end_time"])
@@ -380,17 +395,12 @@ class ClipRenderer:
                 results[idx] = self._slice_cached_segments(
                     cand, clip["start_time"], clip["end_time"]
                 )
-                logger.info(
-                    f"Clip {idx + 1}: reusing saved word timings "
-                    f"({len(results[idx])} segment(s)); skipping re-transcription."
-                )
+                logger.info(f"Clip {idx + 1} using saved word timings.")
             else:
                 pending.append(idx)
 
         if not pending:
-            logger.info(
-                "All clips already have word timings cached or subtitles are off. Skipping transcription."
-            )
+            logger.info("Using saved word timings from earlier transcription.")
             return results
 
         self._transcribe_pending(video_path, clips, pending, results)
@@ -418,16 +428,16 @@ class ClipRenderer:
             device = SystemUtils.resolve_device(self.config.ai_pipeline.stt.local.device)
             size = provider.model_size
             c_type = "float32" if size in ("tiny", "base") else "int8"
-            logger.info(f"Loading transcription model ({size}) for {len(pending)} clip(s) that need subtitles...")
+            logger.info(
+                f"Loading speech-to-text model for {len(pending)} clip(s) that need subtitles."
+            )
             model = WhisperModel(size, device=device, compute_type=c_type)
 
             for idx in pending:
                 clip = clips[idx]
                 start_t, end_t = clip["start_time"], clip["end_time"]
                 slice_path = TMP_DIR / f"audio_{video_path.stem}_{idx + 1}.{audio_ext}"
-                ok = self.slicer.slice_audio_chunk(
-                    str(audio_path), start_t, end_t, str(slice_path)
-                )
+                ok = self.slicer.slice_audio_chunk(str(audio_path), start_t, end_t, str(slice_path))
                 if not ok:
                     logger.warning(f"Could not slice audio for clip {idx + 1}; no subs.")
                     continue
@@ -450,9 +460,12 @@ class ClipRenderer:
         best: dict | None = None
         for cand in cache.get("candidates", []):
             cs, ce = float(cand["start"]), float(cand["end"])
-            if cs - 0.5 <= start and end <= ce + 0.5:
-                if best is None or (ce - cs) < (float(best["end"]) - float(best["start"])):
-                    best = cand
+            if (
+                cs - 0.5 <= start
+                and end <= ce + 0.5
+                and (best is None or (ce - cs) < (float(best["end"]) - float(best["start"])))
+            ):
+                best = cand
         return best
 
     @staticmethod
@@ -461,9 +474,7 @@ class ClipRenderer:
         lo, hi = start - 0.5, end + 0.5
         out: list[dict] = []
         for seg in cand.get("segments", []):
-            words = [
-                w for w in seg.get("words", []) if w["end"] >= lo and w["start"] <= hi
-            ]
+            words = [w for w in seg.get("words", []) if w["end"] >= lo and w["start"] <= hi]
             if not words:
                 continue
             out.append(
@@ -509,9 +520,9 @@ class ClipRenderer:
             duration = end_t - start_t
             title = clip.get("title", f"clip_{idx + 1}")
             content_type = clip_types[idx]
-            safe_title = "".join(
-                c if c.isalnum() or c in ("-", "_") else "_" for c in title
-            ).strip("_")
+            safe_title = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in title).strip(
+                "_"
+            )
             output_path = output_dir / f"clips_{video_id}_{idx + 1}_{safe_title}.mp4"
 
             logger.info(
@@ -525,11 +536,12 @@ class ClipRenderer:
                 # capacity (num_faces) is sized once for the whole video — no pre-scan.
                 face_data: list[dict] = []
                 if content_type == ContentType.PODCAST:
-                    video_person_count = max(
-                        (a.get("face_count", 0) for a in analyses), default=0
-                    )
+                    video_person_count = max((a.get("face_count", 0) for a in analyses), default=0)
                     face_data = self.tracker.track_clip(
-                        video_path, start_t, end_t, content_type,
+                        video_path,
+                        start_t,
+                        end_t,
+                        content_type,
                         person_count=video_person_count,
                     )
 
@@ -540,9 +552,8 @@ class ClipRenderer:
                 # clip is explicitly tagged DONATION_OVERLAY (e.g. by the user in review) but no
                 # popup was auto-detected — so the layout can still attempt the colour fallback.
                 overlay_data = []
-                if (
-                    content_type == ContentType.DONATION_OVERLAY
-                    and not analyses[idx].get("mediashare_present")
+                if content_type == ContentType.DONATION_OVERLAY and not analyses[idx].get(
+                    "mediashare_present"
                 ):
                     overlay_data = self.overlay_detector.detect_overlays(
                         video_path,
@@ -563,15 +574,24 @@ class ClipRenderer:
 
                 encoder = self.config.video_processing.video_encoder
 
-                def _build(enc: str) -> list[str]:
+                def _build(
+                    enc: str,
+                    __video_path=video_path,
+                    __start_t=start_t,
+                    __duration=duration,
+                    __layout_spec=layout_spec,
+                    __sub_arg=sub_arg,
+                    __output_path=output_path,
+                    __audio_path=audio_path,
+                ) -> list[str]:
                     return self.ffmpeg_builder.build_render_command(
-                        video_path,
-                        start_t,
-                        duration,
-                        layout_spec,
-                        sub_arg,
-                        output_path,
-                        audio_path=audio_path,
+                        __video_path,
+                        __start_t,
+                        __duration,
+                        __layout_spec,
+                        __sub_arg,
+                        __output_path,
+                        audio_path=__audio_path,
                         video_encoder=enc,
                     )
 

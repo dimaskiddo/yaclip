@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import sys
 import logging
+import sys
 import warnings
-
 from pathlib import Path
+
 from loguru import logger
 
 from src.core.config import load_config
@@ -26,9 +26,7 @@ class InterceptHandler(logging.Handler):
                 frame = frame.f_back
             depth += 1
 
-        logger.opt(depth=depth, exception=record.exc_info).log(
-            level, record.getMessage()
-        )
+        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 
 def setup_logger() -> None:
@@ -63,24 +61,25 @@ def setup_logger() -> None:
         rotation = log_config.rotation
         retention = log_config.retention
     except Exception:
+        # Hardcoded as last-resort fallback when config.yaml is missing.
+        # Must match LoggingConfig Field defaults in config.py.
         level = "INFO"
         file_path = str(LOGS_DIR / "app.log")
         rotation = "50 MB"
         retention = "7 days"
 
-    logger.add(
-        sys.stdout,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-        level=level,
-    )
-
     log_path = Path(file_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fmt_stdout = "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
+    fmt_file = "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}"
+
+    logger.add(sys.stdout, format=fmt_stdout, level=level)
     logger.add(
         log_path,
+        format=fmt_file,
+        level=level,
         rotation=rotation,
         retention=retention,
         encoding="utf-8",
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
-        level=level,
     )

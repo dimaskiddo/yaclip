@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import time
-
 from pathlib import Path
+
 from loguru import logger
 
 from src.ai.api_client import retry_api_call
@@ -21,14 +21,13 @@ class CloudSTTProvider:
         self.cloud_config = self.config.ai_pipeline.stt.cloud
 
         if not self.cloud_config.provider:
-            raise ValueError(
-                "Cloud STT mode requires 'provider' to be defined in config.yaml."
-            )
+            raise ValueError("Cloud STT mode requires 'provider' to be defined in config.yaml.")
 
         self.provider = self.cloud_config.provider.lower()
         self.api_key = self.cloud_config.api_key
         self.base_url = getattr(self.cloud_config, "base_url", None)
         self.model_name = self.cloud_config.model
+        self.timeout = self.cloud_config.timeout
 
         if not self.api_key or self.api_key == "your-api-key-here":
             raise ValueError(
@@ -43,7 +42,7 @@ class CloudSTTProvider:
             logger.error("openai package is not installed.")
             raise ImportError("openai package missing.") from e
 
-        client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout)
         logger.info("Starting cloud transcription with OpenAI...")
 
         language = self.config.video_processing.subtitles.language
@@ -109,7 +108,10 @@ class CloudSTTProvider:
         @retry_api_call(max_retries=3)
         def _generate(uploaded_file: object, prompt: str) -> object:
             model = genai.GenerativeModel(model_name=self.model_name)
-            return model.generate_content([uploaded_file, prompt])
+            return model.generate_content(
+                [uploaded_file, prompt],
+                request_options={"timeout": self.timeout},
+            )
 
         uploaded_file = None
         try:
@@ -169,9 +171,7 @@ class CloudSTTProvider:
         elif self.provider == "openai" or self.base_url:
             transcript = self._transcribe_openai(str(audio_path))
         else:
-            raise NotImplementedError(
-                f"Cloud STT provider '{self.provider}' is not supported."
-            )
+            raise NotImplementedError(f"Cloud STT provider '{self.provider}' is not supported.")
 
         out_txt.parent.mkdir(parents=True, exist_ok=True)
         out_txt.write_text(transcript, encoding="utf-8")

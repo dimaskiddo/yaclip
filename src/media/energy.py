@@ -3,8 +3,8 @@ from __future__ import annotations
 import math
 import struct
 import subprocess
-import numpy as np
 
+import numpy as np
 from loguru import logger
 
 from src.core.config import load_config
@@ -38,9 +38,7 @@ class AudioEnergyAnalyzer:
         RMS value per ``chunk_duration_sec`` chunk.  Shared by ``analyze_audio_energy``
         (whole-file heatmap) and ``rms_envelope`` (windowed, aligned to detection steps)."""
         try:
-            process = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except Exception as e:
             logger.error(f"Failed to start audio analysis process: {e}")
             return []
@@ -81,29 +79,35 @@ class AudioEnergyAnalyzer:
         ffmpeg_cmd = SystemUtils.get_ffmpeg_path()
         cmd = [
             ffmpeg_cmd,
-            "-ss", f"{start:.3f}",
-            "-to", f"{end:.3f}",
-            "-i", media_path,
+            "-ss",
+            f"{start:.3f}",
+            "-to",
+            f"{end:.3f}",
+            "-i",
+            media_path,
             "-vn",
-            "-f", "s16le",
-            "-acodec", "pcm_s16le",
-            "-ar", str(RMS_SAMPLE_RATE),
-            "-ac", "1",
+            "-f",
+            "s16le",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            str(RMS_SAMPLE_RATE),
+            "-ac",
+            "1",
             "pipe:1",
-            "-loglevel", "quiet",
+            "-loglevel",
+            "quiet",
         ]
         return self._stream_rms(cmd, step_seconds)
 
-    def analyze_audio_energy(
-        self, audio_path: str, chunk_duration_sec: float = 1.0
-    ) -> list[dict]:
+    def analyze_audio_energy(self, audio_path: str, chunk_duration_sec: float = 1.0) -> list[dict]:
         """
         Generates a pseudo-heatmap by calculating RMS energy of audio chunks.
         Returns standard clip objects based on the loudest spikes.
         """
         ffmpeg_cmd = SystemUtils.get_ffmpeg_path()
 
-        logger.info("Analyzing audio loudness to find the most energetic moments...")
+        logger.info("Scanning audio for energetic moments.")
         cmd = [
             ffmpeg_cmd,
             "-i",
@@ -124,15 +128,14 @@ class AudioEnergyAnalyzer:
         rms_values = self._stream_rms(cmd, chunk_duration_sec)
 
         energies = [
-            {"time": i * chunk_duration_sec, "rms": rms}
-            for i, rms in enumerate(rms_values)
+            {"time": i * chunk_duration_sec, "rms": rms} for i, rms in enumerate(rms_values)
         ]
 
         if not energies:
             logger.warning("No audio energy data extracted.")
             return []
 
-        logger.info(f"Processed {len(energies)} seconds of audio for energy analysis.")
+        logger.info(f"Analyzed {len(energies)} seconds of audio.")
 
         clip_cfg = self.config.clip_selection
         min_duration = clip_cfg.min_clip_duration_seconds
@@ -197,13 +200,23 @@ class AudioEnergyAnalyzer:
     def _decode_mono_pcm(self, audio_path: str) -> np.ndarray:
         """Decode an audio file to a float32 mono 8 kHz sample array (empty on failure)."""
         cmd = [
-            SystemUtils.get_ffmpeg_path(), "-i", audio_path,
-            "-f", "s16le", "-acodec", "pcm_s16le",
-            "-ar", str(RMS_SAMPLE_RATE), "-ac", "1",
-            "pipe:1", "-loglevel", "quiet",
+            SystemUtils.get_ffmpeg_path(),
+            "-i",
+            audio_path,
+            "-f",
+            "s16le",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            str(RMS_SAMPLE_RATE),
+            "-ac",
+            "1",
+            "pipe:1",
+            "-loglevel",
+            "quiet",
         ]
         try:
-            out = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+            out = subprocess.run(cmd, capture_output=True).stdout
         except Exception as e:
             logger.warning(f"Speaker-count audio decode failed: {e}")
             return np.empty(0, dtype=np.float32)
