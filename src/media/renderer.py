@@ -290,10 +290,18 @@ class ClipRenderer:
                 if any(t == ContentType.GAMING_COLLAB for t in clip_types)
                 else []
             )
+            # Probe source video dimensions for debug-position logging.
+            import cv2
+
+            cap = cv2.VideoCapture(str(video_path))
+            src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
+            src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
+            cap.release()
+
             # Log explicit panel assignment for collaboration layout.
             if len(collab_cams) >= 2:
-                pri_pos = analyzer._where(collab_cams[0], 1920, 1080)
-                sec_pos = analyzer._where(collab_cams[1], vw, vh)
+                pri_pos = analyzer._where(collab_cams[0], src_w, src_h)
+                sec_pos = analyzer._where(collab_cams[1], src_w, src_h)
                 logger.info(f"Primary webcam at {pri_pos}, assigned for Top Panel.")
                 logger.info(f"Secondary webcam at {sec_pos}, assigned for Bottom Panel.")
             for idx, clip in enumerate(clips):
