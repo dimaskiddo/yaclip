@@ -42,9 +42,9 @@ flowchart TD
         CookieCheck -- No --> NativeCookies[Use native browser cookies]
         CopyDB --> Download
         NativeCookies --> Download
-        Download["yt-dlp Download<br/>(Bun JS + GitHub extractors)"] --> SaveVid["Save ./workspace/videos/{id}.mp4"]
+        Download["yt-dlp Download<br/>(Bun JS + GitHub extractors)"] --> SaveVid["Save ./workspace/videos/[id].mp4"]
         Download --> SaveHeatmap["Save heatmap JSON<br/>(if YouTube provides it)"]
-        SaveVid --> ExtractAudio["FFmpeg: Extract audio<br/>./workspace/audios/{id}.aac"]
+        SaveVid --> ExtractAudio["FFmpeg: Extract audio<br/>./workspace/audios/[id].aac"]
     end
 
     ExtractAudio --> DetectionStart
@@ -125,7 +125,7 @@ flowchart TD
 
         ParseJSON["Parse JSON — exactly target_clips results<br/>strip_json_markdown"] --> RemapTS[Remap chunk timestamps<br/>back to original video timeline]
         RemapTS --> Dedup[Deduplicate clips — 5s overlap tolerance]
-        Dedup --> SaveJSON["Save ./workspace/data/{id}.json<br/>Save ./workspace/data/{id}.txt"]
+        Dedup --> SaveJSON["Save ./workspace/data/[id].json<br/>Save ./workspace/data/[id].txt"]
     end
 
     subgraph S6["6. Review Gate"]
@@ -171,7 +171,7 @@ flowchart TD
         GenASS --> BuildFilter
         BuildFilter["Build FFmpeg filter_complex<br/>(crop + scale + vstack + overlay + subtitles)"]
         BuildFilter --> Encode["FFmpeg encode → 9:16 MP4<br/>(subtitles hard-burned via vf)"]
-        Encode --> Export["Export ./workspace/clips/clips_{video_id}_{i}_{title}.mp4"]
+        Encode --> Export["Export clips to workspace/clips/"]
         Export --> TmpCleanup["Delete ./workspace/tmp/ scratch files"]
     end
 
