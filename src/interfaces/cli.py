@@ -126,6 +126,9 @@ def _run_pipeline(url: str, force: bool, debug: bool) -> None:
                 "start_time": float(c.get("start_time") or c.get("start", 0.0)),
                 "end_time": float(c.get("end_time") or c.get("end", 0.0)),
                 "title": c.get("title", f"Clip_{idx + 1}"),
+                "caption": c.get("caption", ""),
+                "description": c.get("description", ""),
+                "hashtags": c.get("hashtags", ""),
             }
             for idx, c in enumerate(clips)
         ]

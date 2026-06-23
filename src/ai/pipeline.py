@@ -129,7 +129,7 @@ class AIPipeline:
             system_instruction = (
                 "You are an expert social media content curator and high-accuracy transcription engine. "
                 "You must perform two tasks in a single run: transcribing the audio file and extracting clips. "
-                f"Please identify up to {target_clips} of the most engaging/viral segments."
+                f"You MUST identify EXACTLY {target_clips} of the most engaging/viral segments — no more, no fewer."
             )
 
             # Prepend detection evidence when the algorithm was uncertain.
@@ -174,10 +174,15 @@ class AIPipeline:
                 logger.info(f"Saved combined transcript to {out_txt}")
 
             clips = data.get("clips", [])
-            # Enforce target_clips: LLM may return more than requested
+            # Enforce target_clips: LLM may return more or fewer than requested
             if len(clips) > target_clips:
                 logger.info(f"Reducing clip count from {len(clips)} to {target_clips}.")
                 clips = clips[:target_clips]
+            elif len(clips) < target_clips:
+                logger.warning(
+                    f"Unified Gemini returned {len(clips)} clips, expected {target_clips}. "
+                    "Consider increasing candidate margin or check LLM response quality."
+                )
             # Normalise content_type per clip (same pattern as the hybrid path)
             for cc in clips:
                 if detected_type is not None:
@@ -964,6 +969,12 @@ class AIPipeline:
             if len(final_clips) > target_clips:
                 logger.info(f"Reducing clip count from {len(final_clips)} to {target_clips}.")
                 final_clips = final_clips[:target_clips]
+            elif len(final_clips) < target_clips:
+                logger.warning(
+                    f"AI returned {len(final_clips)} clips, expected {target_clips}. "
+                    "Some candidates may have been dropped during deduplication or duration filtering. "
+                    "Consider increasing candidate margin."
+                )
 
             logger.info(f"AI finished selecting {len(final_clips)} clips, ready for rendering.")
             return final_clips

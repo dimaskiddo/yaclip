@@ -52,7 +52,7 @@ class LocalLLMProvider:
         )
         user_prompt = (
             f"Transcript:\n{transcript}\n\n"
-            f"Please analyze and identify up to {target_clips} highlight clips, then return the JSON array."
+            f"Please analyze and identify EXACTLY {target_clips} highlight clips — no more, no fewer. Return the JSON array with exactly {target_clips} items."
         )
 
         try:
@@ -109,7 +109,7 @@ class LocalLLMProvider:
 
         system_prompt = (
             "You are an expert social media content curator. You are given transcripts of several candidate segments from a video. "
-            f"Your task is to compare these candidates and select the best {target_clips} segments to render as final clips."
+            f"Your task is to compare these candidates and select EXACTLY {target_clips} segments — no more, no fewer — to render as final clips."
         )
 
         user_prompt = build_batch_user_prompt(candidates_text, target_clips, base_sys_prompt)

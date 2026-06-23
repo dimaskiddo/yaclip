@@ -16,7 +16,8 @@ DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
     "Strong action = higher value. Never invent details.\n\n"
     "{content_type_line}\n\n"
     "{language_instruction}\n\n"
-    "Return JSON array. Fields: candidate_index (int, 1-based), "
+    "Return JSON array with EXACTLY {target_clips} items — never fewer, never more. "
+    "Fields: candidate_index (int, 1-based), "
     "start_time (float, sec from candidate start), "
     "end_time (float, sec from candidate start), "
     "title (<=50 chars, hook/bait style), "
@@ -226,7 +227,7 @@ def build_batch_user_prompt(candidates_text: str, target_clips: int, base_sys_pr
     """
     return (
         f"Here are the candidate segments:\n\n{candidates_text}\n\n"
-        f"Select the best {target_clips} clips. "
+        f"Select EXACTLY {target_clips} clips — no more, no fewer. You MUST return exactly {target_clips} items. "
         "Timestamps are relative to candidate window start (0.0 = start of the candidate's segment).\n"
         f"Return JSON array with fields as specified below.\n"
         f"{base_sys_prompt}\n\n"
