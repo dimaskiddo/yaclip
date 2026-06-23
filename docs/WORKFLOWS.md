@@ -51,7 +51,7 @@ flowchart TD
     SaveHeatmap --> DetectionStart
 
     subgraph S3["3. Content Type Detection (video-level, once)"]
-        DetectionStart[detect_content_type(video_path)] --> ConfigOverride{content_type_override != auto?}
+        DetectionStart[detect_content_type video_path] --> ConfigOverride{content_type_override != auto?}
         ConfigOverride -- Yes --> ForcedType["Return configured type"]
         ConfigOverride -- No --> SampleFrames["Sample 25 frames<br/>HUD score + donation scan"]
         SampleFrames --> GameplayGate{Gameplay confirmed?<br/>open_area + motion/HUD/gaming_hint}
