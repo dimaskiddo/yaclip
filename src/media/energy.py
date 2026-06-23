@@ -139,7 +139,7 @@ class AudioEnergyAnalyzer:
 
         clip_cfg = self.config.clip_selection
         min_duration = clip_cfg.min_clip_duration_seconds
-        max_clips = clip_cfg.max_clips
+        max_clips = clip_cfg.spike_pool_size
 
         # Sort by RMS descending to find the absolute loudest moments
         loudest = sorted(energies, key=lambda x: x["rms"], reverse=True)

@@ -71,8 +71,15 @@ def setup_logger() -> None:
     log_path = Path(file_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    fmt_stdout = "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
-    fmt_file = "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}"
+    def _pad_source(record: "logger.Record") -> None:
+        """Pad source location to x chars for aligned block display."""
+        source = f"{record['name']}:{record['function']}:{record['line']}"
+        record["extra"]["source_padded"] = source.ljust(65)
+
+    logger.configure(patcher=_pad_source)
+
+    fmt_stdout = "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{extra[source_padded]}</cyan> | <level>{message}</level>"
+    fmt_file = "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {extra[source_padded]} | {message}"
 
     logger.add(sys.stdout, format=fmt_stdout, level=level)
     logger.add(

@@ -123,7 +123,10 @@ class AIPipeline:
 
             sub_language = self.config.video_processing.subtitles.language
             base_system_prompt = get_system_prompt(
-                content_type=content_type, target_duration=target_duration, language=sub_language
+                content_type=content_type,
+                target_duration=target_duration,
+                target_clips=target_clips,
+                language=sub_language,
             )
 
             system_instruction = (

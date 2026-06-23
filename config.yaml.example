@@ -52,6 +52,9 @@ clip_selection:
                                        # Min: 0 (exact count, no selection) | Recommended: 2 | Max: 15
   require_review_before_render: true   # Show review panel before rendering starts
   heatmap_threshold_percentile: 85     # Minimum heatmap spike percentile to qualify as a clip candidate
+  spike_pool_size: 35                  # Raw candidate pool size from RMS energy analysis before STT/LLM filtering
+                                       # Higher = more options for LLM to select from, at negligible compute cost
+                                       # Range: 10-200 | Recommended: 35
   min_clips: 1
   max_clips: 25
   default_clips: 5

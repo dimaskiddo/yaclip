@@ -185,6 +185,7 @@ def get_system_prompt(
     content_type: str | None = "PODCAST",
     target_duration: int = 60,
     language: str = "auto",
+    target_clips: int = 5,
 ) -> str:
     """Retrieve the curation prompt, supporting hidden override 'dk_clipper_sys_prompt' in config.
 
@@ -207,6 +208,7 @@ def get_system_prompt(
         content_type_line=content_type_line,
         language_instruction=language_instruction,
         target_duration=target_duration,
+        target_clips=target_clips,
         min_duration=min_duration,
         max_duration=max_duration,
     )

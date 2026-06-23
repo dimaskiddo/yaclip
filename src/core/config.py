@@ -43,7 +43,7 @@ def hex_to_ass_color(value: str) -> str:
         rr, gg, bb = h[0:2], h[2:4], h[4:6]
         aa = f"{255 - int(h[6:8], 16):02X}"
     else:
-        return value   # malformed → let it through (renders as-is / surfaces the typo)
+        return value  # malformed → let it through (renders as-is / surfaces the typo)
     return f"&H{aa}{bb}{gg}{rr}".upper()
 
 
@@ -127,6 +127,7 @@ class ClipSelectionConfig(BaseModel):
     candidate_margin: int = Field(default=2, ge=0, le=15)
     require_review_before_render: bool = Field(default=True)
     heatmap_threshold_percentile: int = Field(default=85)
+    spike_pool_size: int = Field(default=35, ge=10, le=200)
     min_clips: int = Field(default=1)
     max_clips: int = Field(default=25)
     default_clips: int = Field(default=5)

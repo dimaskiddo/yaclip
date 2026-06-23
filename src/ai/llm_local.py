@@ -48,7 +48,10 @@ class LocalLLMProvider:
 
         language = self.config.video_processing.subtitles.language
         system_prompt = get_system_prompt(
-            content_type=content_type, target_duration=target_duration, language=language
+            content_type=content_type,
+            target_duration=target_duration,
+            target_clips=target_clips,
+            language=language,
         )
         user_prompt = (
             f"Transcript:\n{transcript}\n\n"
@@ -104,7 +107,10 @@ class LocalLLMProvider:
 
         language = self.config.video_processing.subtitles.language
         base_sys_prompt = get_system_prompt(
-            content_type=content_type, target_duration=target_duration, language=language
+            content_type=content_type,
+            target_duration=target_duration,
+            target_clips=target_clips,
+            language=language,
         )
 
         system_prompt = (
