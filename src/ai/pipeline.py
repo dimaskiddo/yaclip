@@ -90,9 +90,23 @@ class AIPipeline:
             return genai.upload_file(path=audio_path)
 
         @retry_api_call(max_retries=3)
-        def _generate_content(contents: object, system_prompt: str) -> object:
+        def _generate_content(contents: object, system_prompt: str) -> str:
+            from google.api_core import retry as google_retry
+
             model = genai.GenerativeModel(model_name=model_name, system_instruction=system_prompt)
-            return model.generate_content(contents, request_options={"timeout": llm_timeout})
+            stream = model.generate_content(
+                contents,
+                stream=True,
+                request_options={
+                    "timeout": llm_timeout,
+                    "retry": google_retry.Retry(deadline=llm_timeout),
+                },
+            )
+            chunks: list[str] = []
+            for chunk in stream:
+                if chunk.text:
+                    chunks.append(chunk.text)
+            return "".join(chunks)
 
         video_id = Path(audio_path).stem
         out_txt = DATA_DIR / f"{video_id}.txt"
@@ -148,8 +162,8 @@ class AIPipeline:
                 f"{base_system_prompt}"
             )
 
-            response = _generate_content([uploaded_file, user_prompt], system_instruction)
-            response_text = strip_json_markdown(response.text)
+            response_text = _generate_content([uploaded_file, user_prompt], system_instruction)
+            response_text = strip_json_markdown(response_text)
 
             data = json.loads(response_text)
 

@@ -44,7 +44,16 @@ class CloudLLMProvider:
             logger.error("openai package is not installed.")
             raise ImportError("openai package missing.") from e
 
-        client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout)
+        from httpx import Timeout as HTTPXTimeout
+
+        client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=HTTPXTimeout(
+                connect=self.timeout, read=self.timeout, write=self.timeout, pool=self.timeout
+            ),
+            max_retries=3,
+        )
 
         language = self.config.video_processing.subtitles.language
         system_prompt = get_system_prompt(
@@ -56,21 +65,26 @@ class CloudLLMProvider:
         )
 
         @retry_api_call(max_retries=3)
-        def _call_openai_chat() -> object:
-            return client.chat.completions.create(
+        def _call_openai_chat() -> str:
+            stream = client.chat.completions.create(
                 model=self.model_name,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.7,
-                timeout=self.timeout,
+                stream=True,
             )
+            chunks: list[str] = []
+            for chunk in stream:
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    chunks.append(delta.content)
+            return "".join(chunks)
 
         logger.info("Sending transcript to OpenAI for clip selection...")
         try:
-            response = _call_openai_chat()
-            response_text = response.choices[0].message.content
+            response_text = _call_openai_chat()
             logger.debug(f"Raw OpenAI response: {response_text}")
 
             parsed_clips = AIUtils.parse_json_array(response_text)
@@ -98,12 +112,23 @@ class CloudLLMProvider:
         logger.info("Sending transcript to Gemini for clip selection...")
 
         @retry_api_call(max_retries=3)
-        def _generate(prompt: str) -> object:
+        def _generate(prompt: str) -> str:
+            from google.api_core import retry as google_retry
+
             model = genai.GenerativeModel(model_name=self.model_name)
-            return model.generate_content(
+            stream = model.generate_content(
                 prompt,
-                request_options={"timeout": self.timeout},
+                stream=True,
+                request_options={
+                    "timeout": self.timeout,
+                    "retry": google_retry.Retry(deadline=self.timeout),
+                },
             )
+            chunks: list[str] = []
+            for chunk in stream:
+                if chunk.text:
+                    chunks.append(chunk.text)
+            return "".join(chunks)
 
         language = self.config.video_processing.subtitles.language
         system_prompt = get_system_prompt(
@@ -116,8 +141,7 @@ class CloudLLMProvider:
         )
 
         try:
-            response = _generate(prompt)
-            response_text = response.text
+            response_text = _generate(prompt)
             logger.debug(f"Raw Gemini response: {response_text}")
 
             parsed_clips = AIUtils.parse_json_array(response_text)
@@ -141,7 +165,16 @@ class CloudLLMProvider:
             logger.error("openai package is not installed.")
             raise ImportError("openai package missing.") from e
 
-        client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout)
+        from httpx import Timeout as HTTPXTimeout
+
+        client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=HTTPXTimeout(
+                connect=self.timeout, read=self.timeout, write=self.timeout, pool=self.timeout
+            ),
+            max_retries=3,
+        )
 
         language = self.config.video_processing.subtitles.language
         base_sys_prompt = get_system_prompt(
@@ -156,21 +189,26 @@ class CloudLLMProvider:
         user_prompt = build_batch_user_prompt(candidates_text, target_clips, base_sys_prompt)
 
         @retry_api_call(max_retries=3)
-        def _call_openai_chat() -> object:
-            return client.chat.completions.create(
+        def _call_openai_chat() -> str:
+            stream = client.chat.completions.create(
                 model=self.model_name,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.7,
-                timeout=self.timeout,
+                stream=True,
             )
+            chunks: list[str] = []
+            for chunk in stream:
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    chunks.append(delta.content)
+            return "".join(chunks)
 
         logger.info("Sending all candidate clips to OpenAI for batch selection...")
         try:
-            response = _call_openai_chat()
-            response_text = response.choices[0].message.content
+            response_text = _call_openai_chat()
             logger.debug(f"Raw OpenAI response: {response_text}")
 
             parsed_clips = AIUtils.parse_json_array(response_text)
@@ -198,12 +236,23 @@ class CloudLLMProvider:
         logger.info("Sending all candidate clips to Gemini for batch selection...")
 
         @retry_api_call(max_retries=3)
-        def _generate(prompt: str) -> object:
+        def _generate(prompt: str) -> str:
+            from google.api_core import retry as google_retry
+
             model = genai.GenerativeModel(model_name=self.model_name)
-            return model.generate_content(
+            stream = model.generate_content(
                 prompt,
-                request_options={"timeout": self.timeout},
+                stream=True,
+                request_options={
+                    "timeout": self.timeout,
+                    "retry": google_retry.Retry(deadline=self.timeout),
+                },
             )
+            chunks: list[str] = []
+            for chunk in stream:
+                if chunk.text:
+                    chunks.append(chunk.text)
+            return "".join(chunks)
 
         language = self.config.video_processing.subtitles.language
         base_sys_prompt = get_system_prompt(
@@ -221,8 +270,7 @@ class CloudLLMProvider:
         )
 
         try:
-            response = _generate(prompt)
-            response_text = response.text
+            response_text = _generate(prompt)
             logger.debug(f"Raw Gemini response: {response_text}")
 
             parsed_clips = AIUtils.parse_json_array(response_text)

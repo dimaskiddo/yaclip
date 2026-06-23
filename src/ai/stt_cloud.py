@@ -42,7 +42,16 @@ class CloudSTTProvider:
             logger.error("openai package is not installed.")
             raise ImportError("openai package missing.") from e
 
-        client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout)
+        from httpx import Timeout as HTTPXTimeout
+
+        client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=HTTPXTimeout(
+                connect=self.timeout, read=self.timeout, write=self.timeout, pool=self.timeout
+            ),
+            max_retries=3,
+        )
         logger.info("Starting cloud transcription with OpenAI...")
 
         language = self.config.video_processing.subtitles.language
@@ -106,12 +115,23 @@ class CloudSTTProvider:
             return genai.upload_file(path=audio_path)
 
         @retry_api_call(max_retries=3)
-        def _generate(uploaded_file: object, prompt: str) -> object:
+        def _generate(uploaded_file: object, prompt: str) -> str:
+            from google.api_core import retry as google_retry
+
             model = genai.GenerativeModel(model_name=self.model_name)
-            return model.generate_content(
+            stream = model.generate_content(
                 [uploaded_file, prompt],
-                request_options={"timeout": self.timeout},
+                stream=True,
+                request_options={
+                    "timeout": self.timeout,
+                    "retry": google_retry.Retry(deadline=self.timeout),
+                },
             )
+            chunks: list[str] = []
+            for chunk in stream:
+                if chunk.text:
+                    chunks.append(chunk.text)
+            return "".join(chunks)
 
         uploaded_file = None
         try:
@@ -142,8 +162,7 @@ class CloudSTTProvider:
                 "Do not include any other markdown formatting outside the timestamps and spoken text."
             )
 
-            response = _generate(uploaded_file, prompt)
-            return response.text
+            return _generate(uploaded_file, prompt)
         except Exception as e:
             logger.error(f"Gemini transcription failed: {e}")
             raise AIProviderError(f"Gemini STT failed: {e}") from e
