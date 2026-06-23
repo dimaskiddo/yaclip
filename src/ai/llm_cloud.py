@@ -46,8 +46,9 @@ class CloudLLMProvider:
 
         client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout)
 
+        language = self.config.video_processing.subtitles.language
         system_prompt = get_system_prompt(
-            content_type=content_type, target_duration=target_duration
+            content_type=content_type, target_duration=target_duration, language=language
         )
         user_prompt = (
             f"Transcript:\n{transcript}\n\n"
@@ -63,6 +64,7 @@ class CloudLLMProvider:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.7,
+                timeout=self.timeout,
             )
 
         logger.info("Sending transcript to OpenAI for clip selection...")
@@ -103,8 +105,9 @@ class CloudLLMProvider:
                 request_options={"timeout": self.timeout},
             )
 
+        language = self.config.video_processing.subtitles.language
         system_prompt = get_system_prompt(
-            content_type=content_type, target_duration=target_duration
+            content_type=content_type, target_duration=target_duration, language=language
         )
         prompt = (
             f"{system_prompt}\n\n"
@@ -140,8 +143,9 @@ class CloudLLMProvider:
 
         client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout)
 
+        language = self.config.video_processing.subtitles.language
         base_sys_prompt = get_system_prompt(
-            content_type=content_type, target_duration=target_duration
+            content_type=content_type, target_duration=target_duration, language=language
         )
 
         system_prompt = (
@@ -160,6 +164,7 @@ class CloudLLMProvider:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.7,
+                timeout=self.timeout,
             )
 
         logger.info("Sending all candidate clips to OpenAI for batch selection...")
@@ -200,8 +205,9 @@ class CloudLLMProvider:
                 request_options={"timeout": self.timeout},
             )
 
+        language = self.config.video_processing.subtitles.language
         base_sys_prompt = get_system_prompt(
-            content_type=content_type, target_duration=target_duration
+            content_type=content_type, target_duration=target_duration, language=language
         )
 
         system_prompt = (

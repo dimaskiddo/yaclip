@@ -15,6 +15,7 @@ from src.ai.llm_cloud import CloudLLMProvider
 from src.ai.llm_local import LocalLLMProvider
 from src.ai.prompts import (
     build_detection_evidence_block,
+    build_language_instruction,
     get_system_prompt,
     strip_json_markdown,
 )
@@ -79,6 +80,7 @@ class AIPipeline:
         llm_cloud_cfg = self.config.ai_pipeline.llm.cloud
         api_key = llm_cloud_cfg.api_key or stt_cloud_cfg.api_key
         model_name = llm_cloud_cfg.model or stt_cloud_cfg.model
+        llm_timeout = llm_cloud_cfg.timeout
 
         genai.configure(api_key=api_key)
         logger.info("Starting cloud AI transcription and clip selection...")
@@ -88,9 +90,9 @@ class AIPipeline:
             return genai.upload_file(path=audio_path)
 
         @retry_api_call(max_retries=3)
-        def _generate(uploaded_file: object, system_prompt: str, user_prompt: str) -> object:
+        def _generate_content(contents: object, system_prompt: str) -> object:
             model = genai.GenerativeModel(model_name=model_name, system_instruction=system_prompt)
-            return model.generate_content([uploaded_file, user_prompt])
+            return model.generate_content(contents, request_options={"timeout": llm_timeout})
 
         video_id = Path(audio_path).stem
         out_txt = DATA_DIR / f"{video_id}.txt"
@@ -105,8 +107,9 @@ class AIPipeline:
             if uploaded_file.state.name == "FAILED":
                 raise RuntimeError("Gemini failed to process the uploaded file.")
 
+            sub_language = self.config.video_processing.subtitles.language
             base_system_prompt = get_system_prompt(
-                content_type=content_type, target_duration=target_duration
+                content_type=content_type, target_duration=target_duration, language=sub_language
             )
 
             system_instruction = (
@@ -120,6 +123,8 @@ class AIPipeline:
             if detected_type is None and detection_evidence:
                 evidence_block = build_detection_evidence_block(detection_evidence)
 
+            lang_instruction = build_language_instruction(sub_language)
+
             user_prompt = (
                 f"{evidence_block}"
                 f"Format your output ONLY as a JSON object with the following structure:\n"
@@ -129,17 +134,21 @@ class AIPipeline:
                 "    {\n"
                 '      "start_time": float,\n'
                 '      "end_time": float,\n'
-                '      "title": "catchy title (max 50 chars)",\n'
+                '      "title": "catchy hook/bait title (max 50 chars)",\n'
+                '      "caption": "short caption for social media (max 150 chars)",\n'
+                '      "description": "longer description with hook + context + CTA (max 300 chars)",\n'
+                '      "hashtags": "5-8 space-separated hashtags, e.g. #gaming #mlbb #shorts",\n'
                 '      "content_type": "string (one of PODCAST, JUST_CHAT, GAMING_SOLO, GAMING_COLLAB)",\n'
                 '      "reasoning": "one sentence explaining why this is engaging"\n'
                 "    }\n"
                 "  ]\n"
                 "}\n\n"
+                f"{lang_instruction}\n\n"
                 "Here are the specific requirements for clip extraction:\n"
                 f"{base_system_prompt}"
             )
 
-            response = _generate(uploaded_file, system_instruction, user_prompt)
+            response = _generate_content([uploaded_file, user_prompt], system_instruction)
             response_text = strip_json_markdown(response.text)
 
             data = json.loads(response_text)

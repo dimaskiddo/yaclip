@@ -136,6 +136,9 @@ def _run_pipeline(url: str, force: bool, debug: bool) -> None:
         logger.info(f"Pipeline complete, {len(rendered)} clip(s) rendered.")
         for f in rendered:
             logger.info(f" -> {SystemUtils.display_path(f)}")
+            txt_candidate = Path(str(f).replace(".mp4", ".txt"))
+            if txt_candidate.exists():
+                logger.info(f" -> {SystemUtils.display_path(txt_candidate)}")
     except DetectionError as e:
         logger.error(str(e))
     except Exception as e:

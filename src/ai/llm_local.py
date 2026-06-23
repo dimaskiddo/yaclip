@@ -46,8 +46,9 @@ class LocalLLMProvider:
             logger.error("llama-cpp-python is not installed.")
             raise ImportError("llama-cpp-python package missing.") from e
 
+        language = self.config.video_processing.subtitles.language
         system_prompt = get_system_prompt(
-            content_type=content_type, target_duration=target_duration
+            content_type=content_type, target_duration=target_duration, language=language
         )
         user_prompt = (
             f"Transcript:\n{transcript}\n\n"
@@ -101,8 +102,9 @@ class LocalLLMProvider:
             logger.error("llama-cpp-python is not installed.")
             raise ImportError("llama-cpp-python package missing.") from e
 
+        language = self.config.video_processing.subtitles.language
         base_sys_prompt = get_system_prompt(
-            content_type=content_type, target_duration=target_duration
+            content_type=content_type, target_duration=target_duration, language=language
         )
 
         system_prompt = (

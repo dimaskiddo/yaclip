@@ -329,6 +329,44 @@ class ClipRenderer:
         return analyses
 
     @staticmethod
+    def _write_clip_metadata(
+        output_dir: Path,
+        video_id: str,
+        clip_index: int,
+        title: str,
+        caption: str,
+        description: str,
+        hashtags: str,
+    ) -> Path | None:
+        """Write a TXT metadata file alongside a rendered clip MP4.
+
+        Contains Title, Caption, Description, and Hashtags for easy copy-paste
+        when uploading to YouTube Shorts, Instagram Reels, or TikTok.
+
+        Returns the Path to the written file, or None if no text content exists.
+        """
+        safe_title = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in title).strip("_")
+        if not safe_title:
+            safe_title = f"clip_{clip_index + 1}"
+
+        lines = []
+        if title:
+            lines.append(f"Title: {title}")
+        if caption:
+            lines.append(f"Caption: {caption}")
+        if description:
+            lines.append(f"Description: {description}")
+        if hashtags:
+            lines.append(f"Hashtags: {hashtags}")
+
+        if not lines:
+            return None
+
+        txt_path = output_dir / f"clips_{video_id}_{clip_index + 1}_{safe_title}.txt"
+        txt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return txt_path
+
+    @staticmethod
     def _match_cached_mediashare(
         cache: dict | None,
         start: float,
@@ -600,6 +638,19 @@ class ClipRenderer:
 
                 logger.info(f"Successfully rendered: {output_path.name}")
                 rendered.append(output_path)
+
+                # Write clip metadata TXT (title, caption, description, hashtags).
+                txt_path = self._write_clip_metadata(
+                    output_dir,
+                    video_id,
+                    idx,
+                    title,
+                    clip.get("caption", ""),
+                    clip.get("description", ""),
+                    clip.get("hashtags", ""),
+                )
+                if txt_path:
+                    logger.info(f"Metadata saved: {txt_path.name}")
 
             except subprocess.CalledProcessError as e:
                 logger.error(

@@ -330,7 +330,3 @@ CONTENT_TYPE_HUMAN_NAMES: dict[str, str] = {
     "GAMING_COLLAB": "gaming collaboration",
     "DONATION_OVERLAY": "donation overlay",
 }
-
-# ── Cloud LLM request timeout (seconds) ──
-# Long transcripts need more time; 300s = 5 min allows complex batch selection calls.
-CLOUD_LLM_TIMEOUT: int = 300

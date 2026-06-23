@@ -353,6 +353,7 @@ ai_pipeline:
       provider: "google"               # google | openai
       api_key: "your-api-key-here"
       model: "gemini-2.5-flash"        # Used for google; openai always uses whisper-1
+      timeout: 300                     # Request timeout in seconds for cloud STT calls (30-600)
     local:
       device: "auto"                   # auto | cpu | cuda
       model_size: "large-v3"           # tiny | base | small | medium | large-v3
@@ -364,6 +365,7 @@ ai_pipeline:
       base_url: null                   # null = provider default; set for OpenRouter or self-hosted endpoints
       api_key: "your-api-key-here"
       model: "gemini-2.5-flash"
+      timeout: 300                     # Request timeout in seconds for cloud LLM calls (30-600)
     local:
       device: "auto"                   # auto | cpu | cuda
       n_gpu_layers: 0                  # 0 = CPU only; -1 = all layers to GPU
@@ -459,9 +461,14 @@ The application MUST use a hardcoded system prompt injected into every LLM analy
 > For JUST_CHAT content: prioritize high-energy reactions, funny moments, and segments where donation interactions produce strong streamer responses.
 > For GAMING_SOLO and GAMING_COLLAB content: prioritize intense gameplay moments, clutch plays, funny failures, and strong streamer reactions. Donation-triggered reactions are high-value clip targets.
 >
-> Return ONLY a valid JSON array of objects. Each object must contain: `start_time` (float, seconds), `end_time` (float, seconds), `title` (catchy, max 50 characters), and `reasoning` (one sentence). Never cut a clip mid-sentence. Ensure each clip is a complete, standalone moment."
+> Return ONLY a valid JSON array of objects. Each object must contain:
+> `candidate_index` (int, 1-based), `start_time` (float, seconds), `end_time` (float, seconds),
+> `title` (<=50 chars, hook/bait style), `caption` (<=150 chars, short hook caption),
+> `description` (<=300 chars, hook + context + CTA), `hashtags` (string, 5-8 space-separated hashtags like `#gaming #mlbb #shorts`),
+> `content_type` (PODCAST|JUST_CHAT|GAMING_SOLO|GAMING_COLLAB), and `reasoning` (one sentence).
+> Never cut a clip mid-sentence. Ensure each clip is a complete, standalone moment."
 
-**Timestamp anchoring & scoring rubric:** transcript lines reach the LLM prefixed with `[start - end]` seconds (relative to the candidate). The live prompt instructs the model to pick a **contiguous run of whole lines** — `start_time` = first line's start, `end_time` = last line's end (no mid-sentence cuts) — spanning ≈`{target_duration}`s, and to rank candidates by a rubric (**HOOK** in the first ~3s, clear **PAYOFF**, **STANDALONE** comprehension, **ENERGY**). The JSON output contract is unchanged.
+**Language & tone instruction:** The prompt is enriched with a `{language_instruction}` block that tells the LLM the video's spoken language (or to detect it from the transcript), and instructs it to write all titles, captions, and descriptions in a relaxed, informal, hook/bait human tone — avoiding robotic or corporate AI wording. The LLM is also instructed to base all generated text on the actual transcript content per candidate and to avoid hashtags inside the description text.
 
 ---
 

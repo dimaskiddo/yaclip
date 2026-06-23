@@ -15,9 +15,15 @@ DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
     "Visual context describes on-screen activity. Donation overlay = MUST include at least one. "
     "Strong action = higher value. Never invent details.\n\n"
     "{content_type_line}\n\n"
-    "Return JSON array. Fields: candidate_index (int, 1-based), start_time (float, sec from candidate start), "
+    "{language_instruction}\n\n"
+    "Return JSON array. Fields: candidate_index (int, 1-based), "
+    "start_time (float, sec from candidate start), "
     "end_time (float, sec from candidate start), "
-    "title (<=50 chars), content_type (PODCAST|JUST_CHAT|GAMING_SOLO|GAMING_COLLAB), "
+    "title (<=50 chars, hook/bait style), "
+    "caption (<=150 chars, short hook caption), "
+    "description (<=300 chars, hook + context + CTA), "
+    "hashtags (string, 5-8 space-separated hashtags like '#gaming #mlbb #shorts'), "
+    "content_type (PODCAST|JUST_CHAT|GAMING_SOLO|GAMING_COLLAB), "
     "reasoning (one sentence)."
 )
 
@@ -115,6 +121,30 @@ _CONTENT_TYPE_UNCERTAIN_LINE = (
 )
 
 
+def build_language_instruction(language: str) -> str:
+    """Build the language + tone + hook/bait instruction block for the LLM prompt."""
+    tone_block = (
+        "Write titles, captions, and descriptions in a relaxed, informal, human tone — "
+        "like a real person posting on social media. Use trending phrases naturally. "
+        "Make every title a hook or bait that grabs attention and makes people want to click. "
+        "Avoid robotic or corporate AI wording. Avoid hashtags inside the description text.\n"
+        "Base ALL generated text on the actual transcript content provided for each candidate. "
+        "The title, caption, description, and hashtags must be directly relevant to the clip's "
+        "specific spoken content — never generic or made up."
+    )
+    if language and language.lower() != "auto":
+        return (
+            f"The video language is {language}. Write all output in {language} only — "
+            f"natural and native.\n"
+            f"{tone_block}"
+        )
+    return (
+        "Detect the language from the transcript. Write all titles, captions, "
+        "and descriptions in that same language — natural and native.\n"
+        f"{tone_block}"
+    )
+
+
 def build_detection_evidence_block(evidence: dict[str, object]) -> str:
     """Format detection evidence as a compact keyword-labeled block for the LLM prompt.
 
@@ -150,7 +180,11 @@ def build_detection_evidence_block(evidence: dict[str, object]) -> str:
     return "Detection evidence (whole video):\n" + " ".join(parts) + "\n"
 
 
-def get_system_prompt(content_type: str | None = "PODCAST", target_duration: int = 60) -> str:
+def get_system_prompt(
+    content_type: str | None = "PODCAST",
+    target_duration: int = 60,
+    language: str = "auto",
+) -> str:
     """Retrieve the curation prompt, supporting hidden override 'dk_clipper_sys_prompt' in config.
 
     The configured min/max clip durations are injected so the LLM keeps every clip within bounds.
@@ -166,9 +200,11 @@ def get_system_prompt(content_type: str | None = "PODCAST", target_duration: int
         content_type_line = _CONTENT_TYPE_CONFIDENT_LINE.format(content_type=content_type)
     else:
         content_type_line = _CONTENT_TYPE_UNCERTAIN_LINE
+    language_instruction = build_language_instruction(language)
     return template.format(
         content_type=content_type or "UNCERTAIN",
         content_type_line=content_type_line,
+        language_instruction=language_instruction,
         target_duration=target_duration,
         min_duration=min_duration,
         max_duration=max_duration,
