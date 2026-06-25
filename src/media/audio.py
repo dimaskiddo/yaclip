@@ -27,7 +27,7 @@ class AudioExtractor:
 
         out_dir = Path(output_dir).resolve()
         out_dir.mkdir(parents=True, exist_ok=True)
-        audio_path = out_dir / f"{video_path.stem}.{aud_ext}"
+        audio_path = out_dir / f"{video_path.stem.upper()}.{aud_ext}"
 
         # Sanitize audio quality to only digits
         qual_match = re.search(r"\d+", str(aud_qual))

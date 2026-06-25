@@ -4,11 +4,15 @@ import logging
 import sys
 import warnings
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from src.core.config import load_config
 from src.core.workspace import LOGS_DIR
+
+if TYPE_CHECKING:
+    from loguru import Record as LoguruRecord
 
 
 class InterceptHandler(logging.Handler):
@@ -71,7 +75,7 @@ def setup_logger() -> None:
     log_path = Path(file_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def _pad_source(record: "logger.Record") -> None:
+    def _pad_source(record: LoguruRecord) -> None:
         """Pad source location to x chars for aligned block display."""
         source = f"{record['name']}:{record['function']}:{record['line']}"
         record["extra"]["source_padded"] = source.ljust(65)

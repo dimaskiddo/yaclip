@@ -4,15 +4,67 @@ import json
 import re
 import shutil
 import sys
+import time
 from pathlib import Path
 
 import yt_dlp
 from loguru import logger
 
 from src.core.config import load_config
+from src.core.exceptions import DownloadError
 from src.core.utils import SystemUtils
 from src.core.workspace import DATA_DIR, TMP_DIR, active_pipeline_event
 from src.media.audio import AudioExtractor
+
+
+def _is_transient_download_error(exc: Exception) -> bool:
+    """Determine if a download exception is transient (network drop, 429, timeout) and worth retrying."""
+    exc_name = type(exc).__name__
+    exc_msg = str(exc).lower()
+
+    transient_classes = {
+        "URLError",
+        "HTTPError",
+        "timeout",
+        "SocketTimeout",
+        "socket.timeout",
+        "ConnectionError",
+        "ConnectionResetError",
+        "ConnectionAbortedError",
+        "ConnectionRefusedError",
+        "IncompleteRead",
+        "HTTPException",
+    }
+
+    if any(cls in exc_name for cls in transient_classes):
+        return True
+
+    transient_patterns = [
+        "http error 4",
+        "too many requests",
+        "connection",
+        "timeout",
+        "timed out",
+        "incompleteread",
+        "try again",
+        "temporary failure",
+        "429",
+        "read timed out",
+    ]
+    if any(pat in exc_msg for pat in transient_patterns):
+        nontransient_patterns = [
+            "unplayable",
+            "private",
+            "removed",
+            "copyright",
+            "geo-block",
+            "geoblock",
+            "sign in",
+        ]
+        if not any(np in exc_msg for np in nontransient_patterns):
+            return True
+
+    return False
 
 
 class YTDLLogger:
@@ -150,6 +202,8 @@ class VideoDownloader:
                 "remote_components": ["ejs:github"],
                 "extractor_args": {"youtube": ["player_client=ios,android,web"]},
                 "overwrites": force,
+                "socket_timeout": dl_cfg.retry.socket_timeout,
+                "fragment_retries": dl_cfg.retry.fragment_retries,
             }
 
             # Optional progress hook for CLI and Gradio UI
@@ -198,56 +252,83 @@ class VideoDownloader:
                 ydl_opts["cookiesfrombrowser"] = (browser, None, None, None)
 
             try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    logger.info("Fetching video info...")
-                    info = ydl.extract_info(url, download=True)
-                    video_id = info.get("id", "unknown")
+                max_attempts = dl_cfg.retry.max_attempts
+                delay_seconds = dl_cfg.retry.delay_seconds
 
-                    final_video_path = out_dir_path / f"{video_id}.{vid_ext}"
+                info = None
+                for attempt in range(1, max_attempts + 1):
+                    try:
+                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                            logger.info(
+                                f"Fetching video info (attempt {attempt}/{max_attempts})..."
+                            )
+                            info = ydl.extract_info(url, download=True)
+                            break
+                    except Exception as e:
+                        if attempt == max_attempts or not _is_transient_download_error(e):
+                            logger.error(
+                                f"Download failed permanently on attempt {attempt}/{max_attempts}: {e}"
+                            )
+                            raise DownloadError(f"Download failed: {e}") from e
 
-                    if not final_video_path.exists():
-                        logger.error(
-                            f"Download completed but expected video file is missing: {final_video_path}"
+                        sleep_time = delay_seconds**attempt
+                        logger.warning(
+                            f"Download attempt {attempt}/{max_attempts} failed with transient error: {e}. "
+                            f"Retrying in {sleep_time:.1f}s..."
                         )
-                        raise FileNotFoundError("Missing video file post-download.")
+                        time.sleep(sleep_time)
 
-                    rel_video_path = SystemUtils.display_path(final_video_path)
+                if info is None:
+                    raise DownloadError("Failed to extract video info: no metadata returned.")
 
-                    if download_occurred[0]:
-                        logger.info("Video downloaded successfully.")
-                    else:
-                        logger.info("Video already downloaded, using existing file.")
+                video_id = info.get("id", "unknown")
+                flat_path = out_dir_path / f"{video_id}.{vid_ext}"
+                final_video_path = out_dir_path / f"{video_id.upper()}.{vid_ext}"
 
-                    # Extract and save Heatmap data if available
-                    heatmap_data = info.get("heatmap")
-                    if heatmap_data:
-                        heatmap_path = DATA_DIR / f"{video_id}_heatmap_youtube.json"
-                        heatmap_path.parent.mkdir(parents=True, exist_ok=True)
-                        heatmap_path.write_text(
-                            json.dumps(heatmap_data, indent=2), encoding="utf-8"
-                        )
-                        logger.info("Replay heatmap data saved from YouTube.")
+                if flat_path.exists():
+                    if flat_path != final_video_path:
+                        flat_path.rename(final_video_path)
+                elif not final_video_path.exists():
+                    logger.error(
+                        f"Download completed but expected video file is missing: {final_video_path}"
+                    )
+                    raise DownloadError("Missing video file post-download.")
 
-                    # Capture lightweight metadata (game/show context for the LLM).
-                    metadata = self._extract_metadata(info)
-                    meta_path = DATA_DIR / f"{video_id}_metadata.json"
-                    meta_path.parent.mkdir(parents=True, exist_ok=True)
-                    meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-                    cats = metadata.get("categories", [])
-                    cats_str = ", ".join(cats) if isinstance(cats, list) else str(cats or "unknown")
-                    logger.info(f"Video category detected as {cats_str}.")
+                rel_video_path = SystemUtils.display_path(final_video_path)
 
-                    # Use our custom FFmpeg command to extract the audio
+                if download_occurred[0]:
+                    logger.info(f"Video downloaded successfully to {rel_video_path}.")
+                else:
+                    logger.info(f"Video already downloaded, using existing file: {rel_video_path}.")
 
-                    audio_extractor = AudioExtractor()
-                    final_audio_path = audio_extractor.extract_audio(final_video_path, force=force)
+                # Extract and save Heatmap data if available
+                heatmap_data = info.get("heatmap")
+                if heatmap_data:
+                    heatmap_path = DATA_DIR / f"{video_id}_heatmap_youtube.json"
+                    heatmap_path.parent.mkdir(parents=True, exist_ok=True)
+                    heatmap_path.write_text(json.dumps(heatmap_data, indent=2), encoding="utf-8")
+                    logger.info("Replay heatmap data saved from YouTube.")
 
-                    return {
-                        "video_path": str(final_video_path),
-                        "audio_path": final_audio_path,
-                        "title": info.get("title", ""),
-                        "metadata": metadata,
-                    }
+                # Capture lightweight metadata (game/show context for the LLM).
+                metadata = self._extract_metadata(info)
+                meta_path = DATA_DIR / f"{video_id}_metadata.json"
+                meta_path.parent.mkdir(parents=True, exist_ok=True)
+                meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+                cats = metadata.get("categories", [])
+                cats_str = ", ".join(cats) if isinstance(cats, list) else str(cats or "unknown")
+                logger.info(f"Video category detected as {cats_str}.")
+
+                # Use our custom FFmpeg command to extract the audio
+
+                audio_extractor = AudioExtractor()
+                final_audio_path = audio_extractor.extract_audio(final_video_path, force=force)
+
+                return {
+                    "video_path": str(final_video_path),
+                    "audio_path": final_audio_path,
+                    "title": info.get("title", ""),
+                    "metadata": metadata,
+                }
 
             except Exception as e:
                 logger.error(f"Download failed: {e}")

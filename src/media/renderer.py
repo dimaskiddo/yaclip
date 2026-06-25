@@ -29,6 +29,16 @@ from src.vision.overlay_detector import OverlayDetector
 from src.vision.visual_analyzer import VisualAnalyzer
 
 
+def _sanitize_title(title: str) -> str:
+    """Strip non-alphanumeric chars (except ``-``/``_``), collapse leading/trailing underscores."""
+    return "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in title).strip("_")
+
+
+def _titlecase_filename(title: str) -> str:
+    """Convert a clip title to Title-Case-With-Hyphens for use as a filename segment."""
+    return title.strip().replace("_", " ").title().replace(" ", "-")
+
+
 class ClipRenderer:
     """Orchestrates region analysis, subtitle transcription, layout, and FFmpeg rendering.
 
@@ -353,7 +363,7 @@ class ClipRenderer:
 
         Returns the Path to the written file, or None if no text content exists.
         """
-        safe_title = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in title).strip("_")
+        safe_title = _sanitize_title(title)
         if not safe_title:
             safe_title = f"clip_{clip_index + 1}"
 
@@ -370,7 +380,10 @@ class ClipRenderer:
         if not lines:
             return None
 
-        txt_path = output_dir / f"clips_{video_id}_{clip_index + 1}_{safe_title}.txt"
+        txt_subdir = output_dir / video_id.upper()
+        txt_subdir.mkdir(parents=True, exist_ok=True)
+        tc = _titlecase_filename(safe_title)
+        txt_path = txt_subdir / f"{clip_index + 1}_{tc}.txt"
         txt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return txt_path
 
@@ -537,7 +550,7 @@ class ClipRenderer:
         """Return the extracted audio track path, extracting it if missing."""
         audio_ext = self.config.downloader.audio_format
         AUDIOS_DIR.mkdir(parents=True, exist_ok=True)
-        audio_path = AUDIOS_DIR / f"{video_path.stem}.{audio_ext}"
+        audio_path = AUDIOS_DIR / f"{video_path.stem.upper()}.{audio_ext}"
         if audio_path.exists():
             return audio_path
         try:
@@ -561,15 +574,17 @@ class ClipRenderer:
         audio_path = self._resolve_audio_track(video_path)
 
         video_id = video_path.stem
+        clip_subdir = output_dir / video_id.upper()
+        clip_subdir.mkdir(parents=True, exist_ok=True)
+
         for idx, clip in enumerate(clips):
             start_t, end_t = clip["start_time"], clip["end_time"]
             duration = end_t - start_t
             title = clip.get("title", f"clip_{idx + 1}")
             content_type = clip_types[idx]
-            safe_title = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in title).strip(
-                "_"
-            )
-            output_path = output_dir / f"clips_{video_id}_{idx + 1}_{safe_title}.mp4"
+            safe_title = _sanitize_title(title)
+            tc = _titlecase_filename(safe_title)
+            output_path = clip_subdir / f"{idx + 1}_{tc}.mp4"
 
             logger.info(
                 f"--- Rendering Clip {idx + 1}/{len(clips)}: {title} "

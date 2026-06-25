@@ -69,11 +69,20 @@ class SubtitleGenerator:
         # Filter words to only include those in the clip boundary
         # Wait, if we pass transcript segments already trimmed to the clip start,
         # then we just subtract clip_start.
+        timing = self.config.video_processing.subtitles.timing
+        min_dur = timing.word_duration_min_ms / 1000.0
+        max_dur = timing.word_duration_max_ms / 1000.0
+
         clip_words = []
         for w in words:
             # Shift timestamps relative to clip start
             rel_start = w["start"] - clip_start
             rel_end = w["end"] - clip_start
+
+            # Defensive word duration/impossible timing check
+            dur = rel_end - rel_start
+            if dur <= 0 or not (min_dur <= dur <= max_dur):
+                continue
 
             # Keep words that fall within the clip (rel_start >= 0)
             if rel_start >= -0.5:  # Allow slight overlap at start
@@ -94,7 +103,7 @@ class SubtitleGenerator:
         # extending the first occurrence to cover the whole run. Normal speech is untouched.
         clip_words = self._collapse_repeats(clip_words)
 
-        # Group words into lines (max 3 words per line, or split if gap > 1.0s)
+        # Group words into lines (max timing.line_max_words per line, or split if gap > timing.line_gap_seconds)
         lines = []
         current_line: list[dict] = []
         for w in clip_words:
@@ -102,7 +111,7 @@ class SubtitleGenerator:
                 current_line.append(w)
             else:
                 gap = w["start"] - current_line[-1]["end"]
-                if len(current_line) >= 3 or gap > 0.8:
+                if len(current_line) >= timing.line_max_words or gap > timing.line_gap_seconds:
                     lines.append(current_line)
                     current_line = [w]
                 else:
@@ -141,12 +150,16 @@ class SubtitleGenerator:
 
         # Word-by-word focus: render the whole phrase, with the currently-spoken word bold +
         # highlight-coloured, the rest normal. One Dialogue event per word advances the focus.
+        gap_smooth = timing.gap_smooth_ms / 1000.0
         for line_words in lines:
             line_end = line_words[-1]["end"]
             for i, active in enumerate(line_words):
                 seg_start = active["start"]
-                # Hold the focus until the next word begins (last word → line end).
-                seg_end = line_words[i + 1]["start"] if i + 1 < len(line_words) else line_end
+                next_start = line_words[i + 1]["start"] if i + 1 < len(line_words) else line_end
+
+                # Bridge pause if <= gap_smooth, else end highlight at the actual word end
+                seg_end = next_start if next_start - active["end"] <= gap_smooth else active["end"]
+
                 if seg_end <= seg_start:
                     seg_end = seg_start + 0.05
 
@@ -166,6 +179,15 @@ class SubtitleGenerator:
                     f"{self._format_ass_time(seg_end)},Default,,0,0,0,,{line_text}"
                 )
 
+                # If there's a significant gap after this word, add a non-highlighted frame
+                # for the duration of the silence so the highlight doesn't linger on a silent word.
+                if seg_end < next_start:
+                    gap_text = " ".join(w["word"] for w in line_words)
+                    ass_lines.append(
+                        f"Dialogue: 0,{self._format_ass_time(seg_end)},"
+                        f"{self._format_ass_time(next_start)},Default,,0,0,0,,{gap_text}"
+                    )
+
         # Ensure directory exists and write
         output_ass_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_ass_path, "w", encoding="utf-8") as f:
@@ -181,14 +203,30 @@ class SubtitleGenerator:
 
     def _collapse_repeats(self, words: list[dict]) -> list[dict]:
         """Merge consecutive identical words into one spanning the whole run."""
+        timing = self.config.video_processing.subtitles.timing
+        min_repeats = timing.collapse_min_repeats
         collapsed: list[dict] = []
-        for w in words:
+        i = 0
+        while i < len(words):
+            w = words[i]
             key = self._norm(w["word"])
-            if collapsed and key and self._norm(collapsed[-1]["word"]) == key:
-                # Same word repeated → extend the first occurrence's end, drop the duplicate.
-                collapsed[-1]["end"] = w["end"]
-            else:
+            if not key:
                 collapsed.append(dict(w))
+                i += 1
+                continue
+            # Scan forward for consecutive identical words
+            run_end = i
+            while run_end + 1 < len(words) and self._norm(words[run_end + 1]["word"]) == key:
+                run_end += 1
+            run_len = run_end - i + 1
+            if run_len >= min_repeats:
+                entry = dict(w)
+                entry["end"] = words[run_end]["end"]  # span the whole run
+                collapsed.append(entry)
+            else:
+                for j in range(i, run_end + 1):
+                    collapsed.append(dict(words[j]))
+            i = run_end + 1
         return collapsed
 
     def _format_ass_time(self, seconds: float) -> str:

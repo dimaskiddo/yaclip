@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import json
+from collections import Counter
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -17,6 +18,7 @@ from src.core.constants import (
     STT_COMPRESSION_MAX,
     STT_LOGPROB_MIN,
     STT_NO_SPEECH_MAX,
+    STT_NON_SPEECH_TOKENS,
     STT_REPEAT_TOKEN_MAX,
 )
 from src.core.utils import SystemUtils
@@ -33,7 +35,7 @@ def _norm_token(word: str) -> str:
     return "".join(ch for ch in word.lower() if ch.isalnum())
 
 
-def _is_hallucinated_segment(seg: object) -> bool:
+def _is_hallucinated_segment(seg: object, adv: object) -> bool:
     """True when a faster-whisper segment looks like laughter / noise / looped hallucination.
 
     Whisper transcribes non-speech (laughter, music, reaction noise) as repeated filler tokens that
@@ -41,16 +43,57 @@ def _is_hallucinated_segment(seg: object) -> bool:
     (compression ratio), clearly non-speech (no_speech_prob + low avg_logprob), or a single token
     repeated many times. Complements the visual word de-dup in ``subtitles.py``.
     """
+
     if (getattr(seg, "compression_ratio", 0.0) or 0.0) > STT_COMPRESSION_MAX:
         return True
     no_speech = getattr(seg, "no_speech_prob", 0.0) or 0.0
     avg_logprob = getattr(seg, "avg_logprob", 0.0) or 0.0
-    if no_speech > STT_NO_SPEECH_MAX and avg_logprob < STT_LOGPROB_MIN:
-        return True
+
+    is_silent_noise = no_speech > STT_NO_SPEECH_MAX
+    is_low_conf = avg_logprob < STT_LOGPROB_MIN
+
+    if adv.hallucination_gate == "or":
+        if is_silent_noise or is_low_conf:
+            return True
+    else:  # "and"
+        if is_silent_noise and is_low_conf:
+            return True
+
     tokens = [
         _norm_token(w.word) for w in (getattr(seg, "words", None) or []) if _norm_token(w.word)
     ]
-    return bool(len(tokens) > STT_REPEAT_TOKEN_MAX and len(set(tokens)) <= 1)
+    if len(tokens) > STT_REPEAT_TOKEN_MAX and len(set(tokens)) <= 1:
+        return True
+
+    if tokens:
+        counts = Counter(tokens)
+        _, max_count = counts.most_common(1)[0]
+        if (max_count / len(tokens)) > adv.repeat_token_ratio_max:
+            return True
+
+    return False
+
+
+def _is_valid_word_timing(w: object, timing: object) -> bool:
+    """Drop words with degenerate or impossible timestamps."""
+    start = float(getattr(w, "start", 0.0) or 0.0)
+    end = float(getattr(w, "end", 0.0) or 0.0)
+    duration = end - start
+    if duration <= 0:
+        return False
+
+    min_dur = getattr(timing, "word_duration_min_ms", 80) / 1000.0
+    max_dur = getattr(timing, "word_duration_max_ms", 2000) / 1000.0
+
+    return min_dur <= duration <= max_dur
+
+
+def _is_non_speech_token(word: str) -> bool:
+    """True when the token is a Whisper noise/music tag, not real speech."""
+    cleaned = word.strip().lower()
+    if cleaned in STT_NON_SPEECH_TOKENS:
+        return True
+    return not any(ch.isalnum() for ch in cleaned)
 
 
 def save_words_cache(video_id: str, candidates: list[dict]) -> None:
@@ -134,10 +177,14 @@ class LocalSTTProvider:
 
     def _build_transcribe_kwargs(self, language: str) -> dict:
         """Shared faster-whisper decode kwargs (with hallucination-control knobs)."""
+        adv = self.local_cfg.advanced
         kwargs: dict = {
-            "beam_size": 5,
+            "beam_size": adv.beam_size,
             "vad_filter": True,
-            "vad_parameters": {"min_silence_duration_ms": 1000},
+            "vad_parameters": {
+                "min_silence_duration_ms": adv.vad_min_silence_ms,
+                "threshold": adv.vad_threshold,
+            },
             "word_timestamps": True,  # DTW alignment helps ignore music hallucinations
             "condition_on_previous_text": False,  # Prevents loop hallucinations on background noise
             "temperature": [0.0],  # Freeze sampling for deterministic output
@@ -145,7 +192,8 @@ class LocalSTTProvider:
             "log_prob_threshold": STT_LOGPROB_MIN,
             "compression_ratio_threshold": STT_COMPRESSION_MAX,
             "hallucination_silence_threshold": 2.0,
-            "repetition_penalty": 1.1,
+            "repetition_penalty": adv.repetition_penalty,
+            "suppress_blank": adv.suppress_blank,
         }
         explicit = bool(language and language.lower() != "auto")
         if explicit:
@@ -188,8 +236,9 @@ class LocalSTTProvider:
 
         transcript_lines = []
         dropped = 0
+        adv = self.local_cfg.advanced
         for segment in segments:
-            if _is_hallucinated_segment(segment):
+            if _is_hallucinated_segment(segment, adv):
                 dropped += 1
                 continue
             line = f"[{segment.start:.2f} - {segment.end:.2f}] {segment.text.strip()}"
@@ -243,12 +292,16 @@ class LocalSTTProvider:
 
         out: list[dict] = []
         dropped = 0
+        adv = self.local_cfg.advanced
+        timing = self.config.video_processing.subtitles.timing
         for segment in segments:
-            if _is_hallucinated_segment(segment):
+            if _is_hallucinated_segment(segment, adv):
                 dropped += 1
                 continue
             words = []
             for w in getattr(segment, "words", None) or []:
+                if not _is_valid_word_timing(w, timing) or _is_non_speech_token(w.word):
+                    continue
                 words.append(
                     {
                         "word": w.word,
@@ -256,6 +309,9 @@ class LocalSTTProvider:
                         "end": float(w.end) + time_offset,
                     }
                 )
+            if (getattr(segment, "words", None) or []) and not words:
+                dropped += 1
+                continue
             out.append(
                 {
                     "text": segment.text.strip(),

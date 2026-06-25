@@ -77,9 +77,20 @@ class STTCloudConfig(BaseModel):
     timeout: int = Field(default=300, ge=30, le=600)
 
 
+class STTLocalAdvancedConfig(BaseModel):
+    beam_size: int = Field(default=5)
+    vad_threshold: float = Field(default=0.5)
+    vad_min_silence_ms: int = Field(default=1000)
+    suppress_blank: bool = Field(default=False)
+    hallucination_gate: str = Field(default="and")
+    repeat_token_ratio_max: float = Field(default=0.5)
+    repetition_penalty: float = Field(default=1.1)
+
+
 class STTLocalConfig(BaseModel):
     device: str = Field(default="auto")
     model_size: str = Field(default="large-v3")
+    advanced: STTLocalAdvancedConfig = Field(default_factory=STTLocalAdvancedConfig)
 
 
 class AIPipelineSTTConfig(BaseModel):
@@ -113,12 +124,20 @@ class AIPipelineConfig(BaseModel):
     llm: AIPipelineLLMConfig = Field(default_factory=AIPipelineLLMConfig)
 
 
+class DownloaderRetryConfig(BaseModel):
+    max_attempts: int = Field(default=3)
+    delay_seconds: float = Field(default=2.0)
+    socket_timeout: int = Field(default=30)
+    fragment_retries: int = Field(default=15)
+
+
 class DownloaderConfig(BaseModel):
     browser_cookies: str = Field(default="edge")
     target_resolution: str = Field(default="1080p")
     video_format: str = Field(default="mp4")
     audio_format: str = Field(default="aac")
     audio_quality: str = Field(default="192K")
+    retry: DownloaderRetryConfig = Field(default_factory=DownloaderRetryConfig)
 
 
 class ClipSelectionConfig(BaseModel):
@@ -155,6 +174,15 @@ class ClipSelectionConfig(BaseModel):
         return self
 
 
+class SubtitleTimingConfig(BaseModel):
+    word_duration_min_ms: int = Field(default=80)
+    word_duration_max_ms: int = Field(default=2000)
+    gap_smooth_ms: int = Field(default=150)
+    collapse_min_repeats: int = Field(default=3)
+    line_max_words: int = Field(default=3)
+    line_gap_seconds: float = Field(default=0.8)
+
+
 class SubtitleConfig(BaseModel):
     enabled: bool = Field(default=True)
     collab_enabled: bool = Field(default=False)  # subtitles on the cramped 3-stack collab layout
@@ -174,6 +202,7 @@ class SubtitleConfig(BaseModel):
     margin_v: int = Field(
         default=760
     )  # bottom margin in px; for bottom-center alignment: 760px up from canvas bottom = ~60% down from top
+    timing: SubtitleTimingConfig = Field(default_factory=SubtitleTimingConfig)
 
     @field_validator("primary_color", "highlight_color", "outline_color", mode="before")
     @classmethod

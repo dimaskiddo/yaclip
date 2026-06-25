@@ -417,7 +417,6 @@ class AIPipeline:
 
             speakers = AudioEnergyAnalyzer().estimate_speaker_count(audio_path)
             if speakers < 2:
-                original = resolved
                 resolved = (
                     ContentType.GAMING_SOLO.value if gameplay_present else ContentType.PODCAST.value
                 )

@@ -21,6 +21,18 @@ ai_pipeline:
     local:
       device: "auto"                   # auto | cpu | cuda
       model_size: "large-v3"           # tiny | base | small | medium | large-v3
+      advanced:
+        beam_size: 5                   # 1 = greedy (deterministic, fastest; best with temperature [0.0])
+                                       #   5 = beam search (slower, no benefit at temp 0.0 but kept as default)
+        vad_threshold: 0.3             # VAD sensitivity 0.0-1.0. Lower = more aggressive speech detection
+                                       #   over music/noise. Default 0.5; 0.3 = music-optimized.
+        vad_min_silence_ms: 250        # Min silence to split segments. 250 ms = music-optimized;
+                                       #   1000 ms = speech-optimized (original). Shorter = cleaner VAD slices.
+        suppress_blank: false          # true = suppress blank outputs at end of speech segments
+        hallucination_gate: "and"      # "and" = drop segment only when BOTH no_speech AND low_logprob fail
+                                       # "or"  = drop when EITHER fails (stricter, for music-heavy audio)
+        repeat_token_ratio_max: 0.6    # If >60% of tokens are the same word → hallucination
+        repetition_penalty: 1.1        # Whisper repetition penalty (1.0 = off, higher = more penalized)
 
   llm:
     provider: "cloud"                  # cloud | local | auto (auto = try cloud, fall back to local)
@@ -42,6 +54,11 @@ downloader:
   video_format: "mp4"
   audio_format: "aac"
   audio_quality: "192k"
+  retry:
+    max_attempts: 3               # Python wrapper retries around entire download (1-10)
+    delay_seconds: 2.0            # Initial backoff delay between retries (0.5-60.0)
+    socket_timeout: 30            # Socket-level timeout for yt-dlp (10-300)
+    fragment_retries: 15          # yt-dlp fragment-level retries (1-100) — catches partial reads
 
 clip_selection:
   mode: "auto"                         # auto = AI detects clips | manual = user provides timestamps
@@ -109,6 +126,13 @@ video_processing:
     shadow: true
     alignment: bottom-center           # bottom-left | bottom-center | center | top-center | ... (or ASS int)
     margin_v: 760                      # bottom margin in px (bottom-center alignment) — 760px up from canvas bottom = ~60% down from top
+    timing:
+      word_duration_min_ms: 80
+      word_duration_max_ms: 2000
+      gap_smooth_ms: 150
+      collapse_min_repeats: 3
+      line_max_words: 3
+      line_gap_seconds: 0.8
 
 workspace_cleanup:
   enabled: true

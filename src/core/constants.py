@@ -43,10 +43,26 @@ CANDIDATE_WINDOW_BUFFER: float = 5.0
 # STT hallucination filter (faster-whisper segment metrics). Whisper transcribes laughter / music /
 # non-speech as repeated filler tokens (e.g. "hehehe" x128). A segment is dropped when it is clearly
 # repetitive or non-speech. Conservative so real quiet speech survives. See stt_local._filter_hallucinations.
-STT_COMPRESSION_MAX: float = 2.4  # gzip ratio above this = looped/repeated text (hallucination)
+STT_COMPRESSION_MAX: float = 2.0  # gzip ratio above this = looped/repeated text (hallucination)
 STT_NO_SPEECH_MAX: float = 0.6  # no_speech_prob above this = likely silence/noise
 STT_LOGPROB_MIN: float = -1.0  # avg_logprob below this = low-confidence decode
 STT_REPEAT_TOKEN_MAX: int = 3  # a single token repeated more than this = laughter/filler segment
+STT_NON_SPEECH_TOKENS: frozenset[str] = frozenset(
+    {
+        "♪",
+        "♫",
+        "[music]",
+        "(music)",
+        "[laughter]",
+        "(laughter)",
+        "[applause]",
+        "(applause)",
+        "[noise]",
+        "(noise)",
+        "...",
+        "…",
+    }
+)
 
 # Mode B 2-stack panels — top (facecam) and bottom (gameplay/mediashare) split 50/50.
 # Both panels share aspect 1080/960 = 1.125, so crops pre-shaped to this aspect scale
