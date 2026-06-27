@@ -575,110 +575,141 @@ class ClipRenderer:
         clip_subdir.mkdir(parents=True, exist_ok=True)
 
         for idx, clip in enumerate(clips):
-            start_t, end_t = clip["start_time"], clip["end_time"]
-            duration = end_t - start_t
-            title = clip.get("title", f"clip_{idx + 1}")
-            content_type = clip_types[idx]
-            safe_title = _sanitize_title(title)
-            tc = _titlecase_filename(safe_title)
-            output_path = clip_subdir / f"{idx + 1}_{tc}.mp4"
-
-            logger.info(
-                f"--- Rendering Clip {idx + 1}/{len(clips)}: {title} "
-                f"({duration:.1f}s, {content_type.value}) ---"
+            result = self._render_one_clip(
+                idx,
+                clip,
+                clip_types,
+                analyses,
+                segments_per_clip,
+                video_path,
+                audio_path,
+                video_id,
+                output_dir,
+                clip_subdir,
             )
-
-            try:
-                # Mode A needs face-landmark crops (static cut to active speaker).
-                # Pass the max YOLO person count across all clips so the FaceLandmarker
-                # capacity (num_faces) is sized once for the whole video — no pre-scan.
-                face_data: list[dict] = []
-                if content_type == ContentType.PODCAST:
-                    video_person_count = max((a.get("face_count", 0) for a in analyses), default=0)
-                    face_data = self.tracker.track_clip(
-                        video_path,
-                        start_t,
-                        end_t,
-                        content_type,
-                        person_count=video_person_count,
-                    )
-
-                # overlay_data feeds layout_builder._mediashare_box as a colour-box fallback.
-                # When analyze_window already detected a popup (mediashare_present=True), the
-                # layout builder uses analysis["mediashare_box"] directly and never consults
-                # overlay_data. Run the expensive detect_overlays only for the edge case where a
-                # clip is explicitly tagged DONATION_OVERLAY (e.g. by the user in review) but no
-                # popup was auto-detected — so the layout can still attempt the colour fallback.
-                overlay_data = []
-                if content_type == ContentType.DONATION_OVERLAY and not analyses[idx].get(
-                    "mediashare_present"
-                ):
-                    overlay_data = self.overlay_detector.detect_overlays(
-                        video_path,
-                        start_t,
-                        end_t,
-                        facecam_box=analyses[idx].get("facecam_box"),
-                    )
-
-                layout_spec = self.layout_builder.build_layout(
-                    content_type, analyses[idx], face_data, overlay_data
-                )
-
-                ass_path = SUBTITLES_DIR / f"subs_{video_id}_{idx + 1}.ass"
-                has_subs = self.subtitle_gen.generate_ass(
-                    segments_per_clip[idx], ass_path, clip_start=start_t
-                )
-                sub_arg = ass_path if has_subs else None
-
-                encoder = self.config.video_processing.video_encoder
-
-                def _build(
-                    enc: str,
-                    __video_path=video_path,
-                    __start_t=start_t,
-                    __duration=duration,
-                    __layout_spec=layout_spec,
-                    __sub_arg=sub_arg,
-                    __output_path=output_path,
-                    __audio_path=audio_path,
-                ) -> list[str]:
-                    return self.ffmpeg_builder.build_render_command(
-                        __video_path,
-                        __start_t,
-                        __duration,
-                        __layout_spec,
-                        __sub_arg,
-                        __output_path,
-                        audio_path=__audio_path,
-                        video_encoder=enc,
-                    )
-
-                logger.info(f"Encoding clip: {safe_title} ({duration:.1f}s)...")
-                self._run_render_with_fallback(_build, encoder)
-
-                logger.info(f"Successfully rendered: {output_path.name}")
-                rendered.append(output_path)
-
-                # Write clip metadata TXT (title, caption, description, hashtags).
-                txt_path = self._write_clip_metadata(
-                    output_dir,
-                    video_id,
-                    idx,
-                    title,
-                    clip.get("caption", ""),
-                    clip.get("description", ""),
-                    clip.get("hashtags", ""),
-                )
-                if txt_path:
-                    logger.info(f"Metadata saved: {txt_path.name}")
-
-            except subprocess.CalledProcessError as e:
-                logger.error(
-                    f"Video encoding failed for clip '{title}': {e.stderr[-1500:] if e.stderr else e}"
-                )
-                continue
-            except Exception as e:
-                logger.exception(f"Failed to render clip {title} at {start_t}s: {e}")
-                continue
+            if result is not None:
+                rendered.append(result)
 
         return rendered
+
+    def _build_render_cmd(
+        self,
+        video_path: Path,
+        start_t: float,
+        duration: float,
+        layout_spec: dict,
+        sub_arg: Path | None,
+        output_path: Path,
+        audio_path: Path | None,
+        enc: str,
+    ) -> list[str]:
+        """Build the FFmpeg command for one clip (extracted from the closure in _render_pass)."""
+        return self.ffmpeg_builder.build_render_command(
+            video_path,
+            start_t,
+            duration,
+            layout_spec,
+            sub_arg,
+            output_path,
+            audio_path=audio_path,
+            video_encoder=enc,
+        )
+
+    def _render_one_clip(
+        self,
+        idx: int,
+        clip: dict,
+        clip_types: list[ContentType],
+        analyses: list[dict],
+        segments_per_clip: list[list[dict]],
+        video_path: Path,
+        audio_path: Path | None,
+        video_id: str,
+        output_dir: Path,
+        clip_subdir: Path,
+    ) -> Path | None:
+        """Render a single clip: face-tracking → overlay → layout → subs → encode."""
+        start_t, end_t = clip["start_time"], clip["end_time"]
+        duration = end_t - start_t
+        title = clip.get("title", f"clip_{idx + 1}")
+        content_type = clip_types[idx]
+        safe_title = _sanitize_title(title)
+        tc = _titlecase_filename(safe_title)
+        output_path = clip_subdir / f"{idx + 1}_{tc}.mp4"
+
+        logger.info(
+            f"--- Rendering Clip {idx + 1}/{len(clip_types)}: {title} "
+            f"({duration:.1f}s, {content_type.value}) ---"
+        )
+
+        try:
+            face_data: list[dict] = []
+            if content_type == ContentType.PODCAST:
+                video_person_count = max((a.get("face_count", 0) for a in analyses), default=0)
+                face_data = self.tracker.track_clip(
+                    video_path,
+                    start_t,
+                    end_t,
+                    content_type,
+                    person_count=video_person_count,
+                )
+
+            overlay_data = []
+            if content_type == ContentType.DONATION_OVERLAY and not analyses[idx].get(
+                "mediashare_present"
+            ):
+                overlay_data = self.overlay_detector.detect_overlays(
+                    video_path,
+                    start_t,
+                    end_t,
+                    facecam_box=analyses[idx].get("facecam_box"),
+                )
+
+            layout_spec = self.layout_builder.build_layout(
+                content_type, analyses[idx], face_data, overlay_data
+            )
+
+            ass_path = SUBTITLES_DIR / f"subs_{video_id}_{idx + 1}.ass"
+            has_subs = self.subtitle_gen.generate_ass(
+                segments_per_clip[idx], ass_path, clip_start=start_t
+            )
+            sub_arg = ass_path if has_subs else None
+            encoder = self.config.video_processing.video_encoder
+
+            logger.info(f"Encoding clip: {safe_title} ({duration:.1f}s)...")
+            self._run_render_with_fallback(
+                lambda enc: self._build_render_cmd(
+                    video_path,
+                    start_t,
+                    duration,
+                    layout_spec,
+                    sub_arg,
+                    output_path,
+                    audio_path,
+                    enc,
+                ),
+                encoder,
+            )
+
+            logger.info(f"Successfully rendered: {output_path.name}")
+            txt_path = self._write_clip_metadata(
+                output_dir,
+                video_id,
+                idx,
+                title,
+                clip.get("caption", ""),
+                clip.get("description", ""),
+                clip.get("hashtags", ""),
+            )
+            if txt_path:
+                logger.info(f"Metadata saved: {txt_path.name}")
+            return output_path
+
+        except subprocess.CalledProcessError as e:
+            logger.error(
+                f"Video encoding failed for clip '{title}': {e.stderr[-1500:] if e.stderr else e}"
+            )
+            return None
+        except Exception as e:
+            logger.exception(f"Failed to render clip {title} at {start_t}s: {e}")
+            return None

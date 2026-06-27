@@ -30,62 +30,86 @@ class SubtitleGenerator:
         Returns:
             True if generated successfully, False otherwise.
         """
-        # Exclude subtitles if disabled in config
-        if not self.config.video_processing.subtitles.enabled:
+        sub_cfg = self.config.video_processing.subtitles
+        if not sub_cfg.enabled:
             logger.info("Subtitles are disabled in config. Skipping subtitle file generation.")
             return False
 
         logger.info(f"Generating subtitle file at: {SystemUtils.display_path(output_ass_path)}")
 
-        # Uppercase improves caption readability at a glance (configurable).
-        force_upper = self.config.video_processing.subtitles.uppercase
+        force_upper = sub_cfg.uppercase
+        words = self._extract_flat_words(transcript_segments, force_upper)
+        if not words:
+            return False
 
-        def _case(text: str) -> str:
-            return text.upper() if force_upper else text
+        timing = sub_cfg.timing
+        clip_words = self._filter_and_shift_words(
+            words,
+            clip_start,
+            timing.word_duration_min_ms / 1000.0,
+            timing.word_duration_max_ms / 1000.0,
+        )
+        if not clip_words:
+            logger.warning("No words found within clip boundaries for subtitles.")
+            return False
 
-        # Extract all words across all segments
+        clip_words = self._collapse_repeats(clip_words)
+        lines = self._group_into_lines(clip_words, timing.line_max_words, timing.line_gap_seconds)
+
+        ass_lines = self._build_ass_header()
+        secondary_color = sub_cfg.highlight_color
+        gap_smooth = timing.gap_smooth_ms / 1000.0
+        ass_lines.extend(self._build_karaoke_dialogues(lines, gap_smooth, secondary_color))
+
+        output_ass_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_ass_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(ass_lines) + "\n")
+
+        logger.info(f"Subtitle file generated successfully ({len(lines)} subtitle lines).")
+        return True
+
+    def _extract_flat_words(self, transcript_segments: list[dict], force_upper: bool) -> list[dict]:
+        """Extract all word-level entries from segments, uppercasing when configured."""
         words = []
         for segment in transcript_segments:
             seg_words = segment.get("words", [])
+            text = segment.get("text", "").strip()
             if not seg_words:
-                # Fallback if no word-level timestamps are present: treat segment as a single word
                 words.append(
                     {
-                        "word": _case(segment.get("text", "").strip()),
+                        "word": text.upper() if force_upper else text,
                         "start": segment.get("start", 0.0),
                         "end": segment.get("end", 0.0),
                     }
                 )
             else:
                 for w in seg_words:
+                    wt = w.get("word", "").strip()
                     words.append(
                         {
-                            "word": _case(w.get("word", "").strip()),
+                            "word": wt.upper() if force_upper else wt,
                             "start": w.get("start", 0.0),
                             "end": w.get("end", 0.0),
                         }
                     )
+        return words
 
-        # Filter words to only include those in the clip boundary
-        # Wait, if we pass transcript segments already trimmed to the clip start,
-        # then we just subtract clip_start.
-        timing = self.config.video_processing.subtitles.timing
-        min_dur = timing.word_duration_min_ms / 1000.0
-        max_dur = timing.word_duration_max_ms / 1000.0
-
+    def _filter_and_shift_words(
+        self,
+        words: list[dict],
+        clip_start: float,
+        word_duration_min: float,
+        word_duration_max: float,
+    ) -> list[dict]:
+        """Shift timestamps relative to clip start and drop degenerate words."""
         clip_words = []
         for w in words:
-            # Shift timestamps relative to clip start
             rel_start = w["start"] - clip_start
             rel_end = w["end"] - clip_start
-
-            # Defensive word duration/impossible timing check
             dur = rel_end - rel_start
-            if dur <= 0 or not (min_dur <= dur <= max_dur):
+            if dur <= 0 or not (word_duration_min <= dur <= word_duration_max):
                 continue
-
-            # Keep words that fall within the clip (rel_start >= 0)
-            if rel_start >= -0.5:  # Allow slight overlap at start
+            if rel_start >= -0.5:
                 clip_words.append(
                     {
                         "word": w["word"],
@@ -93,48 +117,43 @@ class SubtitleGenerator:
                         "end": max(0.0, rel_end),
                     }
                 )
+        return clip_words
 
-        if not clip_words:
-            logger.warning("No words found within clip boundaries for subtitles.")
-            return False
-
-        # Collapse runs of consecutive identical words (case/punctuation-insensitive). Whisper
-        # transcribes laughter/filler as repeated tokens ("HEHEHE HEHEHE HEHEHE"); show it once,
-        # extending the first occurrence to cover the whole run. Normal speech is untouched.
-        clip_words = self._collapse_repeats(clip_words)
-
-        # Group words into lines (max timing.line_max_words per line, or split if gap > timing.line_gap_seconds)
+    def _group_into_lines(
+        self, clip_words: list[dict], line_max_words: int, line_gap_seconds: float
+    ) -> list[list[dict]]:
+        """Group words into subtitle lines, splitting by count or gap."""
         lines = []
-        current_line: list[dict] = []
+        current: list[dict] = []
         for w in clip_words:
-            if not current_line:
-                current_line.append(w)
+            if not current:
+                current.append(w)
             else:
-                gap = w["start"] - current_line[-1]["end"]
-                if len(current_line) >= timing.line_max_words or gap > timing.line_gap_seconds:
-                    lines.append(current_line)
-                    current_line = [w]
+                gap = w["start"] - current[-1]["end"]
+                if len(current) >= line_max_words or gap > line_gap_seconds:
+                    lines.append(current)
+                    current = [w]
                 else:
-                    current_line.append(w)
-        if current_line:
-            lines.append(current_line)
+                    current.append(w)
+        if current:
+            lines.append(current)
+        return lines
 
-        # Build ASS contents
+    def _build_ass_header(self) -> list[str]:
+        """ASS script + style header lines from config."""
         sub_cfg = self.config.video_processing.subtitles
         font_name = sub_cfg.font_file
         font_size = sub_cfg.font_size
         primary_color = sub_cfg.primary_color
         outline_color = sub_cfg.outline_color
         outline_thick = sub_cfg.outline_thickness
-        bold = int(sub_cfg.bold)  # config exposes true/false; ASS needs 0/1
+        bold = int(sub_cfg.bold)
         shadow = int(sub_cfg.shadow)
         alignment = sub_cfg.alignment
         margin_v = sub_cfg.margin_v
-
-        # Active-word highlight colour (configurable; default soft blue, eye-friendly).
         secondary_color = sub_cfg.highlight_color
 
-        ass_lines = [
+        return [
             "[Script Info]",
             "ScriptType: v4.00+",
             "PlayResX: 1080",
@@ -148,53 +167,40 @@ class SubtitleGenerator:
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
         ]
 
-        # Word-by-word focus: render the whole phrase, with the currently-spoken word bold +
-        # highlight-coloured, the rest normal. One Dialogue event per word advances the focus.
-        gap_smooth = timing.gap_smooth_ms / 1000.0
+    def _build_karaoke_dialogues(
+        self, lines: list[list[dict]], gap_smooth: float, secondary_color: str
+    ) -> list[str]:
+        """Word-by-word karaoke Dialogue events — one event per word advances focus."""
+        events = []
         for line_words in lines:
             line_end = line_words[-1]["end"]
             for i, active in enumerate(line_words):
                 seg_start = active["start"]
                 next_start = line_words[i + 1]["start"] if i + 1 < len(line_words) else line_end
-
-                # Bridge pause if <= gap_smooth, else end highlight at the actual word end
                 seg_end = next_start if next_start - active["end"] <= gap_smooth else active["end"]
-
                 if seg_end <= seg_start:
                     seg_end = seg_start + 0.05
 
                 parts = []
                 for j, w in enumerate(line_words):
                     if j == i:
-                        # Active word pops: bold + 12% larger + highlight colour, then revert.
                         parts.append(
                             f"{{\\b1\\fscx112\\fscy112\\c{secondary_color}}}{w['word']}{{\\r}}"
                         )
                     else:
                         parts.append(w["word"])
                 line_text = " ".join(parts)
-
-                ass_lines.append(
+                events.append(
                     f"Dialogue: 0,{self._format_ass_time(seg_start)},"
                     f"{self._format_ass_time(seg_end)},Default,,0,0,0,,{line_text}"
                 )
-
-                # If there's a significant gap after this word, add a non-highlighted frame
-                # for the duration of the silence so the highlight doesn't linger on a silent word.
                 if seg_end < next_start:
                     gap_text = " ".join(w["word"] for w in line_words)
-                    ass_lines.append(
+                    events.append(
                         f"Dialogue: 0,{self._format_ass_time(seg_end)},"
                         f"{self._format_ass_time(next_start)},Default,,0,0,0,,{gap_text}"
                     )
-
-        # Ensure directory exists and write
-        output_ass_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_ass_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(ass_lines) + "\n")
-
-        logger.info(f"Subtitle file generated successfully ({len(lines)} subtitle lines).")
-        return True
+        return events
 
     @staticmethod
     def _norm(word: str) -> str:
