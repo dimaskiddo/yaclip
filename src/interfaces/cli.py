@@ -82,7 +82,7 @@ def _run_pipeline(url: str, force: bool, debug: bool) -> None:
         ensure_vision_runtime()
 
         logger.info("--- STEP 1: DOWNLOAD AND EXTRACT ---")
-        result = VideoDownloader().download_video(url, str(VIDEOS_DIR))
+        result = VideoDownloader().download_video(url, str(VIDEOS_DIR), force=force)
         logger.info(f"Download complete: {result.get('title', 'Unknown')}")
 
         audio_path = result.get("audio_path")

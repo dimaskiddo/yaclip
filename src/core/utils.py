@@ -232,6 +232,22 @@ class SystemUtils:
             SystemUtils._device_logged = True
         return resolved
 
+    @staticmethod
+    def extract_youtube_id(url: str) -> str | None:
+        """Extract the 11-character YouTube video ID from a watch/short/live URL.
+
+        Returns None when the URL is not a YouTube URL or the ID cannot be parsed.
+        """
+        patterns = (
+            r"(?:v=|/v/|youtu\.be/)([A-Za-z0-9_-]{11})",
+            r"(?:/shorts/|/live/)([A-Za-z0-9_-]{11})",
+        )
+        for pat in patterns:
+            m = re.search(pat, url)
+            if m:
+                return m.group(1)
+        return None
+
 
 class AIUtils:
     @staticmethod

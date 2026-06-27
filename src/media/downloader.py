@@ -87,6 +87,19 @@ class VideoDownloader:
     def __init__(self) -> None:
         self.config = load_config()
 
+    @staticmethod
+    def _build_result(
+        video_path: Path,
+        audio_path: str,
+        title: str = "Cached",
+    ) -> dict[str, str]:
+        """Build the standard download return dict."""
+        return {
+            "video_path": str(video_path),
+            "audio_path": audio_path,
+            "title": title,
+        }
+
     def _resolve_wsl_cookies(self, browser: str) -> str | None:
         """
         Resolve and copy Windows browser cookies into Linux ./workspace/tmp/ to bypass SQLite locks.
@@ -249,6 +262,27 @@ class VideoDownloader:
             else:
                 ydl_opts["cookiesfrombrowser"] = (browser, None, None, None)
 
+            # Single AudioExtractor instance shared by pre-flight and download paths.
+            audio_extractor = AudioExtractor()
+
+            # Pre-flight check: if uppercase video file already exists, skip download entirely.
+            cached_id = SystemUtils.extract_youtube_id(url)
+            if cached_id:
+                from src.core.workspace import video_output_path
+
+                cached_path = video_output_path(cached_id, vid_ext)
+                if cached_path.exists() and not force:
+                    logger.info(
+                        f"Video already downloaded, using existing file: "
+                        f"{SystemUtils.display_path(cached_path)}"
+                    )
+                    video_id = cached_id
+                    final_video_path = cached_path
+                    final_audio_path = audio_extractor.extract_audio(
+                        str(final_video_path), force=False
+                    )
+                    return self._build_result(final_video_path, final_audio_path)
+
             try:
                 max_attempts = dl_cfg.retry.max_attempts
                 delay_seconds = dl_cfg.retry.delay_seconds
@@ -279,9 +313,11 @@ class VideoDownloader:
                 if info is None:
                     raise DownloadError("Failed to extract video info: no metadata returned.")
 
+                from src.core.workspace import video_output_path
+
                 video_id = info.get("id", "unknown")
                 flat_path = out_dir_path / f"{video_id}.{vid_ext}"
-                final_video_path = out_dir_path / f"{video_id.upper()}.{vid_ext}"
+                final_video_path = video_output_path(video_id, vid_ext)
 
                 if flat_path.exists():
                     if flat_path != final_video_path:
@@ -316,17 +352,10 @@ class VideoDownloader:
                 cats_str = ", ".join(cats) if isinstance(cats, list) else str(cats or "unknown")
                 logger.info(f"Video category detected as {cats_str}.")
 
-                # Use our custom FFmpeg command to extract the audio
-
-                audio_extractor = AudioExtractor()
+                # Extract audio via the shared AudioExtractor instance.
                 final_audio_path = audio_extractor.extract_audio(final_video_path, force=force)
 
-                return {
-                    "video_path": str(final_video_path),
-                    "audio_path": final_audio_path,
-                    "title": info.get("title", ""),
-                    "metadata": metadata,
-                }
+                return self._build_result(final_video_path, final_audio_path, info.get("title", ""))
 
             except Exception as e:
                 logger.error(f"Download failed: {e}")

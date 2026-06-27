@@ -8,7 +8,6 @@ from loguru import logger
 from src.core.config import load_config
 from src.core.exceptions import RenderError
 from src.core.utils import SystemUtils, extract_digits
-from src.core.workspace import AUDIOS_DIR
 
 
 class AudioExtractor:
@@ -17,17 +16,20 @@ class AudioExtractor:
     def __init__(self) -> None:
         self.config = load_config()
 
+    def audio_path_for(self, video_path: Path) -> Path:
+        """Compute the canonical audio file path for a given video path (uppercase stem)."""
+        from src.core.workspace import audio_output_path
+
+        return audio_output_path(video_path.stem, self.config.downloader.audio_format).resolve()
+
     def extract_audio(self, video_path: str | Path, force: bool = False) -> str:
         """Extract audio track from video using local FFmpeg binary based on configuration."""
         video_path = Path(video_path)
+        audio_path = self.audio_path_for(video_path)
+        audio_path.parent.mkdir(parents=True, exist_ok=True)
 
         aud_ext = self.config.downloader.audio_format
         aud_qual = self.config.downloader.audio_quality
-        output_dir = str(AUDIOS_DIR)
-
-        out_dir = Path(output_dir).resolve()
-        out_dir.mkdir(parents=True, exist_ok=True)
-        audio_path = out_dir / f"{video_path.stem.upper()}.{aud_ext}"
 
         # Sanitize audio quality to only digits
         clean_qual = extract_digits(aud_qual, default="192")

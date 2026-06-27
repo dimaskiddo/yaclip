@@ -44,6 +44,16 @@ def workspace_path(video_id: str, suffix: str) -> Path:
     return DATA_DIR / f"{video_id}{suffix}"
 
 
+def video_output_path(video_id: str, ext: str) -> Path:
+    """VIDEOS_DIR / ``{video_id.upper()}.{ext}`` — canonical uppercase video file path."""
+    return VIDEOS_DIR / f"{video_id.upper()}.{ext}"
+
+
+def audio_output_path(video_stem: str, ext: str) -> Path:
+    """AUDIOS_DIR / ``{video_stem.upper()}.{ext}`` — canonical uppercase audio file path."""
+    return AUDIOS_DIR / f"{video_stem.upper()}.{ext}"
+
+
 def save_candidate_cache(video_id: str, suffix: str, candidates: list[dict], label: str) -> None:
     """Persist a ``{"video_id", "candidates": [...]}`` JSON cache for render-time reuse.
 
