@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import re
 import subprocess
 from pathlib import Path
 
 from loguru import logger
 
 from src.core.config import load_config
-from src.core.utils import SystemUtils
+from src.core.utils import SystemUtils, extract_digits
 from src.core.workspace import AUDIOS_DIR
 
 
@@ -30,8 +29,7 @@ class AudioExtractor:
         audio_path = out_dir / f"{video_path.stem.upper()}.{aud_ext}"
 
         # Sanitize audio quality to only digits
-        qual_match = re.search(r"\d+", str(aud_qual))
-        clean_qual = qual_match.group(0) if qual_match else "192"
+        clean_qual = extract_digits(aud_qual, default="192")
 
         if audio_path.exists() and not force:
             logger.info(

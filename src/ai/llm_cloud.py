@@ -3,7 +3,12 @@ from __future__ import annotations
 from loguru import logger
 
 from src.ai.api_client import retry_api_call
-from src.ai.prompts import build_batch_user_prompt, get_system_prompt
+from src.ai.prompts import (
+    build_batch_system_prompt,
+    build_batch_user_prompt,
+    build_single_user_prompt,
+    get_system_prompt,
+)
 from src.core.config import load_config
 from src.core.exceptions import AIProviderError
 from src.core.utils import AIUtils
@@ -25,7 +30,7 @@ class CloudLLMProvider:
         self.model_name = self.cloud_config.model
         self.timeout = self.cloud_config.timeout
 
-        if not self.api_key or self.api_key == "your-api-key-here":
+        if not AIUtils.has_credentials(self.api_key):
             raise ValueError(
                 f"API key for LLM provider '{self.provider}' is missing or not configured."
             )
@@ -62,10 +67,7 @@ class CloudLLMProvider:
             target_clips=target_clips,
             language=language,
         )
-        user_prompt = (
-            f"Transcript:\n{transcript}\n\n"
-            f"Please analyze and identify EXACTLY {target_clips} highlight clips — no more, no fewer. Return the JSON array with exactly {target_clips} items."
-        )
+        user_prompt = build_single_user_prompt(transcript, target_clips)
 
         @retry_api_call(max_retries=3)
         def _call_openai_chat() -> str:
@@ -190,10 +192,7 @@ class CloudLLMProvider:
             language=language,
         )
 
-        system_prompt = (
-            "You are an expert social media content curator. You are given transcripts of several candidate segments from a video. "
-            f"Your task is to compare these candidates and select EXACTLY {target_clips} segments — no more, no fewer — to render as final clips."
-        )
+        system_prompt = build_batch_system_prompt(target_clips)
 
         user_prompt = build_batch_user_prompt(candidates_text, target_clips, base_sys_prompt)
 
@@ -271,10 +270,7 @@ class CloudLLMProvider:
             language=language,
         )
 
-        system_prompt = (
-            "You are an expert social media content curator. You are given transcripts of several candidate segments from a video. "
-            f"Your task is to compare these candidates and select EXACTLY {target_clips} segments — no more, no fewer — to render as final clips."
-        )
+        system_prompt = build_batch_system_prompt(target_clips)
 
         prompt = (
             f"{system_prompt}\n\n"

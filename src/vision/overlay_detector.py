@@ -26,6 +26,7 @@ from src.core.constants import (
     POPUP_WINDOW_COVERAGE,
     SCAN_PAD_SECONDS,
 )
+from src.vision.frame_utils import clip_frame_range, video_props
 
 
 class OverlayDetector:
@@ -71,10 +72,7 @@ class OverlayDetector:
             return []
 
         try:
-            fps = cap.get(cv2.CAP_PROP_FPS) or 29.97
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
+            width, height, fps, total_frames = video_props(cap)
 
             # Pad the scan so an in-clip popup has clear before/after baseline frames.
             scan_start_t = max(0.0, start_time - SCAN_PAD_SECONDS)
@@ -82,8 +80,7 @@ class OverlayDetector:
             step_s = sample_step_seconds if sample_step_seconds is not None else 0.5
             step = max(1, int(fps * step_s))
 
-            s_frame = max(0, min(int(scan_start_t * fps), max(0, total_frames - 1)))
-            e_frame = max(s_frame + 1, min(int(scan_end_t * fps), total_frames))
+            s_frame, e_frame = clip_frame_range(fps, total_frames, scan_start_t, scan_end_t)
 
             # Sample small frames; t is relative to the CLIP start (negative inside the lead pad).
             samples: list[tuple[float, np.ndarray]] = []

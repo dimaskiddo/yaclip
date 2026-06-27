@@ -221,6 +221,32 @@ def get_language_prompt(language: str) -> str | None:
     return LANGUAGE_PROMPTS.get(lang_code)
 
 
+def build_batch_system_prompt(target_clips: int) -> str:
+    """Build the system prompt for batch (multi-candidate) LLM clip selection.
+
+    Shared by cloud (OpenAI / Gemini) and local LLM providers so the curator framing text
+    lives in one place.
+    """
+    return (
+        "You are an expert social media content curator. You are given transcripts of several "
+        "candidate segments from a video. Your task is to compare these candidates and select "
+        f"EXACTLY {target_clips} segments — no more, no fewer — to render as final clips."
+    )
+
+
+def build_single_user_prompt(transcript: str, target_clips: int) -> str:
+    """Build the user prompt for single-transcript (non-batch) LLM clip selection.
+
+    Shared by the cloud OpenAI and local Llama providers (the Gemini variant phrases this
+    slightly differently inline since it folds the system prompt into one combined string).
+    """
+    return (
+        f"Transcript:\n{transcript}\n\n"
+        f"Please analyze and identify EXACTLY {target_clips} highlight clips — no more, no fewer. "
+        f"Return the JSON array with exactly {target_clips} items."
+    )
+
+
 def build_batch_user_prompt(candidates_text: str, target_clips: int, base_sys_prompt: str) -> str:
     """Build the user prompt for batch (multi-candidate) LLM clip selection.
 

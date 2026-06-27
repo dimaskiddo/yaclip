@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 from loguru import logger
 
-from src.ai.api_client import retry_api_call
+from src.ai.api_client import (
+    gemini_delete_quiet,
+    gemini_generate,
+    gemini_upload_and_wait,
+    retry_api_call,
+)
 from src.ai.prompts import get_language_prompt
 from src.core.config import load_config
 from src.core.exceptions import AIProviderError
-from src.core.utils import SystemUtils
+from src.core.utils import AIUtils, SystemUtils
 from src.core.workspace import DATA_DIR
 
 
@@ -29,7 +33,7 @@ class CloudSTTProvider:
         self.model_name = self.cloud_config.model
         self.timeout = self.cloud_config.timeout
 
-        if not self.api_key or self.api_key == "your-api-key-here":
+        if not AIUtils.has_credentials(self.api_key):
             raise ValueError(
                 f"API key for STT provider '{self.provider}' is missing or not configured."
             )
@@ -110,38 +114,9 @@ class CloudSTTProvider:
         genai.configure(api_key=self.api_key)
         logger.info("Starting cloud transcription with Gemini...")
 
-        @retry_api_call(max_retries=3)
-        def _upload() -> object:
-            return genai.upload_file(path=audio_path)
-
-        @retry_api_call(max_retries=3)
-        def _generate(uploaded_file: object, prompt: str) -> str:
-            from google.api_core import retry as google_retry
-
-            model = genai.GenerativeModel(model_name=self.model_name)
-            stream = model.generate_content(
-                [uploaded_file, prompt],
-                stream=True,
-                request_options={
-                    "timeout": self.timeout,
-                    "retry": google_retry.Retry(deadline=self.timeout),
-                },
-            )
-            chunks: list[str] = []
-            for chunk in stream:
-                if chunk.text:
-                    chunks.append(chunk.text)
-            return "".join(chunks)
-
         uploaded_file = None
         try:
-            uploaded_file = _upload()
-            while uploaded_file.state.name == "PROCESSING":
-                time.sleep(2)
-                uploaded_file = genai.get_file(uploaded_file.name)
-
-            if uploaded_file.state.name == "FAILED":
-                raise RuntimeError("Gemini failed to process the uploaded file.")
+            uploaded_file = gemini_upload_and_wait(audio_path)
 
             language = self.config.video_processing.subtitles.language
             lang_instruction = ""
@@ -162,16 +137,13 @@ class CloudSTTProvider:
                 "Do not include any other markdown formatting outside the timestamps and spoken text."
             )
 
-            return _generate(uploaded_file, prompt)
+            return gemini_generate(self.model_name, [uploaded_file, prompt], self.timeout)
         except Exception as e:
             logger.error(f"Gemini transcription failed: {e}")
             raise AIProviderError(f"Gemini STT failed: {e}") from e
         finally:
             if uploaded_file:
-                try:
-                    genai.delete_file(uploaded_file.name)
-                except Exception as e:
-                    logger.warning(f"Failed to delete file {uploaded_file.name}: {e}")
+                gemini_delete_quiet(uploaded_file)
 
     def transcribe(self, audio_path: str | Path, force: bool = False) -> str:
         """Transcribes audio using the configured cloud provider and caches the transcript."""

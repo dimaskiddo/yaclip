@@ -280,15 +280,9 @@ class FFmpegCommandBuilder:
         filters.append("[top][bot]vstack=inputs=2[stacked]")
 
         # Burn subtitles onto the stacked canvas (or just normalise pixel format).
-        if subtitle_ass_path and subtitle_ass_path.exists():
-            escaped_path = SystemUtils.escape_ffmpeg_path(subtitle_ass_path)
-            escaped_fonts_dir = SystemUtils.escape_ffmpeg_path(str(FONTS_DIR))
-            filters.append(
-                f"[stacked]subtitles='{escaped_path}':fontsdir='{escaped_fonts_dir}',"
-                f"format=yuv420p,setsar=1[out_v]"
-            )
-        else:
-            filters.append("[stacked]format=yuv420p,setsar=1[out_v]")
+        v_filter = "[stacked]format=yuv420p,setsar=1"
+        v_filter = self._append_subtitles_filter(v_filter, subtitle_ass_path)
+        filters.append(f"{v_filter}[out_v]")
 
         return filters
 

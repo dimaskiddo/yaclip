@@ -3,13 +3,16 @@ from __future__ import annotations
 import concurrent.futures
 import gc
 import json
-import time
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
-from src.ai.api_client import retry_api_call
+from src.ai.api_client import (
+    gemini_delete_quiet,
+    gemini_generate,
+    gemini_upload_and_wait,
+)
 from src.ai.heatmap import HeatmapAnalyzer
 from src.ai.llm_cloud import CloudLLMProvider
 from src.ai.llm_local import LocalLLMProvider
@@ -27,8 +30,13 @@ from src.ai.stt_local import (
     segments_to_transcript,
 )
 from src.core.config import load_config
-from src.core.constants import CANDIDATE_WINDOW_BUFFER, MIN_CLIP_SECONDS, ContentType
-from src.core.utils import AIUtils, SystemUtils
+from src.core.constants import (
+    BASE_CONTENT_TYPES,
+    CANDIDATE_WINDOW_BUFFER,
+    MIN_CLIP_SECONDS,
+    ContentType,
+)
+from src.core.utils import AIUtils
 from src.core.workspace import DATA_DIR, TMP_DIR, active_pipeline_event
 from src.media.energy import AudioEnergyAnalyzer
 from src.media.slicer import AudioSlicer
@@ -51,12 +59,12 @@ class AIPipeline:
         stt_cloud_google = (
             (stt_provider in ("cloud", "auto"))
             and stt_cfg.cloud.provider.lower() == "google"
-            and bool(stt_cfg.cloud.api_key and stt_cfg.cloud.api_key != "your-api-key-here")
+            and AIUtils.has_credentials(stt_cfg.cloud.api_key)
         )
         llm_cloud_google = (
             (llm_provider in ("cloud", "auto"))
             and llm_cfg.cloud.provider.lower() == "google"
-            and bool(llm_cfg.cloud.api_key and llm_cfg.cloud.api_key != "your-api-key-here")
+            and AIUtils.has_credentials(llm_cfg.cloud.api_key)
         )
         return stt_cloud_google and llm_cloud_google
 
@@ -85,41 +93,12 @@ class AIPipeline:
         genai.configure(api_key=api_key)
         logger.info("Starting cloud AI transcription and clip selection...")
 
-        @retry_api_call(max_retries=3)
-        def _upload() -> object:
-            return genai.upload_file(path=audio_path)
-
-        @retry_api_call(max_retries=3)
-        def _generate_content(contents: object, system_prompt: str) -> str:
-            from google.api_core import retry as google_retry
-
-            model = genai.GenerativeModel(model_name=model_name, system_instruction=system_prompt)
-            stream = model.generate_content(
-                contents,
-                stream=True,
-                request_options={
-                    "timeout": llm_timeout,
-                    "retry": google_retry.Retry(deadline=llm_timeout),
-                },
-            )
-            chunks: list[str] = []
-            for chunk in stream:
-                if chunk.text:
-                    chunks.append(chunk.text)
-            return "".join(chunks)
-
         video_id = Path(audio_path).stem
         out_txt = DATA_DIR / f"{video_id}.txt"
 
         uploaded_file = None
         try:
-            uploaded_file = _upload()
-            while uploaded_file.state.name == "PROCESSING":
-                time.sleep(2)
-                uploaded_file = genai.get_file(uploaded_file.name)
-
-            if uploaded_file.state.name == "FAILED":
-                raise RuntimeError("Gemini failed to process the uploaded file.")
+            uploaded_file = gemini_upload_and_wait(audio_path)
 
             sub_language = self.config.video_processing.subtitles.language
             base_system_prompt = get_system_prompt(
@@ -165,7 +144,12 @@ class AIPipeline:
                 f"{base_system_prompt}"
             )
 
-            response_text = _generate_content([uploaded_file, user_prompt], system_instruction)
+            response_text = gemini_generate(
+                model_name,
+                [uploaded_file, user_prompt],
+                llm_timeout,
+                system_instruction=system_instruction,
+            )
             response_text = strip_json_markdown(response_text)
 
             data = json.loads(response_text)
@@ -213,10 +197,7 @@ class AIPipeline:
             raise e
         finally:
             if uploaded_file:
-                try:
-                    genai.delete_file(uploaded_file.name)
-                except Exception as e:
-                    logger.warning(f"Failed to delete file {uploaded_file.name}: {e}")
+                gemini_delete_quiet(uploaded_file)
 
     def run_stt_transcription(
         self,
@@ -230,9 +211,7 @@ class AIPipeline:
         provider = stt_cfg.provider.lower()
 
         stt_api_key = stt_cfg.cloud.api_key
-        has_cloud_credentials = bool(stt_api_key and stt_api_key != "your-api-key-here")
-
-        # Cloud STT path
+        has_cloud_credentials = AIUtils.has_credentials(stt_api_key)
         if provider == "cloud" or (provider == "auto" and has_cloud_credentials):
             try:
                 cloud_provider = CloudSTTProvider()
@@ -264,8 +243,7 @@ class AIPipeline:
         provider = llm_cfg.provider.lower()
 
         llm_api_key = llm_cfg.cloud.api_key
-        has_cloud_credentials = bool(llm_api_key and llm_api_key != "your-api-key-here")
-
+        has_cloud_credentials = AIUtils.has_credentials(llm_api_key)
         # Cloud LLM path
         if provider == "cloud" or (provider == "auto" and has_cloud_credentials):
             try:
@@ -305,7 +283,7 @@ class AIPipeline:
         provider = llm_cfg.provider.lower()
 
         llm_api_key = llm_cfg.cloud.api_key
-        has_cloud_credentials = bool(llm_api_key and llm_api_key != "your-api-key-here")
+        has_cloud_credentials = AIUtils.has_credentials(llm_api_key)
 
         # Cloud LLM path
         if provider == "cloud" or (provider == "auto" and has_cloud_credentials):
@@ -364,13 +342,7 @@ class AIPipeline:
         if not isinstance(value, str):
             return None
         name = value.strip().upper()
-        allowed = {
-            ContentType.PODCAST.value,
-            ContentType.JUST_CHAT.value,
-            ContentType.GAMING_SOLO.value,
-            ContentType.GAMING_COLLAB.value,
-        }
-        return name if name in allowed else None
+        return name if name in BASE_CONTENT_TYPES else None
 
     @staticmethod
     def _validate_clip_content_type(
@@ -397,12 +369,7 @@ class AIPipeline:
         """
         resolved = clip.get("content_type")
         # Must be a valid string — already normalised by _normalise_base_content_type.
-        if not isinstance(resolved, str) or resolved not in {
-            ContentType.PODCAST.value,
-            ContentType.JUST_CHAT.value,
-            ContentType.GAMING_SOLO.value,
-            ContentType.GAMING_COLLAB.value,
-        }:
+        if not isinstance(resolved, str) or resolved not in BASE_CONTENT_TYPES:
             return
 
         gameplay_present = bool(detection_evidence.get("gameplay_present", False))
@@ -639,23 +606,17 @@ class AIPipeline:
             # If running STT locally, load the WhisperModel ONCE and reuse it
             stt_provider = self.config.ai_pipeline.stt.provider.lower()
             stt_api_key = self.config.ai_pipeline.stt.cloud.api_key
-            has_stt_credentials = bool(stt_api_key and stt_api_key != "your-api-key-here")
+            has_stt_credentials = AIUtils.has_credentials(stt_api_key)
             use_local_stt = (stt_provider == "local") or (
                 stt_provider == "auto" and not has_stt_credentials
             )
 
             if use_local_stt:
                 try:
-                    from faster_whisper import WhisperModel
-
                     whisper_model_size = self.config.ai_pipeline.stt.local.model_size
-                    device_config = SystemUtils.resolve_device(
-                        self.config.ai_pipeline.stt.local.device
-                    )
-                    c_type = "float32" if whisper_model_size in ("tiny", "base") else "int8"
                     logger.info(f"Loading speech-to-text model ({whisper_model_size})...")
-                    whisper_model = WhisperModel(
-                        whisper_model_size, device=device_config, compute_type=c_type
+                    whisper_model = AIUtils.load_whisper_model(
+                        whisper_model_size, self.config.ai_pipeline.stt.local.device
                     )
                 except Exception as e:
                     logger.error(f"Failed to load local transcription model: {e}")
@@ -832,27 +793,19 @@ class AIPipeline:
                 llama_model = None
                 llm_provider = self.config.ai_pipeline.llm.provider.lower()
                 llm_api_key = self.config.ai_pipeline.llm.cloud.api_key
-                has_llm_credentials = bool(llm_api_key and llm_api_key != "your-api-key-here")
+                has_llm_credentials = AIUtils.has_credentials(llm_api_key)
                 use_local_llm = (llm_provider == "local") or (
                     llm_provider == "auto" and not has_llm_credentials
                 )
 
                 if use_local_llm:
                     try:
-                        from llama_cpp import Llama
-
                         llm_model_name = self.config.ai_pipeline.llm.local.model_name
                         resolved_path = AIUtils.resolve_llm_model_path(llm_model_name)
-                        device_config = self.config.ai_pipeline.llm.local.device.lower()
                         n_gpu = self.config.ai_pipeline.llm.local.n_gpu_layers
 
                         logger.info("Loading local AI model for clip selection.")
-                        llama_model = Llama(
-                            model_path=resolved_path,
-                            n_ctx=4096,
-                            n_gpu_layers=n_gpu,
-                            verbose=False,
-                        )
+                        llama_model = AIUtils.load_llama(resolved_path, n_gpu)
                     except Exception as e:
                         logger.error(f"Failed to load local AI reasoning model: {e}")
 

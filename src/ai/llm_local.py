@@ -8,7 +8,12 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
-from src.ai.prompts import build_batch_user_prompt, get_system_prompt
+from src.ai.prompts import (
+    build_batch_system_prompt,
+    build_batch_user_prompt,
+    build_single_user_prompt,
+    get_system_prompt,
+)
 from src.core.config import load_config
 from src.core.exceptions import AIProviderError
 from src.core.utils import AIUtils
@@ -40,12 +45,6 @@ class LocalLLMProvider:
         llm: Llama | None = None,
     ) -> list[dict]:
         """Uses local Llama model to analyze transcript and extract highlights."""
-        try:
-            from llama_cpp import Llama
-        except ImportError as e:
-            logger.error("llama-cpp-python is not installed.")
-            raise ImportError("llama-cpp-python package missing.") from e
-
         language = self.config.video_processing.subtitles.language
         system_prompt = get_system_prompt(
             content_type=content_type,
@@ -53,20 +52,12 @@ class LocalLLMProvider:
             target_clips=target_clips,
             language=language,
         )
-        user_prompt = (
-            f"Transcript:\n{transcript}\n\n"
-            f"Please analyze and identify EXACTLY {target_clips} highlight clips — no more, no fewer. Return the JSON array with exactly {target_clips} items."
-        )
+        user_prompt = build_single_user_prompt(transcript, target_clips)
 
         try:
             if llm is None:
                 logger.info("Loading local AI reasoning model...")
-                llm = Llama(
-                    model_path=self.resolved_path,
-                    n_ctx=4096,
-                    n_gpu_layers=self.n_gpu,
-                    verbose=False,
-                )
+                llm = AIUtils.load_llama(self.resolved_path, self.n_gpu)
             else:
                 logger.info("Reusing local AI reasoning model...")
 
@@ -99,12 +90,6 @@ class LocalLLMProvider:
         llm: Llama | None = None,
     ) -> list[dict]:
         """Uses local Llama model to compare and select the best clips from candidates in a single batched call."""
-        try:
-            from llama_cpp import Llama
-        except ImportError as e:
-            logger.error("llama-cpp-python is not installed.")
-            raise ImportError("llama-cpp-python package missing.") from e
-
         language = self.config.video_processing.subtitles.language
         base_sys_prompt = get_system_prompt(
             content_type=content_type,
@@ -113,22 +98,14 @@ class LocalLLMProvider:
             language=language,
         )
 
-        system_prompt = (
-            "You are an expert social media content curator. You are given transcripts of several candidate segments from a video. "
-            f"Your task is to compare these candidates and select EXACTLY {target_clips} segments — no more, no fewer — to render as final clips."
-        )
+        system_prompt = build_batch_system_prompt(target_clips)
 
         user_prompt = build_batch_user_prompt(candidates_text, target_clips, base_sys_prompt)
 
         try:
             if llm is None:
                 logger.info("Loading local AI reasoning model for batch clip selection...")
-                llm = Llama(
-                    model_path=self.resolved_path,
-                    n_ctx=4096,
-                    n_gpu_layers=self.n_gpu,
-                    verbose=False,
-                )
+                llm = AIUtils.load_llama(self.resolved_path, self.n_gpu)
             else:
                 logger.info("Reusing local AI reasoning model...")
 

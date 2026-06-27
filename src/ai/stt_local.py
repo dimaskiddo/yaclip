@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import gc
-import json
 from collections import Counter
 from typing import TYPE_CHECKING
 
@@ -21,8 +20,8 @@ from src.core.constants import (
     STT_NON_SPEECH_TOKENS,
     STT_REPEAT_TOKEN_MAX,
 )
-from src.core.utils import SystemUtils
-from src.core.workspace import DATA_DIR
+from src.core.utils import AIUtils, SystemUtils
+from src.core.workspace import DATA_DIR, load_candidate_cache, save_candidate_cache
 
 
 def segments_to_transcript(segments: list[dict]) -> str:
@@ -96,70 +95,48 @@ def _is_non_speech_token(word: str) -> bool:
     return not any(ch.isalnum() for ch in cleaned)
 
 
-def save_words_cache(video_id: str, candidates: list[dict]) -> None:
-    """Persist per-candidate word-level segments (absolute times) for render-time reuse.
+def _iter_kept_segments(segments: object, adv: object, label: str = "segment") -> list:
+    """Iterate faster-whisper segments, dropping hallucinated ones and logging the count.
 
-    Schema: ``{"video_id", "candidates": [{"start", "end", "segments": [...]}]}``. Written to
-    ``workspace/data/{video_id}_words.json`` so the renderer can skip re-transcribing clips.
+    Shared by the flattened-text and word-structured output paths to avoid duplicating the
+    drop-loop + counter logic.
+
+    Returns:
+        The kept segments as a list (materialised so the caller can both log the count
+        and iterate them).
     """
-    path = DATA_DIR / f"{video_id}_words.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        path.write_text(
-            json.dumps({"video_id": video_id, "candidates": candidates}, ensure_ascii=False),
-            encoding="utf-8",
-        )
+    kept = []
+    dropped = 0
+    for seg in segments:
+        if _is_hallucinated_segment(seg, adv):
+            dropped += 1
+            continue
+        kept.append(seg)
+    if dropped:
         logger.info(
-            f"Saved word timing data ({len(candidates)} clip(s)): {SystemUtils.display_path(path)}"
+            f"Filtered out {dropped} non-speech {label}(s) (laughter, noise, or repetition)."
         )
-    except OSError as e:
-        logger.warning(f"Could not save word timing data to {path.name}: {e}")
+    return kept
+
+
+def save_words_cache(video_id: str, candidates: list[dict]) -> None:
+    """Persist per-candidate word-level segments (absolute times) for render-time reuse."""
+    save_candidate_cache(video_id, "_words.json", candidates, "word timing data")
 
 
 def load_words_cache(video_id: str) -> dict | None:
     """Load the per-candidate word cache for a video, or None if absent/unreadable."""
-    path = DATA_DIR / f"{video_id}_words.json"
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
-        logger.warning(f"Could not read word timing data from {path.name}: {e}")
-        return None
+    return load_candidate_cache(video_id, "_words.json", "word timing data")
 
 
 def save_mediashare_cache(video_id: str, candidates: list[dict]) -> None:
-    """Persist per-candidate donation/MediaShare scan results for render-time reuse.
-
-    Schema: ``{"video_id", "candidates": [{"start", "end", "mediashare_present", "mediashare_box"}]}``.
-    Written to ``workspace/data/{video_id}_mediashare.json`` so the renderer can reuse
-    the selection-phase donation scan instead of rescanning each clip window.
-    """
-    path = DATA_DIR / f"{video_id}_mediashare.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        path.write_text(
-            json.dumps({"video_id": video_id, "candidates": candidates}, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        logger.info(
-            f"Saved donation scan results ({len(candidates)} candidate(s)): "
-            f"{SystemUtils.display_path(path)}"
-        )
-    except OSError as e:
-        logger.warning(f"Could not save donation scan results to {path.name}: {e}")
+    """Persist per-candidate donation/MediaShare scan results for render-time reuse."""
+    save_candidate_cache(video_id, "_mediashare.json", candidates, "donation scan results")
 
 
 def load_mediashare_cache(video_id: str) -> dict | None:
     """Load the per-candidate donation scan cache for a video, or None if absent/unreadable."""
-    path = DATA_DIR / f"{video_id}_mediashare.json"
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
-        logger.warning(f"Could not read donation scan results from {path.name}: {e}")
-        return None
+    return load_candidate_cache(video_id, "_mediashare.json", "donation scan results")
 
 
 class LocalSTTProvider:
@@ -209,20 +186,9 @@ class LocalSTTProvider:
 
     def _transcribe_whisper(self, audio_path: str, model: WhisperModel | None = None) -> str:
         """Run faster-whisper locally to extract transcript with timestamps."""
-        try:
-            from faster_whisper import WhisperModel
-        except ImportError as e:
-            logger.error("faster-whisper is not installed.")
-            raise ImportError("faster-whisper package missing.") from e
-
-        # Int8 quantization destroys tiny/base accuracy on CPU, force float32 for those
-        c_type = "float32" if self.model_size in ("tiny", "base") else "int8"
-
-        device_config = SystemUtils.resolve_device(self.local_cfg.device)
-
         if model is None:
             logger.info("Loading local transcription model...")
-            model = WhisperModel(self.model_size, device=device_config, compute_type=c_type)
+            model = AIUtils.load_whisper_model(self.model_size, self.local_cfg.device)
         else:
             logger.info("Reusing local transcription model...")
 
@@ -233,22 +199,14 @@ class LocalSTTProvider:
 
         logger.info("Starting local transcription...")
         segments, info = model.transcribe(audio_path, **kwargs)
+        adv = self.local_cfg.advanced
 
         transcript_lines = []
-        dropped = 0
-        adv = self.local_cfg.advanced
-        for segment in segments:
-            if _is_hallucinated_segment(segment, adv):
-                dropped += 1
-                continue
+        for segment in _iter_kept_segments(segments, adv):
             line = f"[{segment.start:.2f} - {segment.end:.2f}] {segment.text.strip()}"
             transcript_lines.append(line)
             logger.debug(line)
 
-        if dropped:
-            logger.info(
-                f"Filtered out {dropped} non-speech segment(s) (laughter, noise, or repetition)."
-            )
         logger.info("Local transcription complete.")
         return "\n".join(transcript_lines)
 
@@ -272,18 +230,9 @@ class LocalSTTProvider:
         Returns:
             A list of ``{text, start, end, words: [{word, start, end}]}`` segment dicts.
         """
-        try:
-            from faster_whisper import WhisperModel
-        except ImportError as e:
-            logger.error("faster-whisper is not installed.")
-            raise ImportError("faster-whisper package missing.") from e
-
-        c_type = "float32" if self.model_size in ("tiny", "base") else "int8"
-        device_config = SystemUtils.resolve_device(self.local_cfg.device)
-
         if model is None:
             logger.info("Loading local transcription model for subtitle segments...")
-            model = WhisperModel(self.model_size, device=device_config, compute_type=c_type)
+            model = AIUtils.load_whisper_model(self.model_size, self.local_cfg.device)
 
         language = self.config.video_processing.subtitles.language
         kwargs = self._build_transcribe_kwargs(language)
@@ -291,13 +240,9 @@ class LocalSTTProvider:
         segments, _info = model.transcribe(str(audio_path), **kwargs)
 
         out: list[dict] = []
-        dropped = 0
         adv = self.local_cfg.advanced
         timing = self.config.video_processing.subtitles.timing
-        for segment in segments:
-            if _is_hallucinated_segment(segment, adv):
-                dropped += 1
-                continue
+        for segment in _iter_kept_segments(segments, adv):
             words = []
             for w in getattr(segment, "words", None) or []:
                 if not _is_valid_word_timing(w, timing) or _is_non_speech_token(w.word):
@@ -310,7 +255,6 @@ class LocalSTTProvider:
                     }
                 )
             if (getattr(segment, "words", None) or []) and not words:
-                dropped += 1
                 continue
             out.append(
                 {
@@ -319,10 +263,6 @@ class LocalSTTProvider:
                     "end": float(segment.end) + time_offset,
                     "words": words,
                 }
-            )
-        if dropped:
-            logger.info(
-                f"Filtered out {dropped} non-speech segment(s) (laughter, noise, or repetition)."
             )
         logger.info(f"Transcribed {len(out)} spoken segment(s) with word timings.")
         return out

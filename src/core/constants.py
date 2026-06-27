@@ -13,6 +13,21 @@ class ContentType(str, Enum):
     DONATION_OVERLAY = "DONATION_OVERLAY"
 
 
+# The 4 base (video-level-detectable) content types, excluding the render-time-only
+# DONATION_OVERLAY promotion. Used to validate LLM-returned content_type values.
+BASE_CONTENT_TYPES: frozenset[str] = frozenset(
+    {
+        ContentType.PODCAST.value,
+        ContentType.JUST_CHAT.value,
+        ContentType.GAMING_SOLO.value,
+        ContentType.GAMING_COLLAB.value,
+    }
+)
+
+# config.yaml.example template value for unset API keys — never a real credential.
+PLACEHOLDER_API_KEY: str = "your-api-key-here"
+
+
 class ClipMode(str, Enum):
     AUTO = "auto"
     MANUAL = "manual"

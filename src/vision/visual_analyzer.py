@@ -10,9 +10,6 @@ from src.core.config import load_config
 from src.core.constants import (
     COCO_CLASS_PERSON,
     COCO_SCREEN_CLASSES,
-    FACECAM_EDGE_SCORE_MIN,
-    FACECAM_MAX_AREA_FRAC,
-    FACECAM_MIN_AREA_FRAC,
     FACECAM_MIN_PERSISTENCE,
     FACECAM_MIN_SEP_FRAC,
     FACECAM_PICK_MIN_PERSISTENCE,
@@ -30,8 +27,24 @@ from src.core.constants import (
     STACK2_PANEL_ASPECT,
     YOLO_CLUSTER_DIST_FRAC,
 )
-from src.core.utils import SystemUtils, boxes_overlap, make_even
+from src.core.utils import (
+    SystemUtils,
+    box_center,
+    boxes_overlap,
+    center_crop,
+    clamp_crop_x,
+    is_facecam_candidate,
+    make_even,
+)
 from src.core.workspace import MODELS_DIR
+from src.vision.frame_utils import (
+    clip_frame_range,
+    sample_frame_indices_evenly,
+    sample_frame_indices_in_range,
+    sample_frames,
+    video_props,
+    yolo_predict_boxes,
+)
 
 
 class VisualAnalyzer:
@@ -126,8 +139,7 @@ class VisualAnalyzer:
             return self._empty_analysis()
 
         try:
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
+            width, height, _fps, _total = video_props(cap)
             frames = self._sample_frames(cap, start_time, end_time)
         finally:
             cap.release()
@@ -248,20 +260,10 @@ class VisualAnalyzer:
             return {"non_person_motion": 0.0, "open_area_frac": 1.0, "person_count": 0}
 
         try:
-            total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            fps = cap.get(cv2.CAP_PROP_FPS) or 29.97
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
-
+            width, height, fps, total = video_props(cap)
             # YOLO pass: detect persistent person clusters (12 frames, middle 80%)
-            n = 12
-            idxs = [int(total * (0.1 + 0.8 * i / max(1, n - 1))) for i in range(n)]
-            yolo_frames: list[np.ndarray] = []
-            for idx in idxs:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-                ret, frame = cap.read()
-                if ret:
-                    yolo_frames.append(frame)
+            idxs = sample_frame_indices_in_range(total, n=12)
+            yolo_frames = sample_frames(cap, idxs)
         finally:
             cap.release()
 
@@ -278,13 +280,7 @@ class VisualAnalyzer:
         small_w, small_h = MOTION_GRID_W, MOTION_GRID_H
         scale_x, scale_y = width / small_w, height / small_h
         mask_rects = [
-            (
-                max(0, int(p["box"][0] / scale_x)),
-                min(small_w, int((p["box"][0] + p["box"][2]) / scale_x)),
-                max(0, int(p["box"][1] / scale_y)),
-                min(small_h, int((p["box"][1] + p["box"][3]) / scale_y)),
-            )
-            for p in persons
+            self._box_to_grid_rect(p["box"], scale_x, scale_y, small_w, small_h) for p in persons
         ]
 
         cap2 = cv2.VideoCapture(str(video_path))
@@ -352,18 +348,9 @@ class VisualAnalyzer:
         if not cap.isOpened():
             return None
         try:
-            total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
-            # 12 frames spanning the middle 80% of the video.
-            n = 12
-            idxs = [int(total * (0.1 + 0.8 * i / max(1, n - 1))) for i in range(n)]
-            frames = []
-            for idx in idxs:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-                ret, frame = cap.read()
-                if ret:
-                    frames.append(frame)
+            width, height, _fps, total = video_props(cap)
+            idxs = sample_frame_indices_in_range(total, n=12)  # middle 80% of the video
+            frames = sample_frames(cap, idxs)
         finally:
             cap.release()
 
@@ -397,17 +384,9 @@ class VisualAnalyzer:
         if not cap.isOpened():
             return []
         try:
-            total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
-            n = 12  # frames spanning the middle 80% of the video
-            idxs = [int(total * (0.1 + 0.8 * i / max(1, n - 1))) for i in range(n)]
-            frames = []
-            for idx in idxs:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-                ret, frame = cap.read()
-                if ret:
-                    frames.append(frame)
+            width, height, _fps, total = video_props(cap)
+            idxs = sample_frame_indices_in_range(total, n=12)  # middle 80% of the video
+            frames = sample_frames(cap, idxs)
         finally:
             cap.release()
 
@@ -419,17 +398,14 @@ class VisualAnalyzer:
         diag = float((width**2 + height**2) ** 0.5)
         cams: list[tuple[float, float, float, float]] = []
         for p in persons:  # _cluster_boxes returns these sorted by area descending
-            area_frac = p["area"] / frame_area
-            if not (FACECAM_MIN_AREA_FRAC <= area_frac <= FACECAM_MAX_AREA_FRAC):
-                continue
             if p["persistence"] < FACECAM_MIN_PERSISTENCE:
                 continue
-            if self._edge_score(p["box"], width, height) < FACECAM_EDGE_SCORE_MIN:
+            if not is_facecam_candidate(p["box"], frame_area, width, height):
                 continue
             b = p["box"]
-            cx, cy = b[0] + b[2] / 2, b[1] + b[3] / 2
+            cx, cy = box_center(b)
             too_close = any(
-                float(np.hypot(cx - (q[0] + q[2] / 2), cy - (q[1] + q[3] / 2)))
+                float(np.hypot(cx - box_center(q)[0], cy - box_center(q)[1]))
                 <= FACECAM_MIN_SEP_FRAC * diag
                 for q in cams
             )
@@ -451,23 +427,9 @@ class VisualAnalyzer:
             logger.info(f"{len(boxes)} webcams detected: {pos_list}.")
         return boxes
 
-    @staticmethod
-    def _edge_score(box: tuple[float, float, float, float], width: int, height: int) -> float:
-        """1 − (centre's distance to the nearest frame edge)/(min(w,h)/2).
-
-        ~0 for an interior game character (far from every border), high for a webcam hugging any
-        edge/corner. More robust than corner distance — a bottom-centre cam still scores high.
-        """
-        cx, cy = box[0] + box[2] / 2.0, box[1] + box[3] / 2.0
-        margin = min(cx, width - cx, cy, height - cy)
-        half = max(1.0, min(width, height) / 2.0)
-        return max(0.0, 1.0 - margin / half)
-
     def _empty_analysis(self, width: int = 1920, height: int = 1080) -> dict:
         """Neutral analysis when no frames/model are available."""
-        crop_h = make_even(height)
-        crop_w = make_even(min(width, int(round(height * STACK2_PANEL_ASPECT))))
-        center = {"x": make_even((width - crop_w) // 2), "y": 0, "w": crop_w, "h": crop_h}
+        center = center_crop(width, height, STACK2_PANEL_ASPECT)
         return {
             "video_width": width,
             "video_height": height,
@@ -625,21 +587,11 @@ class VisualAnalyzer:
         scale_x = width / small_w
         scale_y = height / small_h
         # Pre-compute each cam's region in the small motion grid so its movement never pulls the pan.
-        mask_rects = [
-            (
-                max(0, int(c[0] / scale_x)),
-                min(small_w, int((c[0] + c[2]) / scale_x)),
-                max(0, int(c[1] / scale_y)),
-                min(small_h, int((c[1] + c[3]) / scale_y)),
-            )
-            for c in cams
-        ]
+        mask_rects = [self._box_to_grid_rect(c, scale_x, scale_y, small_w, small_h) for c in cams]
 
         try:
-            fps = cap.get(cv2.CAP_PROP_FPS) or 29.97
-            total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            s_frame = max(0, min(int(start_time * fps), max(0, total - 1)))
-            e_frame = max(s_frame + 1, min(int(end_time * fps), total))
+            _w, _h, fps, total = video_props(cap)
+            s_frame, e_frame = clip_frame_range(fps, total, start_time, end_time)
             step = max(1, int(fps * 0.5))  # ~2 fps
             indices = list(range(s_frame, e_frame, step))[:120]  # bound cost
 
@@ -694,23 +646,11 @@ class VisualAnalyzer:
 
     def _sample_frames(self, cap: object, start_time: float, end_time: float) -> list[np.ndarray]:
         """Sample up to ``sample_frames`` frames evenly across the window."""
-        import cv2
-
-        fps = cap.get(cv2.CAP_PROP_FPS) or 29.97
-        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        s_frame = max(0, min(int(start_time * fps), max(0, total - 1)))
-        e_frame = max(s_frame + 1, min(int(end_time * fps), total))
-
+        _w, _h, fps, total = video_props(cap)
+        s_frame, e_frame = clip_frame_range(fps, total, start_time, end_time)
         n = max(1, self.cfg.sample_frames)
-        indices = [int(s_frame + i * (e_frame - s_frame) / n) for i in range(n)]
-
-        frames = []
-        for idx in indices:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-            ret, frame = cap.read()
-            if ret:
-                frames.append(frame)
-        return frames
+        indices = sample_frame_indices_evenly(s_frame, e_frame, n)
+        return sample_frames(cap, indices)
 
     def _detect_regions(
         self, frames: list[np.ndarray], width: int, height: int
@@ -735,20 +675,14 @@ class VisualAnalyzer:
         max_persons_in_frame: int = 0
 
         for frame in frames:
-            results = model.predict(frame, verbose=False, device=device)
             frame_person_count = 0
-            for res in results:
-                for box in res.boxes:
-                    cls_id = int(box.cls[0])
-                    conf = float(box.conf[0])
-                    x1, y1, x2, y2 = (float(v) for v in box.xyxy[0])
-                    rect = (x1, y1, x2 - x1, y2 - y1)
-                    if cls_id == COCO_CLASS_PERSON:
-                        person_dets.append(rect)
-                        if conf >= PERSON_COUNT_CONF_MIN:
-                            frame_person_count += 1
-                    elif cls_id in COCO_SCREEN_CLASSES:
-                        screen_dets.append(rect)
+            for cls_id, conf, rect in yolo_predict_boxes(model, frame, device):
+                if cls_id == COCO_CLASS_PERSON:
+                    person_dets.append(rect)
+                    if conf >= PERSON_COUNT_CONF_MIN:
+                        frame_person_count += 1
+                elif cls_id in COCO_SCREEN_CLASSES:
+                    screen_dets.append(rect)
             max_persons_in_frame = max(max_persons_in_frame, frame_person_count)
 
         persons = self._cluster_boxes(person_dets, width, height, len(frames))
@@ -780,14 +714,11 @@ class VisualAnalyzer:
         thr = YOLO_CLUSTER_DIST_FRAC * diag
         clusters: list[list[tuple[float, float, float, float]]] = []
 
-        def center(b: tuple[float, float, float, float]) -> tuple[float, float]:
-            return (b[0] + b[2] / 2, b[1] + b[3] / 2)
-
         for box in boxes:
             placed = False
             for cl in clusters:
                 avg = np.mean(cl, axis=0)
-                c1, c2 = center(box), center(avg)
+                c1, c2 = box_center(box), box_center(tuple(avg))
                 if float(np.hypot(c1[0] - c2[0], c1[1] - c2[1])) < thr:
                     cl.append(box)
                     placed = True
@@ -837,7 +768,7 @@ class VisualAnalyzer:
         diag = float(np.sqrt(width**2 + height**2))
 
         def corner_score(box: tuple[float, float, float, float]) -> float:
-            cx, cy = box[0] + box[2] / 2, box[1] + box[3] / 2
+            cx, cy = box_center(box)
             nearest = min(float(np.hypot(cx - cxn, cy - cyn)) for cxn, cyn in corners)
             return 1.0 - (nearest / diag)  # higher = closer to a corner
 
@@ -871,11 +802,9 @@ class VisualAnalyzer:
                 motion += cv2.absdiff(gray, prev).astype(np.float32)
             prev = gray
 
-        for fx, fy, fw, fh in cams:  # zero every cam region so it never pulls the gameplay centroid
-            motion[
-                max(0, int(fy / scale_y)) : min(small_h, int((fy + fh) / scale_y)),
-                max(0, int(fx / scale_x)) : min(small_w, int((fx + fw) / scale_x)),
-            ] = 0.0
+        for cam in cams:  # zero every cam region so it never pulls the gameplay centroid
+            mx0, mx1, my0, my1 = self._box_to_grid_rect(cam, scale_x, scale_y, small_w, small_h)
+            motion[my0:my1, mx0:mx1] = 0.0
 
         motion_level = float(motion.mean())
         if motion.sum() <= 0.0:
@@ -884,8 +813,27 @@ class VisualAnalyzer:
             cols = np.arange(small_w, dtype=np.float32)
             cx = float((motion.sum(axis=0) * cols).sum() / motion.sum()) * scale_x
 
-        crop_x = make_even(int(max(0, min(cx - crop_w / 2.0, width - crop_w))))
+        crop_x = clamp_crop_x(cx, crop_w, width)
         return {"x": crop_x, "y": crop_y, "w": crop_w, "h": crop_h}, motion_level
+
+    @staticmethod
+    def _box_to_grid_rect(
+        box: tuple[float, float, float, float],
+        scale_x: float,
+        scale_y: float,
+        grid_w: int,
+        grid_h: int,
+    ) -> tuple[int, int, int, int]:
+        """Map a full-res (x, y, w, h) box into the downscaled motion grid, clamped to bounds.
+
+        Returns (mx0, mx1, my0, my1) — a row/col slice rect, not an (x,y,w,h) box.
+        """
+        x, y, w, h = box
+        mx0 = max(0, int(x / scale_x))
+        mx1 = min(grid_w, int((x + w) / scale_x))
+        my0 = max(0, int(y / scale_y))
+        my1 = min(grid_h, int((y + h) / scale_y))
+        return mx0, mx1, my0, my1
 
     @staticmethod
     def _open_area_frac(persons: list[dict], width: int, height: int) -> float:
@@ -909,6 +857,15 @@ class VisualAnalyzer:
                     covered.add((r, c))
         return 1.0 - len(covered) / (grid_cols * grid_rows)
 
+    @staticmethod
+    def _motion_label(level: float) -> str:
+        """3-way motion intensity label ("high"/"moderate"/"low") shared by descriptor + log."""
+        if level > MOTION_INTENSITY_HIGH:
+            return "high"
+        if level > MOTION_INTENSITY_MODERATE:
+            return "moderate"
+        return "low"
+
     def _build_descriptor(self, a: dict) -> str:
         """Compact natural-language summary of the window for a (text-only) LLM."""
         w, h = a["video_width"], a["video_height"]
@@ -926,15 +883,7 @@ class VisualAnalyzer:
                 )
             else:
                 parts.append("Donation overlay (screen inset) visible")
-        level = a["motion_level"]
-        intensity = (
-            "high"
-            if level > MOTION_INTENSITY_HIGH
-            else "moderate"
-            if level > MOTION_INTENSITY_MODERATE
-            else "low"
-        )
-        parts.append(f"{intensity} on-screen motion")
+        parts.append(f"{self._motion_label(a['motion_level'])} on-screen motion")
         return "; ".join(parts) + "."
 
     def _build_log_summary(self, a: dict, start_time: float, end_time: float) -> str:
@@ -960,15 +909,7 @@ class VisualAnalyzer:
                 parts.append(f"donation alert around {e0:.0f}–{e1:.0f}s")
             else:
                 parts.append("donation overlay visible")
-        level = a["motion_level"]
-        intensity = (
-            "high"
-            if level > MOTION_INTENSITY_HIGH
-            else "moderate"
-            if level > MOTION_INTENSITY_MODERATE
-            else "low"
-        )
-        parts.append(f"{intensity} motion")
+        parts.append(f"{self._motion_label(a['motion_level'])} motion")
         return f"Scene [{start_time:.1f}–{end_time:.1f}s]: {', '.join(parts)}."
 
     def _where(self, box: tuple[int, int, int, int], width: int, height: int) -> str:

@@ -34,6 +34,7 @@ from src.core.constants import (
     ContentType,
 )
 from src.core.workspace import DATA_DIR
+from src.vision.frame_utils import sample_frame_indices_evenly, sample_frames_timed, video_props
 
 
 @dataclass
@@ -289,32 +290,21 @@ class ContentTypeDetector:
         if not cap.isOpened():
             return []
 
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = cap.get(cv2.CAP_PROP_FPS) or 29.97
-        if total_frames <= 0:
+        try:
+            _w, _h, fps, total_frames = video_props(cap)
+            if total_frames <= 0:
+                return []
+
+            start_frame = int(total_frames * SAMPLE_FRAME_START_FRAC)
+            end_frame = int(total_frames * SAMPLE_FRAME_END_FRAC)
+            if end_frame <= start_frame:
+                start_frame = 0
+                end_frame = total_frames
+
+            indices = sample_frame_indices_evenly(start_frame, end_frame, num_samples)
+            return sample_frames_timed(cap, indices, fps)
+        finally:
             cap.release()
-            return []
-
-        start_frame = int(total_frames * SAMPLE_FRAME_START_FRAC)
-        end_frame = int(total_frames * SAMPLE_FRAME_END_FRAC)
-        if end_frame <= start_frame:
-            start_frame = 0
-            end_frame = total_frames
-
-        indices = [
-            int(start_frame + i * (end_frame - start_frame) / num_samples)
-            for i in range(num_samples)
-        ]
-
-        samples = []
-        for idx in indices:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-            ret, frame = cap.read()
-            if ret:
-                samples.append((idx / fps, frame))
-
-        cap.release()
-        return samples
 
     def _compute_hud_score(self, frames: list[np.ndarray]) -> float:
         """Detect static graphic UI elements (HUDs) by temporal variance & spatial gradient."""

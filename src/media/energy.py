@@ -29,6 +29,37 @@ class AudioEnergyAnalyzer:
     def __init__(self) -> None:
         self.config = load_config()
 
+    @staticmethod
+    def _pcm_cmd(
+        media_path: str, start: float | None = None, end: float | None = None
+    ) -> list[str]:
+        """Build the FFmpeg argv decoding ``media_path`` to raw s16le mono PCM on stdout.
+
+        Shared by ``rms_envelope`` (windowed), ``analyze_audio_energy`` (whole-file), and
+        ``_decode_mono_pcm`` (speaker-count) — only the optional ``-ss``/``-to`` window differs.
+        """
+        cmd = [SystemUtils.get_ffmpeg_path()]
+        windowed = start is not None and end is not None
+        if windowed:
+            cmd += ["-ss", f"{start:.3f}", "-to", f"{end:.3f}"]
+        cmd += ["-i", media_path]
+        if windowed:
+            cmd += ["-vn"]  # media_path may be a video container; drop the video stream
+        cmd += [
+            "-f",
+            "s16le",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            str(RMS_SAMPLE_RATE),
+            "-ac",
+            "1",
+            "pipe:1",
+            "-loglevel",
+            "quiet",
+        ]
+        return cmd
+
     def _stream_rms(
         self,
         cmd: list[str],
@@ -76,28 +107,7 @@ class AudioEnergyAnalyzer:
         if end <= start or step_seconds <= 0:
             return []
 
-        ffmpeg_cmd = SystemUtils.get_ffmpeg_path()
-        cmd = [
-            ffmpeg_cmd,
-            "-ss",
-            f"{start:.3f}",
-            "-to",
-            f"{end:.3f}",
-            "-i",
-            media_path,
-            "-vn",
-            "-f",
-            "s16le",
-            "-acodec",
-            "pcm_s16le",
-            "-ar",
-            str(RMS_SAMPLE_RATE),
-            "-ac",
-            "1",
-            "pipe:1",
-            "-loglevel",
-            "quiet",
-        ]
+        cmd = self._pcm_cmd(media_path, start, end)
         return self._stream_rms(cmd, step_seconds)
 
     def analyze_audio_energy(self, audio_path: str, chunk_duration_sec: float = 1.0) -> list[dict]:
@@ -105,26 +115,8 @@ class AudioEnergyAnalyzer:
         Generates a pseudo-heatmap by calculating RMS energy of audio chunks.
         Returns standard clip objects based on the loudest spikes.
         """
-        ffmpeg_cmd = SystemUtils.get_ffmpeg_path()
-
         logger.info("Scanning audio for energetic moments.")
-        cmd = [
-            ffmpeg_cmd,
-            "-i",
-            audio_path,
-            "-f",
-            "s16le",
-            "-acodec",
-            "pcm_s16le",
-            "-ar",
-            str(RMS_SAMPLE_RATE),
-            "-ac",
-            "1",
-            "pipe:1",
-            "-loglevel",
-            "quiet",
-        ]
-
+        cmd = self._pcm_cmd(audio_path)
         rms_values = self._stream_rms(cmd, chunk_duration_sec)
 
         energies = [
@@ -199,22 +191,7 @@ class AudioEnergyAnalyzer:
 
     def _decode_mono_pcm(self, audio_path: str) -> np.ndarray:
         """Decode an audio file to a float32 mono 8 kHz sample array (empty on failure)."""
-        cmd = [
-            SystemUtils.get_ffmpeg_path(),
-            "-i",
-            audio_path,
-            "-f",
-            "s16le",
-            "-acodec",
-            "pcm_s16le",
-            "-ar",
-            str(RMS_SAMPLE_RATE),
-            "-ac",
-            "1",
-            "pipe:1",
-            "-loglevel",
-            "quiet",
-        ]
+        cmd = self._pcm_cmd(audio_path)
         try:
             out = subprocess.run(cmd, capture_output=True).stdout
         except Exception as e:

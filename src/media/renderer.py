@@ -24,6 +24,7 @@ from src.media.slicer import AudioSlicer
 from src.media.subtitles import SubtitleGenerator
 from src.vision.content_type_detector import ContentTypeDetector
 from src.vision.face_tracker import FaceTracker
+from src.vision.frame_utils import probe_video_dims
 from src.vision.layout_builder import LayoutBuilder
 from src.vision.overlay_detector import OverlayDetector
 from src.vision.visual_analyzer import VisualAnalyzer
@@ -301,12 +302,7 @@ class ClipRenderer:
                 else []
             )
             # Probe source video dimensions for debug-position logging.
-            import cv2
-
-            cap = cv2.VideoCapture(str(video_path))
-            src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
-            src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
-            cap.release()
+            src_w, src_h, _fps, _frames = probe_video_dims(video_path)
 
             # Log explicit panel assignment for collaboration layout.
             if len(collab_cams) >= 2:
@@ -388,15 +384,11 @@ class ClipRenderer:
         return txt_path
 
     @staticmethod
-    def _match_cached_mediashare(
-        cache: dict | None,
-        start: float,
-        end: float,
-    ) -> tuple[bool, tuple | None] | None:
-        """Find a cached donation scan entry whose window fully contains [start, end] (±0.5s).
+    def _smallest_containing_candidate(cache: dict | None, start: float, end: float) -> dict | None:
+        """Smallest cached candidate window fully containing [start, end] (±0.5s tolerance).
 
-        Returns ``(mediashare_present, mediashare_box)`` from the smallest matching window,
-        or ``None`` on cache miss so the caller falls back to a fresh scan.
+        Shared by ``_match_cached_mediashare`` and ``_match_cached_words`` — both caches use the
+        same ``{"candidates": [{"start", "end", ...}]}`` schema and selection rule.
         """
         if not cache:
             return None
@@ -409,6 +401,20 @@ class ClipRenderer:
                 and (best is None or (ce - cs) < (float(best["end"]) - float(best["start"])))
             ):
                 best = cand
+        return best
+
+    @staticmethod
+    def _match_cached_mediashare(
+        cache: dict | None,
+        start: float,
+        end: float,
+    ) -> tuple[bool, tuple | None] | None:
+        """Find a cached donation scan entry whose window fully contains [start, end] (±0.5s).
+
+        Returns ``(mediashare_present, mediashare_box)`` from the smallest matching window,
+        or ``None`` on cache miss so the caller falls back to a fresh scan.
+        """
+        best = ClipRenderer._smallest_containing_candidate(cache, start, end)
         if best is None:
             return None
         box = best.get("mediashare_box")
@@ -516,16 +522,7 @@ class ClipRenderer:
     @staticmethod
     def _match_cached_words(cache: dict, start: float, end: float) -> dict | None:
         """Smallest cached candidate window fully containing [start, end] (±0.5s tolerance)."""
-        best: dict | None = None
-        for cand in cache.get("candidates", []):
-            cs, ce = float(cand["start"]), float(cand["end"])
-            if (
-                cs - 0.5 <= start
-                and end <= ce + 0.5
-                and (best is None or (ce - cs) < (float(best["end"]) - float(best["start"])))
-            ):
-                best = cand
-        return best
+        return ClipRenderer._smallest_containing_candidate(cache, start, end)
 
     @staticmethod
     def _slice_cached_segments(cand: dict, start: float, end: float) -> list[dict]:

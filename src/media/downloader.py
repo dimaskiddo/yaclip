@@ -12,7 +12,7 @@ from loguru import logger
 
 from src.core.config import load_config
 from src.core.exceptions import DownloadError
-from src.core.utils import SystemUtils
+from src.core.utils import SystemUtils, extract_digits
 from src.core.workspace import DATA_DIR, TMP_DIR, active_pipeline_event
 from src.media.audio import AudioExtractor
 
@@ -185,9 +185,7 @@ class VideoDownloader:
             browser = dl_cfg.browser_cookies
 
             # Robustly parse resolution and audio quality digits
-            target_res_raw = dl_cfg.target_resolution
-            res_match = re.search(r"\d+", str(target_res_raw))
-            target_res = res_match.group(0) if res_match else "1080"
+            target_res = extract_digits(dl_cfg.target_resolution, default="1080")
 
             vid_ext = dl_cfg.video_format
 

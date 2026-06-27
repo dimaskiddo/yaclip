@@ -5,10 +5,7 @@ from loguru import logger
 from src.core.config import load_config
 from src.core.constants import (
     FACECAM_DOMINANT_AREA_FRAC,
-    FACECAM_EDGE_SCORE_MIN,
     FACECAM_FIT_FACTOR,
-    FACECAM_MAX_AREA_FRAC,
-    FACECAM_MIN_AREA_FRAC,
     STACK2_PANEL_ASPECT,
     STACK3_PANEL_ASPECT,
     TARGET_HEIGHT,
@@ -16,7 +13,14 @@ from src.core.constants import (
     ContentType,
     LayoutMode,
 )
-from src.core.utils import boxes_overlap, make_even
+from src.core.utils import (
+    box_center,
+    boxes_overlap,
+    center_crop,
+    clamp_crop_x,
+    expand_box_to_aspect,
+    is_facecam_candidate,
+)
 
 
 class LayoutBuilder:
@@ -109,12 +113,17 @@ class LayoutBuilder:
     def _facecam_single_vertical_crops(self, analysis: dict, width: int, height: int) -> list[dict]:
         """Synthesize a single static 9:16 crop centred on the facecam for Mode A rendering."""
         box = analysis.get("facecam_box")
-        crop_w = make_even(min(width, int(round(height * (9.0 / 16.0)))))
-        crop_h = make_even(height)
-        cx = (box[0] + box[2] / 2) if box else width / 2
-        crop_x = make_even(int(max(0, min(cx - crop_w / 2, width - crop_w))))
+        crop = center_crop(width, height, 9.0 / 16.0)
+        cx = box_center(box)[0] if box else width / 2
+        crop_x = clamp_crop_x(cx, crop["w"], width)
         return [
-            {"timestamp": 0.0, "crop_x": crop_x, "crop_y": 0, "crop_w": crop_w, "crop_h": crop_h}
+            {
+                "timestamp": 0.0,
+                "crop_x": crop_x,
+                "crop_y": 0,
+                "crop_w": crop["w"],
+                "crop_h": crop["h"],
+            }
         ]
 
     # ---------------------------------------------------------------- Mode B
@@ -133,7 +142,7 @@ class LayoutBuilder:
         spec["bottom_mode"] = "gameplay"
         # Centred, panel-aspect gameplay crop that fills the panel (focused), excluding the corner
         # cam. The damped pan track gently follows the character (small movement).
-        spec["bottom_crop"] = analysis.get("gameplay_box") or self._center_crop(
+        spec["bottom_crop"] = analysis.get("gameplay_box") or center_crop(
             width, height, STACK2_PANEL_ASPECT
         )
         spec["bottom_track"] = analysis.get("gameplay_track") or []
@@ -152,7 +161,7 @@ class LayoutBuilder:
         mediashare_box = self._mediashare_box(analysis, overlay_data)
         if mediashare_box is not None:
             spec["bottom_mode"] = "mediashare"
-            spec["bottom_crop"] = self._expand_box_to_aspect(
+            spec["bottom_crop"] = expand_box_to_aspect(
                 *mediashare_box, width, height, STACK2_PANEL_ASPECT
             )
             logger.info("Layout: webcam top, donation popup bottom.")
@@ -161,7 +170,7 @@ class LayoutBuilder:
             # Promoted to donation but no usable popup box (e.g. content_type forced via config) →
             # degrade gracefully to the gameplay bottom rather than a black panel.
             spec["bottom_mode"] = "gameplay"
-            spec["bottom_crop"] = analysis.get("gameplay_box") or self._center_crop(
+            spec["bottom_crop"] = analysis.get("gameplay_box") or center_crop(
                 width, height, STACK2_PANEL_ASPECT
             )
             spec["bottom_track"] = analysis.get("gameplay_track") or []
@@ -184,7 +193,7 @@ class LayoutBuilder:
         facecam_box = analysis.get("facecam_box")
         collab_box = analysis.get("collab_box")
         if collab_box is not None:
-            spec["collab_crop"] = self._expand_box_to_aspect(
+            spec["collab_crop"] = expand_box_to_aspect(
                 int(collab_box[0]),
                 int(collab_box[1]),
                 int(collab_box[2]),
@@ -193,7 +202,7 @@ class LayoutBuilder:
                 height,
                 STACK3_PANEL_ASPECT,
             )
-            spec["gameplay_crop"] = analysis.get("gameplay_box") or self._center_crop(
+            spec["gameplay_crop"] = analysis.get("gameplay_box") or center_crop(
                 width, height, STACK3_PANEL_ASPECT
             )
             spec["gameplay_track"] = analysis.get("gameplay_track") or []
@@ -210,13 +219,7 @@ class LayoutBuilder:
             return facecam_box is None or not boxes_overlap(tuple(box), tuple(facecam_box), 0.3)
 
         def _edge_cam(box: tuple) -> bool:
-            area_frac = (float(box[2]) * float(box[3])) / frame_area
-            if not (FACECAM_MIN_AREA_FRAC <= area_frac <= FACECAM_MAX_AREA_FRAC):
-                return False
-            cx, cy = box[0] + box[2] / 2.0, box[1] + box[3] / 2.0
-            margin = min(cx, width - cx, cy, height - cy)
-            edge_score = max(0.0, 1.0 - margin / max(1.0, min(width, height) / 2.0))
-            return edge_score >= FACECAM_EDGE_SCORE_MIN
+            return is_facecam_candidate(box, frame_area, width, height)
 
         collab_src = next(
             (b for b in persons if _not_primary(b) and _edge_cam(b)),
@@ -224,7 +227,7 @@ class LayoutBuilder:
         )
 
         if collab_src is not None:
-            spec["collab_crop"] = self._expand_box_to_aspect(
+            spec["collab_crop"] = expand_box_to_aspect(
                 int(collab_src[0]),
                 int(collab_src[1]),
                 int(collab_src[2]),
@@ -234,12 +237,12 @@ class LayoutBuilder:
                 STACK3_PANEL_ASPECT,
             )
         else:
-            spec["collab_crop"] = self._center_crop(width, height, STACK3_PANEL_ASPECT)
+            spec["collab_crop"] = center_crop(width, height, STACK3_PANEL_ASPECT)
 
         # Gameplay centre panel (1080x640): same zoomed, static-first pan engine as GAMING_SOLO,
         # shaped to the 3-stack aspect (the analyzer produced gameplay_box/gameplay_track at 1.6875
         # for collab clips). Falls back to a centred panel-aspect crop when no region is available.
-        spec["gameplay_crop"] = analysis.get("gameplay_box") or self._center_crop(
+        spec["gameplay_crop"] = analysis.get("gameplay_box") or center_crop(
             width, height, STACK3_PANEL_ASPECT
         )
         spec["gameplay_track"] = analysis.get("gameplay_track") or []
@@ -250,8 +253,8 @@ class LayoutBuilder:
         """Facecam box expanded to the destination panel aspect (or centre fallback)."""
         box = analysis.get("facecam_box")
         if not box:
-            return self._center_crop(width, height, aspect)
-        return self._expand_box_to_aspect(
+            return center_crop(width, height, aspect)
+        return expand_box_to_aspect(
             int(box[0]), int(box[1]), int(box[2]), int(box[3]), width, height, aspect
         )
 
@@ -292,7 +295,7 @@ class LayoutBuilder:
         box = analysis.get("facecam_box")
         if not box:
             # Centre crop is already panel-aspect → scales clean.
-            return self._center_crop(width, height, STACK2_PANEL_ASPECT), "fit"
+            return center_crop(width, height, STACK2_PANEL_ASPECT), "fit"
 
         fx, fy, fw, fh = (int(v) for v in box)
         cx, cy = fx + fw / 2.0, fy + fh / 2.0
@@ -300,40 +303,5 @@ class LayoutBuilder:
         eh = min(float(height), fh * FACECAM_FIT_FACTOR)
         ex = int(max(0, min(cx - ew / 2.0, width - ew)))
         ey = int(max(0, min(cy - eh / 2.0, height - eh)))
-        shaped = self._expand_box_to_aspect(
-            ex, ey, int(ew), int(eh), width, height, STACK2_PANEL_ASPECT
-        )
+        shaped = expand_box_to_aspect(ex, ey, int(ew), int(eh), width, height, STACK2_PANEL_ASPECT)
         return shaped, "fit"
-
-    def _center_crop(self, width: int, height: int, aspect: float) -> dict:
-        """Static centre crop pre-shaped to a panel aspect."""
-        crop_h = make_even(height)
-        crop_w = make_even(min(width, int(round(height * aspect))))
-        crop_x = make_even((width - crop_w) // 2)
-        crop_y = make_even((height - crop_h) // 2)
-        return {"x": crop_x, "y": crop_y, "w": crop_w, "h": crop_h}
-
-    def _expand_box_to_aspect(
-        self, x: int, y: int, w: int, h: int, width: int, height: int, aspect: float
-    ) -> dict:
-        """Expand an arbitrary box to a panel aspect, centred + clamped to frame."""
-        cx = x + w / 2.0
-        cy = y + h / 2.0
-
-        if w / max(1, h) < aspect:
-            new_w, new_h = h * aspect, float(h)
-        else:
-            new_w, new_h = float(w), w / aspect
-
-        new_w = min(new_w, width)
-        new_h = min(new_h, height)
-        if new_w / new_h > aspect:
-            new_w = new_h * aspect
-        else:
-            new_h = new_w / aspect
-
-        crop_w = make_even(int(new_w))
-        crop_h = make_even(int(new_h))
-        crop_x = make_even(int(max(0, min(cx - crop_w / 2.0, width - crop_w))))
-        crop_y = make_even(int(max(0, min(cy - crop_h / 2.0, height - crop_h))))
-        return {"x": crop_x, "y": crop_y, "w": crop_w, "h": crop_h}

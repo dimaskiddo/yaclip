@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import platform
 import shutil
@@ -35,6 +36,47 @@ def _binary_exists(name: str, bin_dir: Path = BIN_DIR) -> bool:
     """Check if a binary exists in bin_dir, handling platform extension."""
     exe = bin_dir / (name + ".exe" if os.name == "nt" else name)
     return exe.exists()
+
+
+def workspace_path(video_id: str, suffix: str) -> Path:
+    """Build a ``DATA_DIR / f"{video_id}{suffix}"`` path (e.g. suffix="_words.json")."""
+    return DATA_DIR / f"{video_id}{suffix}"
+
+
+def save_candidate_cache(video_id: str, suffix: str, candidates: list[dict], label: str) -> None:
+    """Persist a ``{"video_id", "candidates": [...]}`` JSON cache for render-time reuse.
+
+    Shared by the per-candidate word-timing and donation-scan caches (``stt_local.py``) — same
+    schema, only the filename suffix and log noun differ.
+
+    Args:
+        video_id: The source video's id (filename stem).
+        suffix: Filename suffix appended to ``video_id``, e.g. "_words.json".
+        candidates: The per-candidate dicts to persist verbatim.
+        label: Human-readable noun for the log line, e.g. "word timing data".
+    """
+    path = workspace_path(video_id, suffix)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.write_text(
+            json.dumps({"video_id": video_id, "candidates": candidates}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        logger.info(f"Saved {label} ({len(candidates)} candidate(s)): {path.name}")
+    except OSError as e:
+        logger.warning(f"Could not save {label} to {path.name}: {e}")
+
+
+def load_candidate_cache(video_id: str, suffix: str, label: str) -> dict | None:
+    """Load a candidate cache written by ``save_candidate_cache``, or None if absent/unreadable."""
+    path = workspace_path(video_id, suffix)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        logger.warning(f"Could not read {label} from {path.name}: {e}")
+        return None
 
 
 def ensure_workspace_integrity() -> None:

@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
+from src.core.constants import FACECAM_EDGE_SCORE_MIN, FACECAM_MAX_AREA_FRAC, FACECAM_MIN_AREA_FRAC
 from src.core.exceptions import AIProviderError
 from src.core.workspace import BIN_DIR
 
@@ -42,6 +44,91 @@ def boxes_overlap(
     if bx <= acx <= bx + bw and by <= acy <= by + bh:
         return True
     return box_iou(a, b) > thresh
+
+
+def extract_digits(value: object, default: str = "1080") -> str:
+    """Extract leading digits from a config value like ``"1080p"`` or ``"192K"``.
+
+    Args:
+        value: The raw config string (e.g. ``"1080p"``, ``"192k"``).
+        default: Fallback when no digits are found.
+
+    Returns:
+        The leading digit substring (e.g. ``"1080"``, ``"192"``).
+    """
+    match = re.search(r"\d+", str(value))
+    return match.group(0) if match else default
+
+
+def box_center(box: tuple[float, float, float, float]) -> tuple[float, float]:
+    """Centre point (cx, cy) of an (x, y, w, h) box."""
+    return (box[0] + box[2] / 2.0, box[1] + box[3] / 2.0)
+
+
+def edge_score(box: tuple[float, float, float, float], width: int, height: int) -> float:
+    """1 − (centre's distance to the nearest frame edge) / (min(w,h)/2).
+
+    ~0 for an interior box (far from every border), high for one hugging any edge/corner.
+    Shared by VisualAnalyzer's facecam picking and LayoutBuilder's collab-cam fallback.
+    """
+    cx, cy = box_center(box)
+    margin = min(cx, width - cx, cy, height - cy)
+    half = max(1.0, min(width, height) / 2.0)
+    return max(0.0, 1.0 - margin / half)
+
+
+def is_facecam_candidate(
+    box: tuple[float, float, float, float], frame_area: float, width: int, height: int
+) -> bool:
+    """True when a box is cam-sized (not a tiny character or a full-frame face) and edge-hugging.
+
+    Shared gate behind GAMING_SOLO/COLLAB webcam detection (VisualAnalyzer) and the Mode C
+    collaborator fallback (LayoutBuilder) — both need "is this person box a real webcam?".
+    """
+    area_frac = (float(box[2]) * float(box[3])) / frame_area
+    if not (FACECAM_MIN_AREA_FRAC <= area_frac <= FACECAM_MAX_AREA_FRAC):
+        return False
+    return edge_score(box, width, height) >= FACECAM_EDGE_SCORE_MIN
+
+
+def center_crop(width: int, height: int, aspect: float) -> dict:
+    """Static centre crop pre-shaped to a panel aspect (even-rounded)."""
+    crop_h = make_even(height)
+    crop_w = make_even(min(width, int(round(height * aspect))))
+    crop_x = make_even((width - crop_w) // 2)
+    crop_y = make_even((height - crop_h) // 2)
+    return {"x": crop_x, "y": crop_y, "w": crop_w, "h": crop_h}
+
+
+def expand_box_to_aspect(
+    x: int, y: int, w: int, h: int, width: int, height: int, aspect: float
+) -> dict:
+    """Expand an arbitrary box to a panel aspect, centred + clamped to the frame."""
+    cx = x + w / 2.0
+    cy = y + h / 2.0
+
+    if w / max(1, h) < aspect:
+        new_w, new_h = h * aspect, float(h)
+    else:
+        new_w, new_h = float(w), w / aspect
+
+    new_w = min(new_w, width)
+    new_h = min(new_h, height)
+    if new_w / new_h > aspect:
+        new_w = new_h * aspect
+    else:
+        new_h = new_w / aspect
+
+    crop_w = make_even(int(new_w))
+    crop_h = make_even(int(new_h))
+    crop_x = make_even(int(max(0, min(cx - crop_w / 2.0, width - crop_w))))
+    crop_y = make_even(int(max(0, min(cy - crop_h / 2.0, height - crop_h))))
+    return {"x": crop_x, "y": crop_y, "w": crop_w, "h": crop_h}
+
+
+def clamp_crop_x(center_x: float, crop_w: int, width: int) -> int:
+    """Clamp a crop's horizontal position so a ``crop_w``-wide box stays inside ``width``."""
+    return make_even(int(max(0, min(center_x - crop_w / 2.0, width - crop_w))))
 
 
 class SystemUtils:
@@ -142,6 +229,37 @@ class SystemUtils:
 
 
 class AIUtils:
+    @staticmethod
+    def has_credentials(api_key: str | None) -> bool:
+        """True when ``api_key`` is set and is not the config.yaml.example placeholder."""
+        from src.core.constants import PLACEHOLDER_API_KEY
+
+        return bool(api_key and api_key != PLACEHOLDER_API_KEY)
+
+    @staticmethod
+    def load_whisper_model(model_size: str, device: str) -> object:
+        """Load a faster-whisper ``WhisperModel`` with the shared compute-type rule.
+
+        Int8 quantization destroys tiny/base accuracy on CPU, so those sizes force float32.
+        """
+        from faster_whisper import WhisperModel
+
+        c_type = "float32" if model_size in ("tiny", "base") else "int8"
+        resolved_device = SystemUtils.resolve_device(device)
+        return WhisperModel(model_size, device=resolved_device, compute_type=c_type)
+
+    @staticmethod
+    def load_llama(resolved_path: str, n_gpu_layers: int) -> object:
+        """Load a ``llama_cpp.Llama`` model with the shared context/verbosity defaults."""
+        from llama_cpp import Llama
+
+        return Llama(
+            model_path=resolved_path,
+            n_ctx=4096,
+            n_gpu_layers=n_gpu_layers,
+            verbose=False,
+        )
+
     @staticmethod
     def resolve_llm_model_path(model_path: str) -> str:
         """Resolves local model path, downloading from HuggingFace Hub if tag exists."""

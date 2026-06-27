@@ -46,6 +46,7 @@ from src.core.constants import (
 from src.core.utils import SystemUtils, box_iou, make_even
 from src.core.workspace import MODELS_DIR
 from src.media.energy import AudioEnergyAnalyzer
+from src.vision.frame_utils import clip_frame_range, load_yolo, video_props, yolo_predict_boxes
 
 
 class FaceTracker:
@@ -87,17 +88,8 @@ class FaceTracker:
             logger.error(f"Cannot open video for tracking: {video_path}")
             return []
 
-        fps = cap.get(cv2.CAP_PROP_FPS) or 29.97
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-        start_frame = int(start_time * fps)
-        end_frame = int(end_time * fps)
-
-        # Clip boundaries
-        start_frame = max(0, min(start_frame, total_frames - 1))
-        end_frame = max(start_frame + 1, min(end_frame, total_frames))
+        width, height, fps, total_frames = video_props(cap)
+        start_frame, end_frame = clip_frame_range(fps, total_frames, start_time, end_time)
         clip_frame_count = end_frame - start_frame
 
         logger.debug(
@@ -190,19 +182,13 @@ class FaceTracker:
         import cv2
 
         cfg = self.config.video_processing.region_detection
-        model_path = MODELS_DIR / cfg.model_name
-        model_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            from ultralytics import YOLO
+            model = load_yolo(cfg)
         except ImportError:
             logger.warning("Object detection unavailable — using center crops for this clip.")
             return []
 
-        target = str(model_path) if model_path.exists() else cfg.model_name
-
-        logger.info("Loading object detection model...")
-        model = YOLO(target)
         device = SystemUtils.resolve_device(cfg.device)
 
         detections = []
@@ -212,24 +198,11 @@ class FaceTracker:
             if not ret:
                 break
 
-            results = model.predict(frame, verbose=False, device=device)
             faces = []
-            for res in results:
-                for box in res.boxes:
-                    if int(box.cls[0]) != COCO_CLASS_PERSON:
-                        continue
-                    x1, y1, x2, y2 = (float(v) for v in box.xyxy[0])
-                    faces.append(
-                        {
-                            "box": (
-                                max(0.0, x1),
-                                max(0.0, y1),
-                                x2 - x1,
-                                y2 - y1,
-                            ),
-                            "score": float(box.conf[0]),
-                        }
-                    )
+            for cls_id, conf, (x, y, w, h) in yolo_predict_boxes(model, frame, device):
+                if cls_id != COCO_CLASS_PERSON:
+                    continue
+                faces.append({"box": (max(0.0, x), max(0.0, y), w, h), "score": conf})
             detections.append({"frame_idx": idx, "faces": faces})
 
         return detections
