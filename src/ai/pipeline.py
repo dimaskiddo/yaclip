@@ -34,8 +34,11 @@ from src.core.constants import (
     BASE_CONTENT_TYPES,
     CANDIDATE_WINDOW_BUFFER,
     MIN_CLIP_SECONDS,
+    STT_THREAD_POOL,
+    VISUAL_THREAD_POOL,
     ContentType,
 )
+from src.core.exceptions import AIProviderError
 from src.core.utils import AIUtils
 from src.core.workspace import DATA_DIR, TMP_DIR, active_pipeline_event
 from src.media.energy import AudioEnergyAnalyzer
@@ -194,7 +197,7 @@ class AIPipeline:
 
         except Exception as e:
             logger.error(f"Combined Gemini analysis failed: {e}")
-            raise e
+            raise AIProviderError(f"Combined Gemini analysis failed: {e}") from e
         finally:
             if uploaded_file:
                 gemini_delete_quiet(uploaded_file)
@@ -222,9 +225,7 @@ class AIPipeline:
                         f"Cloud transcription failed: {e}. Switching to local transcription."
                     )
                 else:
-                    raise e
-
-        # Local STT path
+                    raise AIProviderError(f"Cloud STT failed: {e}") from e
         local_provider = LocalSTTProvider()
         return local_provider.transcribe(
             audio_path, force=force, model=whisper_model, cache_dir=cache_dir
@@ -258,7 +259,7 @@ class AIPipeline:
                 if provider == "auto":
                     logger.warning(f"Cloud AI analysis failed: {e}. Switching to local AI.")
                 else:
-                    raise e
+                    raise AIProviderError(f"Cloud AI analysis failed: {e}") from e
 
         # Local LLM path
         local_provider = LocalLLMProvider()
@@ -299,7 +300,7 @@ class AIPipeline:
                 if provider == "auto":
                     logger.warning(f"Cloud AI batch analysis failed: {e}. Switching to local AI.")
                 else:
-                    raise e
+                    raise AIProviderError(f"Cloud AI batch analysis failed: {e}") from e
 
         # Local LLM path
         local_provider = LocalLLMProvider()
@@ -580,7 +581,7 @@ class AIPipeline:
                 return (i, spike, chunk_path, s_start, s_end, success)
 
             logger.info("Slicing audio from candidate sections.")
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=STT_THREAD_POOL) as executor:
                 # Preserve order by mapping
                 results = list(executor.map(_slice_chunk, enumerate(top_candidates)))
 
@@ -676,7 +677,9 @@ class AIPipeline:
                 stt_results = [_transcribe_chunk(data) for data in sliced_chunks]
             else:
                 logger.info("Transcribing candidate sections with cloud speech-to-text.")
-                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=VISUAL_THREAD_POOL
+                ) as executor:
                     stt_results = list(executor.map(_transcribe_chunk, sliced_chunks))
 
             word_cache: list[dict] = []

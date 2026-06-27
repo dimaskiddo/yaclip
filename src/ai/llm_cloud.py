@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from loguru import logger
 
-from src.ai.api_client import retry_api_call
+from src.ai.api_client import make_openai_client, retry_api_call
 from src.ai.prompts import (
     build_batch_system_prompt,
     build_batch_user_prompt,
@@ -35,6 +35,14 @@ class CloudLLMProvider:
                 f"API key for LLM provider '{self.provider}' is missing or not configured."
             )
 
+        if self.provider == "google":
+            try:
+                import google.generativeai as genai
+            except ImportError as e:
+                logger.error("google-generativeai package is not installed.")
+                raise ImportError("google-generativeai package missing.") from e
+            genai.configure(api_key=self.api_key)
+
     def _analyze_transcript_openai(
         self,
         transcript: str,
@@ -43,22 +51,7 @@ class CloudLLMProvider:
         target_clips: int = 5,
     ) -> list[dict]:
         """Uses OpenAI to analyze transcript and extract highlights."""
-        try:
-            from openai import OpenAI
-        except ImportError as e:
-            logger.error("openai package is not installed.")
-            raise ImportError("openai package missing.") from e
-
-        from httpx import Timeout as HTTPXTimeout
-
-        client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url,
-            timeout=HTTPXTimeout(
-                connect=self.timeout, read=self.timeout, write=self.timeout, pool=self.timeout
-            ),
-            max_retries=3,
-        )
+        client = make_openai_client(self.api_key, self.base_url, self.timeout)
 
         language = self.config.video_processing.subtitles.language
         system_prompt = get_system_prompt(
@@ -107,13 +100,8 @@ class CloudLLMProvider:
         target_clips: int = 5,
     ) -> list[dict]:
         """Uses Gemini to analyze transcript and extract highlights."""
-        try:
-            import google.generativeai as genai
-        except ImportError as e:
-            logger.error("google-generativeai package is not installed.")
-            raise ImportError("google-generativeai package missing.") from e
+        import google.generativeai as genai
 
-        genai.configure(api_key=self.api_key)
         logger.info("Sending transcript to Gemini for clip selection...")
 
         @retry_api_call(max_retries=3)
@@ -167,22 +155,7 @@ class CloudLLMProvider:
         target_duration: int = 60,
     ) -> list[dict]:
         """Uses OpenAI to compare and select the best clips from candidates in a single batched call."""
-        try:
-            from openai import OpenAI
-        except ImportError as e:
-            logger.error("openai package is not installed.")
-            raise ImportError("openai package missing.") from e
-
-        from httpx import Timeout as HTTPXTimeout
-
-        client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url,
-            timeout=HTTPXTimeout(
-                connect=self.timeout, read=self.timeout, write=self.timeout, pool=self.timeout
-            ),
-            max_retries=3,
-        )
+        client = make_openai_client(self.api_key, self.base_url, self.timeout)
 
         language = self.config.video_processing.subtitles.language
         base_sys_prompt = get_system_prompt(
@@ -234,13 +207,8 @@ class CloudLLMProvider:
         target_duration: int = 60,
     ) -> list[dict]:
         """Uses Gemini to compare and select the best clips from candidates in a single batched call."""
-        try:
-            import google.generativeai as genai
-        except ImportError as e:
-            logger.error("google-generativeai package is not installed.")
-            raise ImportError("google-generativeai package missing.") from e
+        import google.generativeai as genai
 
-        genai.configure(api_key=self.api_key)
         logger.info("Sending all candidate clips to Gemini for batch selection...")
 
         @retry_api_call(max_retries=3)

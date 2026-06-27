@@ -361,3 +361,24 @@ CONTENT_TYPE_HUMAN_NAMES: dict[str, str] = {
     "GAMING_COLLAB": "gaming collaboration",
     "DONATION_OVERLAY": "donation overlay",
 }
+
+# ── LLM inference constants ──
+# Token limits for local LLM responses (single transcript vs. batch candidate selection).
+LLM_MAX_TOKENS_SINGLE: int = 1024
+LLM_MAX_TOKENS_BATCH: int = 2048
+
+# Default context window for llama.cpp models (n_ctx parameter).
+LLAMA_N_CTX: int = 4096
+
+# ── Pipeline thread-pool sizes ──
+# STT transcription: number of parallel workers for candidate audio slice decoding.
+STT_THREAD_POOL: int = 4
+# Region/visual analysis: number of parallel workers for candidate video window scanning.
+VISUAL_THREAD_POOL: int = 5
+
+# ── Bytes-to-MB conversion factor ──
+BYTES_PER_MB: int = 1024 * 1024
+
+# ── Gameplay scan upper bound ──
+# Maximum number of frames scanned during gameplay pan / motion-region analysis.
+MAX_GAMEPLAY_SCAN_FRAMES: int = 120

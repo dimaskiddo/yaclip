@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import heapq
 import math
 import struct
 import subprocess
@@ -69,26 +70,25 @@ class AudioEnergyAnalyzer:
         RMS value per ``chunk_duration_sec`` chunk.  Shared by ``analyze_audio_energy``
         (whole-file heatmap) and ``rms_envelope`` (windowed, aligned to detection steps)."""
         try:
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+                chunk_size = int(RMS_SAMPLE_RATE * chunk_duration_sec * 2)  # 2 bytes/sample
+                chunk_size = max(2, chunk_size - (chunk_size % 2))  # keep whole 16-bit samples
+
+                rms_values: list[float] = []
+                while True:
+                    data = process.stdout.read(chunk_size)
+                    if not data:
+                        break
+                    samples = struct.unpack(f"<{len(data) // 2}h", data)
+                    if not samples:
+                        break
+                    rms_values.append(math.sqrt(sum(s * s for s in samples) / len(samples)))
+
+                process.wait()
+                return rms_values
         except Exception as e:
             logger.error(f"Failed to start audio analysis process: {e}")
             return []
-
-        chunk_size = int(RMS_SAMPLE_RATE * chunk_duration_sec * 2)  # 2 bytes/sample
-        chunk_size = max(2, chunk_size - (chunk_size % 2))  # keep whole 16-bit samples
-
-        rms_values: list[float] = []
-        while True:
-            data = process.stdout.read(chunk_size)
-            if not data:
-                break
-            samples = struct.unpack(f"<{len(data) // 2}h", data)
-            if not samples:
-                break
-            rms_values.append(math.sqrt(sum(s * s for s in samples) / len(samples)))
-
-        process.wait()
-        return rms_values
 
     def rms_envelope(
         self,
@@ -133,8 +133,8 @@ class AudioEnergyAnalyzer:
         min_duration = clip_cfg.min_clip_duration_seconds
         max_clips = clip_cfg.spike_pool_size
 
-        # Sort by RMS descending to find the absolute loudest moments
-        loudest = sorted(energies, key=lambda x: x["rms"], reverse=True)
+        # Pick top N loudest moments via heap (O(n log k) vs full sort O(n log n))
+        loudest = heapq.nlargest(max_clips, energies, key=lambda x: x["rms"])
 
         clips = []
         for peak in loudest:

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from src.core.constants import BYTES_PER_MB
 from src.core.exceptions import CacheInitError
 
 # Global Path Constants
@@ -142,13 +143,14 @@ def ensure_workspace_integrity() -> None:
                 )
                 exe_name = "bun"
 
-            response = urllib.request.urlopen(url, timeout=60)
-            with zipfile.ZipFile(io.BytesIO(response.read())) as z:
+            with (
+                urllib.request.urlopen(url, timeout=60) as response,
+                zipfile.ZipFile(io.BytesIO(response.read())) as z,
+            ):
                 for file_name in z.namelist():
                     if file_name.endswith(exe_name):
-                        source = z.open(file_name)
                         target_path = BIN_DIR / exe_name
-                        with open(target_path, "wb") as target:
+                        with z.open(file_name) as source, open(target_path, "wb") as target:
                             shutil.copyfileobj(source, target)
                         if system != "windows":
                             os.chmod(target_path, 0o755)
@@ -274,7 +276,7 @@ def run_purge_cycle(force: bool = False, specific_target: str | list[str] | None
                     logger.warning(f"Workspace Cleaner - Failed to process/delete file {path}: {e}")
 
     if files_deleted > 0 or total_freed_bytes > 0:
-        freed_mb = total_freed_bytes / (1024 * 1024)
+        freed_mb = total_freed_bytes / BYTES_PER_MB
         logger.info(f"Workspace Cleaner - Purged {files_deleted} files, freeing {freed_mb:.2f} MB.")
     else:
         logger.info("Workspace Cleaner - Purge cycle completed. No stale files found.")

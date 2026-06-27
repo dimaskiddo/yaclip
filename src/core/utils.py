@@ -10,7 +10,12 @@ from typing import Any
 
 from loguru import logger
 
-from src.core.constants import FACECAM_EDGE_SCORE_MIN, FACECAM_MAX_AREA_FRAC, FACECAM_MIN_AREA_FRAC
+from src.core.constants import (
+    FACECAM_EDGE_SCORE_MIN,
+    FACECAM_MAX_AREA_FRAC,
+    FACECAM_MIN_AREA_FRAC,
+    LLAMA_N_CTX,
+)
 from src.core.exceptions import AIProviderError
 from src.core.workspace import BIN_DIR
 
@@ -146,7 +151,7 @@ class SystemUtils:
                     if "microsoft" in version_info or "wsl" in version_info:
                         return True
             except FileNotFoundError:
-                pass
+                logger.debug("Not running under WSL (/proc/version not found).")
         return False
 
     @staticmethod
@@ -216,7 +221,7 @@ class SystemUtils:
             if torch.cuda.is_available():
                 resolved = "cuda"
         except ImportError:
-            pass
+            logger.debug("torch not installed; compute device defaults to CPU.")
 
         # Log the resolved device only the first time (it's queried on every model load).
         if not SystemUtils._device_logged:
@@ -255,7 +260,7 @@ class AIUtils:
 
         return Llama(
             model_path=resolved_path,
-            n_ctx=4096,
+            n_ctx=LLAMA_N_CTX,
             n_gpu_layers=n_gpu_layers,
             verbose=False,
         )
@@ -268,7 +273,7 @@ class AIUtils:
                 from huggingface_hub import hf_hub_download, list_repo_files
             except ImportError as e:
                 logger.error("huggingface_hub is not installed.")
-                raise ImportError("huggingface_hub package missing.") from e
+                raise AIProviderError("huggingface_hub package missing.") from e
 
             repo_id, tag_or_filename = model_path.split(":", 1)
 
@@ -306,7 +311,7 @@ class AIUtils:
         else:
             if not Path(model_path).exists():
                 logger.error(f"Local model path does not exist: {model_path}")
-                raise FileNotFoundError(f"Model path does not exist: {model_path}")
+                raise AIProviderError(f"Model path does not exist: {model_path}")
             return model_path
 
     @staticmethod
@@ -322,9 +327,9 @@ class AIUtils:
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse AI response as JSON: {e}")
             logger.debug(f"Raw AI response text: {clean_text}")
-            raise ValueError("Failed to parse JSON response.") from e
+            raise AIProviderError("Failed to parse JSON response.") from e
 
         if not isinstance(parsed_data, list):
-            raise ValueError("Parsed response is not a JSON array.")
+            raise AIProviderError("Parsed response is not a JSON array.")
 
         return parsed_data

@@ -593,7 +593,9 @@ class VisualAnalyzer:
             _w, _h, fps, total = video_props(cap)
             s_frame, e_frame = clip_frame_range(fps, total, start_time, end_time)
             step = max(1, int(fps * 0.5))  # ~2 fps
-            indices = list(range(s_frame, e_frame, step))[:120]  # bound cost
+            from src.core.constants import MAX_GAMEPLAY_SCAN_FRAMES
+
+            indices = list(range(s_frame, e_frame, step))[:MAX_GAMEPLAY_SCAN_FRAMES]  # bound cost
 
             track: list[dict] = []
             levels: list[float] = []

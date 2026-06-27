@@ -4,9 +4,10 @@
   clip <URL>        — full pipeline (download → AI selection → render), with override flags
   config            — print the validated configuration (secrets masked)
   cache status      — per-directory workspace disk usage
-  cache purge       — manual workspace cleanup (optional --dry-run)
+  cache purge       — retention-respecting manual cleanup (opt-in --concern)
+  cache clean       — force-clean specific workspace directories
   serve             — launch the Gradio WebUI (stub; next phase)
-  clean-workspace   — hidden alias of `cache purge`
+  clean-workspace   — hidden alias of `cache clean`
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import yaml
 from loguru import logger
 
 from src.core.config import load_config
+from src.core.constants import BYTES_PER_MB
 from src.core.environment import ensure_vision_runtime
 from src.core.exceptions import DetectionError
 from src.core.utils import SystemUtils
@@ -216,7 +218,7 @@ def cache_status() -> None:
     now = time.time()
     for name, path in targets.items():
         files = [p for p in path.rglob("*") if p.is_file()] if path.exists() else []
-        size_mb = sum(p.stat().st_size for p in files) / (1024 * 1024)
+        size_mb = sum(p.stat().st_size for p in files) / BYTES_PER_MB
         oldest = f"{(now - min(p.stat().st_mtime for p in files)) / 86400:.1f}d" if files else "-"
         typer.echo(f"{name:<12}{size_mb:>12.1f}{len(files):>8}{oldest:>12}")
 
@@ -236,6 +238,17 @@ def cache_purge(
         load_config().workspace_cleanup.dry_run = True
     logger.info(f"Manual cache purge (target: {target or 'all'}, concern: {concern})...")
     run_purge_cycle(force=concern, specific_target=target)
+
+
+@cache_app.command("clean")
+def cache_clean(
+    target: list[str] = typer.Argument(  # noqa: B008
+        None, help="Space-separated workspace directories to force-clean"
+    ),
+) -> None:
+    """Force-clean specific workspace directories (bypasses retention & dry-run)."""
+    logger.info(f"Cache clean: {target or 'all'}...")
+    run_purge_cycle(force=True, specific_target=target)
 
 
 @cli.command("clean-workspace", hidden=True)

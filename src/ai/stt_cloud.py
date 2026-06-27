@@ -8,6 +8,7 @@ from src.ai.api_client import (
     gemini_delete_quiet,
     gemini_generate,
     gemini_upload_and_wait,
+    make_openai_client,
     retry_api_call,
 )
 from src.ai.prompts import get_language_prompt
@@ -40,22 +41,7 @@ class CloudSTTProvider:
 
     def _transcribe_openai(self, audio_path: str) -> str:
         """Transcribes audio using OpenAI API and returns the transcript text."""
-        try:
-            from openai import OpenAI
-        except ImportError as e:
-            logger.error("openai package is not installed.")
-            raise ImportError("openai package missing.") from e
-
-        from httpx import Timeout as HTTPXTimeout
-
-        client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url,
-            timeout=HTTPXTimeout(
-                connect=self.timeout, read=self.timeout, write=self.timeout, pool=self.timeout
-            ),
-            max_retries=3,
-        )
+        client = make_openai_client(self.api_key, self.base_url, self.timeout)
         logger.info("Starting cloud transcription with OpenAI...")
 
         language = self.config.video_processing.subtitles.language

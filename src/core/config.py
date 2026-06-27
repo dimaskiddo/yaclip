@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
@@ -58,7 +59,7 @@ def alignment_to_int(value: object) -> object:
 
 
 class LoggingConfig(BaseModel):
-    level: str = Field(default="INFO")
+    level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(default="INFO")
     file_path: str = Field(default=str(LOGS_DIR / "app.log"))
     rotation: str = Field(default="50 MB")
     retention: str = Field(default="7 days")
@@ -71,7 +72,7 @@ class WebServerConfig(BaseModel):
 
 
 class STTCloudConfig(BaseModel):
-    provider: str = Field(default="google")
+    provider: Literal["google", "openai"] = Field(default="google")
     api_key: str = Field(default="your-api-key-here")
     model: str = Field(default="gemini-2.5-flash")
     timeout: int = Field(default=300, ge=30, le=600)
@@ -94,13 +95,13 @@ class STTLocalConfig(BaseModel):
 
 
 class AIPipelineSTTConfig(BaseModel):
-    provider: str = Field(default="local")
+    provider: Literal["cloud", "local", "auto"] = Field(default="local")
     cloud: STTCloudConfig = Field(default_factory=STTCloudConfig)
     local: STTLocalConfig = Field(default_factory=STTLocalConfig)
 
 
 class LLMCloudConfig(BaseModel):
-    provider: str = Field(default="google")
+    provider: Literal["google", "openai"] = Field(default="google")
     base_url: str | None = Field(default=None)
     api_key: str = Field(default="your-api-key-here")
     model: str = Field(default="gemini-2.5-flash")
@@ -114,7 +115,7 @@ class LLMLocalConfig(BaseModel):
 
 
 class AIPipelineLLMConfig(BaseModel):
-    provider: str = Field(default="cloud")
+    provider: Literal["cloud", "local", "auto"] = Field(default="cloud")
     cloud: LLMCloudConfig = Field(default_factory=LLMCloudConfig)
     local: LLMLocalConfig = Field(default_factory=LLMLocalConfig)
 
@@ -132,7 +133,7 @@ class DownloaderRetryConfig(BaseModel):
 
 
 class DownloaderConfig(BaseModel):
-    browser_cookies: str = Field(default="edge")
+    browser_cookies: Literal["edge", "chrome", "firefox", "brave", "opera"] = Field(default="edge")
     target_resolution: str = Field(default="1080p")
     video_format: str = Field(default="mp4")
     audio_format: str = Field(default="aac")
@@ -141,8 +142,8 @@ class DownloaderConfig(BaseModel):
 
 
 class ClipSelectionConfig(BaseModel):
-    mode: str = Field(default="auto")
-    auto_strategy: str = Field(default="hybrid")
+    mode: Literal["auto", "manual"] = Field(default="auto")
+    auto_strategy: Literal["ai", "heatmap", "hybrid"] = Field(default="hybrid")
     candidate_margin: int = Field(default=2, ge=0, le=15)
     require_review_before_render: bool = Field(default=True)
     heatmap_threshold_percentile: int = Field(default=85)
@@ -175,8 +176,8 @@ class ClipSelectionConfig(BaseModel):
 
 
 class SubtitleTimingConfig(BaseModel):
-    word_duration_min_ms: int = Field(default=80)
-    word_duration_max_ms: int = Field(default=2000)
+    word_duration_min_ms: int = Field(default=80, ge=1)
+    word_duration_max_ms: int = Field(default=2000, ge=1)
     gap_smooth_ms: int = Field(default=150)
     collapse_min_repeats: int = Field(default=3)
     line_max_words: int = Field(default=3)
@@ -200,7 +201,7 @@ class SubtitleConfig(BaseModel):
     shadow: bool = Field(default=True)
     alignment: int = Field(default=2)  # accepts names like "bottom-center" (→ ASS numpad int)
     margin_v: int = Field(
-        default=760
+        default=760, ge=0, le=1920
     )  # bottom margin in px; for bottom-center alignment: 760px up from canvas bottom = ~60% down from top
     timing: SubtitleTimingConfig = Field(default_factory=SubtitleTimingConfig)
 
@@ -232,7 +233,7 @@ class VideoProcessingConfig(BaseModel):
     # FFmpeg video encoder: auto | cpu | nvenc | qsv | videotoolbox.  "auto" uses nvenc when CUDA is
     # present, else cpu (libx264).  GPU encoders that fail at runtime automatically fall back to
     # libx264 (see renderer._run_render_with_fallback), so "auto" is safe as the default.
-    video_encoder: str = Field(default="auto")
+    video_encoder: Literal["auto", "cpu", "nvenc", "qsv", "videotoolbox"] = Field(default="auto")
     # Low-spec opt-in: when true, PODCAST clips are tracked with a fast OpenCV Haar-cascade
     # largest-face crop instead of the heavier MediaPipe + audio active-speaker pipeline.  Trades
     # multi-speaker accuracy for speed.  Does NOT affect content-type detection or Mode B/C.

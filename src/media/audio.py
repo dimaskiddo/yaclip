@@ -6,6 +6,7 @@ from pathlib import Path
 from loguru import logger
 
 from src.core.config import load_config
+from src.core.exceptions import RenderError
 from src.core.utils import SystemUtils, extract_digits
 from src.core.workspace import AUDIOS_DIR
 
@@ -74,7 +75,7 @@ class AudioExtractor:
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             logger.error(f"Audio extraction failed: {result.stderr}")
-            raise RuntimeError(f"FFMPEG failed: {result.stderr}")
+            raise RenderError(f"FFmpeg failed: {result.stderr}")
 
         logger.info(f"Successfully extracted audio: {SystemUtils.display_path(audio_path)}")
         return str(audio_path)

@@ -15,6 +15,7 @@ from src.ai.prompts import (
     get_system_prompt,
 )
 from src.core.config import load_config
+from src.core.constants import LLM_MAX_TOKENS_BATCH, LLM_MAX_TOKENS_SINGLE
 from src.core.exceptions import AIProviderError
 from src.core.utils import AIUtils
 
@@ -67,7 +68,7 @@ class LocalLLMProvider:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=1024,
+                max_tokens=LLM_MAX_TOKENS_SINGLE,
                 temperature=0.7,
             )
 
@@ -115,7 +116,7 @@ class LocalLLMProvider:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=2048,
+                max_tokens=LLM_MAX_TOKENS_BATCH,
                 temperature=0.7,
             )
 
