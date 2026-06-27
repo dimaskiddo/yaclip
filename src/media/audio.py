@@ -8,6 +8,7 @@ from loguru import logger
 from src.core.config import load_config
 from src.core.exceptions import RenderError
 from src.core.utils import SystemUtils, extract_digits
+from src.core.workspace import audio_output_path
 
 
 class AudioExtractor:
@@ -18,8 +19,6 @@ class AudioExtractor:
 
     def audio_path_for(self, video_path: Path) -> Path:
         """Compute the canonical audio file path for a given video path (uppercase stem)."""
-        from src.core.workspace import audio_output_path
-
         return audio_output_path(video_path.stem, self.config.downloader.audio_format).resolve()
 
     def extract_audio(self, video_path: str | Path, force: bool = False) -> str:

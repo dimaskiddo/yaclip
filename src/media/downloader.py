@@ -13,7 +13,7 @@ from loguru import logger
 from src.core.config import load_config
 from src.core.exceptions import DownloadError
 from src.core.utils import SystemUtils, extract_digits
-from src.core.workspace import DATA_DIR, TMP_DIR, active_pipeline_event
+from src.core.workspace import DATA_DIR, TMP_DIR, active_pipeline_event, video_output_path
 from src.media.audio import AudioExtractor
 
 
@@ -268,8 +268,6 @@ class VideoDownloader:
             # Pre-flight check: if uppercase video file already exists, skip download entirely.
             cached_id = SystemUtils.extract_youtube_id(url)
             if cached_id:
-                from src.core.workspace import video_output_path
-
                 cached_path = video_output_path(cached_id, vid_ext)
                 if cached_path.exists() and not force:
                     logger.info(
@@ -312,8 +310,6 @@ class VideoDownloader:
 
                 if info is None:
                     raise DownloadError("Failed to extract video info: no metadata returned.")
-
-                from src.core.workspace import video_output_path
 
                 video_id = info.get("id", "unknown")
                 flat_path = out_dir_path / f"{video_id}.{vid_ext}"

@@ -17,7 +17,7 @@ from src.core.constants import (
     ContentType,
 )
 from src.core.utils import SystemUtils
-from src.core.workspace import SUBTITLES_DIR, TMP_DIR
+from src.core.workspace import SUBTITLES_DIR, TMP_DIR, audio_output_path
 from src.media.audio import AudioExtractor
 from src.media.ffmpeg_builder import FFmpegCommandBuilder
 from src.media.slicer import AudioSlicer
@@ -545,8 +545,6 @@ class ClipRenderer:
 
     def _resolve_audio_track(self, video_path: Path) -> Path | None:
         """Return the extracted audio track path, extracting it if missing."""
-        from src.core.workspace import audio_output_path
-
         audio_ext = self.config.downloader.audio_format
         audio_path = audio_output_path(video_path.stem, audio_ext)
         if audio_path.exists():
