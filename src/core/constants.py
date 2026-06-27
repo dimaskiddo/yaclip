@@ -363,9 +363,16 @@ CONTENT_TYPE_HUMAN_NAMES: dict[str, str] = {
 }
 
 # ── LLM inference constants ──
+# Single-transcript: full video transcript → clips with titles/captions/descriptions/hashtags.
+# Batch: candidate transcripts + visual descriptors → detailed comparison + rich per-clip metadata.
+
 # Token limits for local LLM responses (single transcript vs. batch candidate selection).
-LLM_MAX_TOKENS_SINGLE: int = 1024
-LLM_MAX_TOKENS_BATCH: int = 2048
+LLM_LOCAL_MAX_TOKENS_SINGLE: int = 2048
+LLM_LOCAL_MAX_TOKENS_BATCH: int = 4096
+
+# Cloud LLM response token limits (OpenAI max_completion_tokens / Gemini max_output_tokens).
+LLM_CLOUD_MAX_TOKENS_SINGLE: int = 4096
+LLM_CLOUD_MAX_TOKENS_BATCH: int = 8192
 
 # Default context window for llama.cpp models (n_ctx parameter).
 LLAMA_N_CTX: int = 4096

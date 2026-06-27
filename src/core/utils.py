@@ -316,7 +316,11 @@ class AIUtils:
 
     @staticmethod
     def parse_json_array(response_text: str) -> list[dict[str, Any]]:
-        """Strips markdown and parses the response into a JSON array, ensuring it's valid."""
+        """Strip markdown, parse JSON, and unwrap json_object wrappers.
+
+        Handles both raw ``[...]`` arrays and ``{"key": [...]}`` wrappers
+        produced by OpenAI's ``json_object`` response_format mode.
+        """
         # prompts is imported lazily here: core → ai is a backwards layer dependency, so keep it
         # out of the module-level import graph to avoid a cycle.
         from src.ai.prompts import strip_json_markdown
@@ -325,9 +329,21 @@ class AIUtils:
         try:
             parsed_data = json.loads(clean_text)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse AI response as JSON: {e}")
-            logger.debug(f"Raw AI response text: {clean_text}")
+            logger.error(
+                f"Failed to parse AI response as JSON: {e}. "
+                f"First 200 chars: {clean_text[:200]!r}. "
+                f"Last 200 chars: {clean_text[-200:]!r}."
+            )
             raise AIProviderError("Failed to parse JSON response.") from e
+
+        # json_object mode may wrap the array as {"clips": [...]} — unwrap.
+        if isinstance(parsed_data, dict):
+            for v in parsed_data.values():
+                if isinstance(v, list):
+                    parsed_data = v
+                    break
+            else:
+                raise AIProviderError("Parsed response is a JSON object with no array value.")
 
         if not isinstance(parsed_data, list):
             raise AIProviderError("Parsed response is not a JSON array.")

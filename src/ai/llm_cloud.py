@@ -10,6 +10,7 @@ from src.ai.prompts import (
     get_system_prompt,
 )
 from src.core.config import load_config
+from src.core.constants import LLM_CLOUD_MAX_TOKENS_BATCH, LLM_CLOUD_MAX_TOKENS_SINGLE
 from src.core.exceptions import AIProviderError
 from src.core.utils import AIUtils
 
@@ -71,6 +72,8 @@ class CloudLLMProvider:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.7,
+                max_completion_tokens=LLM_CLOUD_MAX_TOKENS_SINGLE,
+                response_format={"type": "json_object"},
                 stream=True,
             )
             chunks: list[str] = []
@@ -111,6 +114,10 @@ class CloudLLMProvider:
             model = genai.GenerativeModel(model_name=self.model_name)
             stream = model.generate_content(
                 prompt,
+                generation_config={
+                    "max_output_tokens": LLM_CLOUD_MAX_TOKENS_SINGLE,
+                    "response_mime_type": "application/json",
+                },
                 stream=True,
                 request_options={
                     "timeout": self.timeout,
@@ -178,6 +185,8 @@ class CloudLLMProvider:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.7,
+                max_completion_tokens=LLM_CLOUD_MAX_TOKENS_BATCH,
+                response_format={"type": "json_object"},
                 stream=True,
             )
             chunks: list[str] = []
@@ -218,6 +227,10 @@ class CloudLLMProvider:
             model = genai.GenerativeModel(model_name=self.model_name)
             stream = model.generate_content(
                 prompt,
+                generation_config={
+                    "max_output_tokens": LLM_CLOUD_MAX_TOKENS_BATCH,
+                    "response_mime_type": "application/json",
+                },
                 stream=True,
                 request_options={
                     "timeout": self.timeout,

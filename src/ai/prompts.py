@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from src.core.config import load_config
 
 DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
@@ -264,11 +266,13 @@ def build_batch_user_prompt(candidates_text: str, target_clips: int, base_sys_pr
 
 
 def strip_json_markdown(text: str) -> str:
-    """Strip common markdown code fence wrappers from LLM JSON responses."""
-    if text.startswith("```json"):
-        text = text[7:]
-    if text.startswith("```"):
-        text = text[3:]
-    if text.endswith("```"):
-        text = text[:-3]
+    """Extract JSON array from LLM response text, handling fence delimiters, prose prefixes, and json_object wrappers."""
+    # Find the outermost [...] array (greedy, multiline).
+    m = re.search(r"\[.*\]", text, re.DOTALL)
+    if m:
+        return m.group(0).strip()
+    # Fallback: try array inside a json_object wrapper: {"key": [...]}
+    m = re.search(r'"[^"]+":\s*(\[.*\])', text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
     return text.strip()
