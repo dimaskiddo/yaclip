@@ -1,3 +1,6 @@
+pip
+setuptools
+wheel
 loguru
 pydantic
 pyyaml

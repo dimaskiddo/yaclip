@@ -1,14 +1,13 @@
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "yaclip"
 version = "0.1.0"
-description = "YaClip (Yet Another AI Auto-Clipper) — AI Auto-Clipper for YouTube Shorts, Reels & TikTok"
+description = "YaClip (Yet Another AI Auto-Clipper) - AI Auto-Clipper for YouTube Shorts, Reels & TikTok"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
+    "pip",
+    "setuptools",
+    "wheel",
     "loguru",
     "pydantic",
     "pyyaml",
@@ -35,7 +34,11 @@ dev = [
     "pytest>=7.0.0"
 ]
 
-[[tool.uv.index]]
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv.index]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
@@ -45,8 +48,7 @@ torch = [{ index = "pytorch-cpu" }]
 torchvision = [{ index = "pytorch-cpu" }]
 
 [tool.ruff]
-line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -55,7 +57,3 @@ ignore = ["E501"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
-
-[tool.mypy]
-strict = true
-ignore_missing_imports = true
