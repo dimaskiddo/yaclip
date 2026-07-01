@@ -97,6 +97,8 @@ class HeatmapAnalyzer:
             valid_clips.append(clip)
 
         if valid_clips:
-            logger.info(f"Found {len(valid_clips)} candidate sections from replay data.")
+            logger.info(
+                f"Found {len(valid_clips)} candidate sections from replay data."
+            )
 
         return valid_clips

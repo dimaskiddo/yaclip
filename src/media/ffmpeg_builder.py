@@ -68,7 +68,16 @@ class FFmpegCommandBuilder:
 
         has_audio_input = False
         if audio_path and audio_path.exists():
-            cmd.extend(["-ss", f"{start_time:.3f}", "-t", f"{duration:.3f}", "-i", str(audio_path)])
+            cmd.extend(
+                [
+                    "-ss",
+                    f"{start_time:.3f}",
+                    "-t",
+                    f"{duration:.3f}",
+                    "-i",
+                    str(audio_path),
+                ]
+            )
             has_audio_input = True
 
         # Build filter complex graph
@@ -137,7 +146,9 @@ class FFmpegCommandBuilder:
 
     def _resolve_encoder(self, video_encoder: str | None) -> str:
         """Resolve the encoder name: explicit override → config → 'auto' probe (nvenc if CUDA)."""
-        encoder = (video_encoder or self.config.video_processing.video_encoder or "cpu").lower()
+        encoder = (
+            video_encoder or self.config.video_processing.video_encoder or "cpu"
+        ).lower()
         if encoder == "auto":
             return "nvenc" if SystemUtils.resolve_device("auto") == "cuda" else "cpu"
         return encoder
@@ -185,7 +196,9 @@ class FFmpegCommandBuilder:
             c = crops[i]
             keyframes.append((c["timestamp"], c["crop_x"], c["crop_y"]))
         if crops and keyframes[-1][0] < crops[-1]["timestamp"]:
-            keyframes.append((crops[-1]["timestamp"], crops[-1]["crop_x"], crops[-1]["crop_y"]))
+            keyframes.append(
+                (crops[-1]["timestamp"], crops[-1]["crop_x"], crops[-1]["crop_y"])
+            )
 
         crop_w = crops[0]["crop_w"]
         crop_h = crops[0]["crop_h"]
@@ -199,12 +212,8 @@ class FFmpegCommandBuilder:
             if interpolate:
                 slope_x = (x_next - x_curr) / max(0.01, t_next - t_curr)
                 slope_y = (y_next - y_curr) / max(0.01, t_next - t_curr)
-                x_expr = (
-                    f"if(lt(t,{t_next:.3f}),{x_curr:.1f}+(t-{t_curr:.3f})*{slope_x:.3f},{x_expr})"
-                )
-                y_expr = (
-                    f"if(lt(t,{t_next:.3f}),{y_curr:.1f}+(t-{t_curr:.3f})*{slope_y:.3f},{y_expr})"
-                )
+                x_expr = f"if(lt(t,{t_next:.3f}),{x_curr:.1f}+(t-{t_curr:.3f})*{slope_x:.3f},{x_expr})"
+                y_expr = f"if(lt(t,{t_next:.3f}),{y_curr:.1f}+(t-{t_curr:.3f})*{slope_y:.3f},{y_expr})"
             else:
                 # Static hold: keep the keyframe value until the next boundary, then cut.
                 x_expr = f"if(lt(t,{t_next:.3f}),{x_curr:.0f},{x_expr})"
@@ -214,15 +223,21 @@ class FFmpegCommandBuilder:
         y_expr_escaped = y_expr.replace(",", "\\,")
         return f"crop={crop_w}:{crop_h}:{x_expr_escaped}:{y_expr_escaped}"
 
-    def _append_subtitles_filter(self, v_filter: str, subtitle_ass_path: Path | None) -> str:
+    def _append_subtitles_filter(
+        self, v_filter: str, subtitle_ass_path: Path | None
+    ) -> str:
         """Append subtitle burn-in to the final video filter chain if subtitles exist."""
         if subtitle_ass_path and subtitle_ass_path.exists():
             escaped_path = SystemUtils.escape_ffmpeg_path(subtitle_ass_path)
             escaped_fonts_dir = SystemUtils.escape_ffmpeg_path(str(FONTS_DIR))
-            return f"{v_filter},subtitles='{escaped_path}':fontsdir='{escaped_fonts_dir}'"
+            return (
+                f"{v_filter},subtitles='{escaped_path}':fontsdir='{escaped_fonts_dir}'"
+            )
         return v_filter
 
-    def _build_mode_a_filters(self, spec: dict, subtitle_ass_path: Path | None) -> list[str]:
+    def _build_mode_a_filters(
+        self, spec: dict, subtitle_ass_path: Path | None
+    ) -> list[str]:
         """Build filters for Mode A - Single 9:16 Vertical with gentle EMA speaker pans.
 
         The crop track is already EMA-smoothed in the face tracker (static while a speaker holds,
@@ -236,7 +251,9 @@ class FFmpegCommandBuilder:
         v_filter = self._append_subtitles_filter(v_filter, subtitle_ass_path)
         return [v_filter + "[out_v]"]
 
-    def _build_mode_b_filters(self, spec: dict, subtitle_ass_path: Path | None) -> list[str]:
+    def _build_mode_b_filters(
+        self, spec: dict, subtitle_ass_path: Path | None
+    ) -> list[str]:
         """Build the Mode B 2-stack layout for GAMING_SOLO / JUST_CHAT.
 
         Top panel  (1080x960) = facecam, smooth-panned crop-fill (no distortion).
@@ -287,7 +304,11 @@ class FFmpegCommandBuilder:
         return filters
 
     def _blurred_fill_filters(
-        self, src_label: str, crop_filter: str | None, out_label: str, prefix: str = "gp"
+        self,
+        src_label: str,
+        crop_filter: str | None,
+        out_label: str,
+        prefix: str = "gp",
     ) -> list[str]:
         """Composite a source into a panel with a blurred-background vertical fill.
 
@@ -319,13 +340,17 @@ class FFmpegCommandBuilder:
             f"[{bgb}][{fgs}]overlay=(W-w)/2:(H-h)/2{out_label}",
         ]
 
-    def _build_mode_c_filters(self, spec: dict, subtitle_ass_path: Path | None) -> list[str]:
+    def _build_mode_c_filters(
+        self, spec: dict, subtitle_ass_path: Path | None
+    ) -> list[str]:
         """Build Mode C multi-face collab stack (Facecam Top + Gameplay Center + Collab Grid Bottom)."""
         filters = []
         filters.append("[0:v]setpts=PTS-STARTPTS,split=3[v_f][v_g][v_c]")
 
         fc = spec["facecam_crop"]
-        filters.append(f"[v_f]crop={fc['w']}:{fc['h']}:{fc['x']}:{fc['y']},scale=1080:640[facecam]")
+        filters.append(
+            f"[v_f]crop={fc['w']}:{fc['h']}:{fc['x']}:{fc['y']},scale=1080:640[facecam]"
+        )
 
         # Gameplay centre: animated pan (same engine as Mode B) when a track exists, else static crop.
         gc = spec["gameplay_crop"]
@@ -341,7 +366,9 @@ class FFmpegCommandBuilder:
             )
 
         cc = spec["collab_crop"]
-        filters.append(f"[v_c]crop={cc['w']}:{cc['h']}:{cc['x']}:{cc['y']},scale=1080:640[collab]")
+        filters.append(
+            f"[v_c]crop={cc['w']}:{cc['h']}:{cc['x']}:{cc['y']},scale=1080:640[collab]"
+        )
 
         v_filter = "[facecam][gameplay][collab]vstack=inputs=3,format=yuv420p,setsar=1"
         v_filter_final = self._append_subtitles_filter(v_filter, subtitle_ass_path)

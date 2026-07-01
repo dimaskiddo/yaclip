@@ -19,7 +19,9 @@ class AudioExtractor:
 
     def audio_path_for(self, video_path: Path) -> Path:
         """Compute the canonical audio file path for a given video path (uppercase stem)."""
-        return audio_output_path(video_path.stem, self.config.downloader.audio_format).resolve()
+        return audio_output_path(
+            video_path.stem, self.config.downloader.audio_format
+        ).resolve()
 
     def extract_audio(self, video_path: str | Path, force: bool = False) -> str:
         """Extract audio track from video using local FFmpeg binary based on configuration."""
@@ -78,5 +80,7 @@ class AudioExtractor:
             logger.error(f"Audio extraction failed: {result.stderr}")
             raise RenderError(f"FFmpeg failed: {result.stderr}")
 
-        logger.info(f"Successfully extracted audio: {SystemUtils.display_path(audio_path)}")
+        logger.info(
+            f"Successfully extracted audio: {SystemUtils.display_path(audio_path)}"
+        )
         return str(audio_path)

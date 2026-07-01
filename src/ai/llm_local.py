@@ -102,16 +102,22 @@ class LocalLLMProvider:
 
         system_prompt = build_batch_system_prompt(target_clips)
 
-        user_prompt = build_batch_user_prompt(candidates_text, target_clips, base_sys_prompt)
+        user_prompt = build_batch_user_prompt(
+            candidates_text, target_clips, base_sys_prompt
+        )
 
         try:
             if llm is None:
-                logger.info("Loading local AI reasoning model for batch clip selection...")
+                logger.info(
+                    "Loading local AI reasoning model for batch clip selection..."
+                )
                 llm = AIUtils.load_llama(self.resolved_path, self.n_gpu)
             else:
                 logger.info("Reusing local AI reasoning model...")
 
-            logger.info("Analysing all candidate clips locally to select the best ones...")
+            logger.info(
+                "Analysing all candidate clips locally to select the best ones..."
+            )
             output = llm.create_chat_completion(
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -126,7 +132,9 @@ class LocalLLMProvider:
             logger.debug(f"Raw local AI response: {response_text}")
 
             parsed_clips = AIUtils.parse_json_array(response_text)
-            logger.info(f"Local AI selected {len(parsed_clips)} clip(s) from the batch.")
+            logger.info(
+                f"Local AI selected {len(parsed_clips)} clip(s) from the batch."
+            )
             return parsed_clips
         except Exception as e:
             logger.error(f"Failed to read local AI batch response as JSON: {e}")

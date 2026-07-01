@@ -23,7 +23,9 @@ class CloudLLMProvider:
         self.cloud_config = self.config.ai_pipeline.llm.cloud
 
         if not self.cloud_config.provider:
-            raise ValueError("Cloud LLM mode requires 'provider' to be defined in config.yaml.")
+            raise ValueError(
+                "Cloud LLM mode requires 'provider' to be defined in config.yaml."
+            )
 
         self.provider = self.cloud_config.provider.lower()
         self.api_key = self.cloud_config.api_key
@@ -174,7 +176,9 @@ class CloudLLMProvider:
 
         system_prompt = build_batch_system_prompt(target_clips)
 
-        user_prompt = build_batch_user_prompt(candidates_text, target_clips, base_sys_prompt)
+        user_prompt = build_batch_user_prompt(
+            candidates_text, target_clips, base_sys_prompt
+        )
 
         @retry_api_call(max_retries=3)
         def _call_openai_chat() -> str:
@@ -286,7 +290,9 @@ class CloudLLMProvider:
                 transcript, content_type, target_duration, target_clips
             )
         else:
-            raise NotImplementedError(f"Cloud provider '{self.provider}' is not supported yet.")
+            raise NotImplementedError(
+                f"Cloud provider '{self.provider}' is not supported yet."
+            )
 
     def analyze_batch(
         self,
@@ -305,4 +311,6 @@ class CloudLLMProvider:
                 candidates_text, target_clips, content_type, target_duration
             )
         else:
-            raise NotImplementedError(f"Cloud provider '{self.provider}' is not supported yet.")
+            raise NotImplementedError(
+                f"Cloud provider '{self.provider}' is not supported yet."
+            )

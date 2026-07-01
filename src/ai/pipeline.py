@@ -257,7 +257,9 @@ class AIPipeline:
                 )
             except Exception as e:
                 if provider == "auto":
-                    logger.warning(f"Cloud AI analysis failed: {e}. Switching to local AI.")
+                    logger.warning(
+                        f"Cloud AI analysis failed: {e}. Switching to local AI."
+                    )
                 else:
                     raise AIProviderError(f"Cloud AI analysis failed: {e}") from e
 
@@ -298,7 +300,9 @@ class AIPipeline:
                 )
             except Exception as e:
                 if provider == "auto":
-                    logger.warning(f"Cloud AI batch analysis failed: {e}. Switching to local AI.")
+                    logger.warning(
+                        f"Cloud AI batch analysis failed: {e}. Switching to local AI."
+                    )
                 else:
                     raise AIProviderError(f"Cloud AI batch analysis failed: {e}") from e
 
@@ -386,7 +390,9 @@ class AIPipeline:
             speakers = AudioEnergyAnalyzer().estimate_speaker_count(audio_path)
             if speakers < 2:
                 resolved = (
-                    ContentType.GAMING_SOLO.value if gameplay_present else ContentType.PODCAST.value
+                    ContentType.GAMING_SOLO.value
+                    if gameplay_present
+                    else ContentType.PODCAST.value
                 )
                 clip["content_type"] = resolved
                 logger.info(
@@ -396,7 +402,11 @@ class AIPipeline:
                 return
 
         # Rule 2: 2+ speakers + gameplay + 2+ webcams → force COLLAB.
-        if gameplay_present and webcam_count >= 2 and resolved != ContentType.GAMING_COLLAB.value:
+        if (
+            gameplay_present
+            and webcam_count >= 2
+            and resolved != ContentType.GAMING_COLLAB.value
+        ):
             clip["content_type"] = ContentType.GAMING_COLLAB.value
             logger.info(
                 f"Clip {candidate_index} set to collaboration layout "
@@ -453,7 +463,9 @@ class AIPipeline:
             spikes = energy_analyzer.analyze_audio_energy(audio_path)
         return spikes
 
-    def _select_top_candidates(self, spikes: list[dict], target_clips: int) -> list[dict]:
+    def _select_top_candidates(
+        self, spikes: list[dict], target_clips: int
+    ) -> list[dict]:
         """Sort spikes by score descending and keep only top (target + margin)."""
         spikes.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
         margin = self.config.clip_selection.candidate_margin
@@ -483,7 +495,9 @@ class AIPipeline:
         clip_cfg = self.config.clip_selection
         TMP_DIR.mkdir(parents=True, exist_ok=True)
 
-        clip_ceiling = clip_cfg.default_clip_duration_seconds + clip_cfg.clip_length_margin_seconds
+        clip_ceiling = (
+            clip_cfg.default_clip_duration_seconds + clip_cfg.clip_length_margin_seconds
+        )
         half_window = clip_ceiling / 2.0 + CANDIDATE_WINDOW_BUFFER
 
         slicer = AudioSlicer()
@@ -498,7 +512,9 @@ class AIPipeline:
             return (i, spike, chunk_path, s_start, s_end, success)
 
         logger.info("Slicing audio from candidate sections.")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=STT_THREAD_POOL) as executor:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=STT_THREAD_POOL
+        ) as executor:
             results = list(executor.map(_slice_chunk, enumerate(top_candidates)))
 
         refined_clips: list[dict] = []
@@ -562,7 +578,11 @@ class AIPipeline:
                     "start": s["start"] + off,
                     "end": s["end"] + off,
                     "words": [
-                        {"word": w["word"], "start": w["start"] + off, "end": w["end"] + off}
+                        {
+                            "word": w["word"],
+                            "start": w["start"] + off,
+                            "end": w["end"] + off,
+                        }
                         for w in s.get("words", [])
                     ],
                 }
@@ -587,7 +607,16 @@ class AIPipeline:
                         cache_dir=TMP_DIR,
                     )
                     abs_segs = None
-                return (i, spike, chunk_path, s_start, s_end, transcript, abs_segs, None)
+                return (
+                    i,
+                    spike,
+                    chunk_path,
+                    s_start,
+                    s_end,
+                    transcript,
+                    abs_segs,
+                    None,
+                )
             except Exception as e:
                 return (i, spike, chunk_path, s_start, s_end, None, None, e)
 
@@ -596,21 +625,36 @@ class AIPipeline:
             stt_results = [_transcribe_chunk(data) for data in sliced_chunks]
         else:
             logger.info("Transcribing candidate sections with cloud speech-to-text.")
-            with concurrent.futures.ThreadPoolExecutor(max_workers=VISUAL_THREAD_POOL) as executor:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=VISUAL_THREAD_POOL
+            ) as executor:
                 stt_results = list(executor.map(_transcribe_chunk, sliced_chunks))
 
         refined_clips: list[dict] = []
         word_cache: list[dict] = []
-        for i, spike, chunk_path, s_start, s_end, transcript, abs_segs, err in stt_results:
+        for (
+            i,
+            spike,
+            chunk_path,
+            s_start,
+            s_end,
+            transcript,
+            abs_segs,
+            err,
+        ) in stt_results:
             if err:
                 logger.error(
                     f"Transcription failed for candidate {i + 1}: {err}. Using original time position instead."
                 )
                 refined_clips.append(spike)
             else:
-                transcribed_slices.append((i, spike, chunk_path, s_start, s_end, transcript))
+                transcribed_slices.append(
+                    (i, spike, chunk_path, s_start, s_end, transcript)
+                )
                 if abs_segs is not None:
-                    word_cache.append({"start": s_start, "end": s_end, "segments": abs_segs})
+                    word_cache.append(
+                        {"start": s_start, "end": s_end, "segments": abs_segs}
+                    )
 
         if whisper_model is not None:
             logger.debug("Released local speech-to-text model memory.")
@@ -630,7 +674,9 @@ class AIPipeline:
         """Build the batched LLM prompt from transcribed slices, visual descriptors, and evidence."""
         prompt_parts = []
         speaker_analyzer = AudioEnergyAnalyzer()
-        for idx, (_, _, chunk_path, s_start, s_end, transcript) in enumerate(transcribed_slices):
+        for idx, (_, _, chunk_path, s_start, s_end, transcript) in enumerate(
+            transcribed_slices
+        ):
             visual_line = visual_by_index.get(idx)
             visual_block = f"Visual context: {visual_line}\n" if visual_line else ""
             speakers = speaker_analyzer.estimate_speaker_count(chunk_path)
@@ -698,10 +744,16 @@ class AIPipeline:
                     cand_idx = int(cc.get("candidate_index", 1)) - 1
                     if not (0 <= cand_idx < len(transcribed_slices)):
                         continue
-                    _, spike, chunk_path, s_start, s_end, _ = transcribed_slices[cand_idx]
+                    _, spike, chunk_path, s_start, s_end, _ = transcribed_slices[
+                        cand_idx
+                    ]
 
-                    mapped_start = max(s_start, s_start + float(cc.get("start_time", 0.0)))
-                    mapped_end = min(s_end, s_start + float(cc.get("end_time", s_end - s_start)))
+                    mapped_start = max(
+                        s_start, s_start + float(cc.get("start_time", 0.0))
+                    )
+                    mapped_end = min(
+                        s_end, s_start + float(cc.get("end_time", s_end - s_start))
+                    )
 
                     if mapped_end - mapped_start < MIN_CLIP_SECONDS:
                         logger.warning(
@@ -723,7 +775,9 @@ class AIPipeline:
                     if detected_type is not None:
                         cc["content_type"] = detected_type.value
                     else:
-                        resolved = self._normalise_base_content_type(cc.get("content_type"))
+                        resolved = self._normalise_base_content_type(
+                            cc.get("content_type")
+                        )
                         if resolved is not None:
                             cc["content_type"] = resolved
                         else:
@@ -768,7 +822,9 @@ class AIPipeline:
                 final_clips.append(c)
                 last_end = float(c["end_time"])
         if len(final_clips) > target_clips:
-            logger.info(f"Reducing clip count from {len(final_clips)} to {target_clips}.")
+            logger.info(
+                f"Reducing clip count from {len(final_clips)} to {target_clips}."
+            )
             final_clips = final_clips[:target_clips]
         elif len(final_clips) < target_clips:
             logger.warning(
@@ -776,7 +832,9 @@ class AIPipeline:
                 "Some candidates may have been dropped during deduplication or duration filtering. "
                 "Consider increasing candidate margin."
             )
-        logger.info(f"AI finished selecting {len(final_clips)} clips, ready for rendering.")
+        logger.info(
+            f"AI finished selecting {len(final_clips)} clips, ready for rendering."
+        )
         return final_clips
 
     def process_audio(
@@ -786,6 +844,8 @@ class AIPipeline:
         force: bool = False,
         detected_type: ContentType | None = None,
         detection_evidence: dict[str, object] | None = None,
+        manual_ranges: list[dict[str, Any]] | None = None,
+        no_metadata: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Main AI Orchestrator. Evaluates config to route between Cloud and Local logic.
@@ -803,6 +863,10 @@ class AIPipeline:
             detection_evidence: Structured evidence from ``ContentTypeDetectionResult.evidence``.
                 Injected into the LLM prompt when ``detected_type`` is None (uncertain)
                 so the LLM has raw detection numbers and doesn't hallucinate.
+            manual_ranges: User-fixed ``[{"start_time", "end_time"}, ...]`` from
+                ``--timerange-file``. Only used when ``clip_selection.mode == "manual"``.
+            no_metadata: Manual mode only — skip STT+LLM titling entirely and return
+                default-titled clips at the fixed ranges.
         """
         active_pipeline_event.set()
         try:
@@ -810,16 +874,26 @@ class AIPipeline:
             mode_val = clip_cfg.mode.lower()
             strategy = clip_cfg.auto_strategy.lower()
 
+            if mode_val == "manual":
+                logger.info(
+                    "Manual mode: using user-fixed timeranges, bypassing AI selection."
+                )
+                return self._process_manual_ranges(
+                    audio_path,
+                    video_path,
+                    manual_ranges or [],
+                    detected_type,
+                    detection_evidence,
+                    no_metadata,
+                    force,
+                )
+
             strategy_label = {
                 "hybrid": "hybrid",
                 "heatmap": "replay data",
                 "ai": "full AI",
             }.get(strategy, strategy)
             logger.info(f"Running in {strategy_label} mode to find the best clips.")
-
-            if mode_val == "manual":
-                logger.info("Manual mode: skipping AI clip selection.")
-                return []
 
             content_type = self._resolve_content_type(detected_type)
 
@@ -887,10 +961,12 @@ class AIPipeline:
                 )
                 return top_candidates
 
-            transcribed_slices, refined_clips, word_cache = self._transcribe_candidate_slices(
-                sliced_chunks,
-                force,
-                video_id,
+            transcribed_slices, refined_clips, word_cache = (
+                self._transcribe_candidate_slices(
+                    sliced_chunks,
+                    force,
+                    video_id,
+                )
             )
             if word_cache:
                 save_words_cache(video_id, word_cache)
@@ -909,7 +985,10 @@ class AIPipeline:
                 # When the video is a known gaming collaboration, lock the webcam pair
                 # so per-candidate log summaries show both webcams consistently.
                 collab_cams: list = []
-                if detected_type is not None and detected_type == ContentType.GAMING_COLLAB:
+                if (
+                    detected_type is not None
+                    and detected_type == ContentType.GAMING_COLLAB
+                ):
                     collab_cams = analyzer.detect_facecams(Path(video_path))
                     if len(collab_cams) >= 2:
                         logger.debug(
@@ -918,13 +997,17 @@ class AIPipeline:
                         )
 
                 try:
-                    for idx, (_, _, _, s_start, s_end, _) in enumerate(transcribed_slices):
+                    for idx, (_, _, _, s_start, s_end, _) in enumerate(
+                        transcribed_slices
+                    ):
                         try:
                             res = analyzer.analyze_window(
                                 Path(video_path),
                                 s_start,
                                 s_end,
-                                facecam_boxes=collab_cams if len(collab_cams) >= 2 else None,
+                                facecam_boxes=collab_cams
+                                if len(collab_cams) >= 2
+                                else None,
                             )
                             visual_by_index[idx] = res["descriptor"]
                             # Collect donation scan results so the renderer can reuse them instead
@@ -934,12 +1017,16 @@ class AIPipeline:
                                     {
                                         "start": s_start,
                                         "end": s_end,
-                                        "mediashare_present": res.get("mediashare_present", False),
+                                        "mediashare_present": res.get(
+                                            "mediashare_present", False
+                                        ),
                                         "mediashare_box": res.get("mediashare_box"),
                                     }
                                 )
                         except Exception as ve:
-                            logger.warning(f"Scene analysis failed for candidate {idx + 1}: {ve}")
+                            logger.warning(
+                                f"Scene analysis failed for candidate {idx + 1}: {ve}"
+                            )
                 finally:
                     analyzer.release()
 
@@ -975,3 +1062,161 @@ class AIPipeline:
 
         finally:
             active_pipeline_event.clear()
+
+    @staticmethod
+    def _format_manual_title(start: float, end: float) -> str:
+        """Default manual-mode title, e.g. Manual_1-30_2-30 (MM-SS, or H-MM-SS past an hour)."""
+
+        def _fmt(seconds: float) -> str:
+            total = int(seconds)
+            h, rem = divmod(total, 3600)
+            m, s = divmod(rem, 60)
+            return f"{h}-{m:02d}-{s:02d}" if h else f"{m}-{s:02d}"
+
+        return f"Manual_{_fmt(start)}_{_fmt(end)}"
+
+    def _process_manual_ranges(
+        self,
+        audio_path: str,
+        video_path: str | None,
+        manual_ranges: list[dict[str, Any]],
+        detected_type: ContentType | None,
+        detection_evidence: dict[str, object] | None,
+        no_metadata: bool,
+        force: bool,
+    ) -> list[dict[str, Any]]:
+        """Render exactly the user's fixed timeranges — no selection, dedup, or duration bounds.
+
+        With ``no_metadata=False`` (default), each range is still transcribed and sent
+        through the batched LLM so it gets a real title/caption/description/hashtags —
+        only the boundaries are fixed by the user, not "chosen" by the AI.
+        """
+        candidates = [
+            {
+                "start_time": r["start_time"],
+                "end_time": r["end_time"],
+                "title": self._format_manual_title(r["start_time"], r["end_time"]),
+            }
+            for r in manual_ranges
+        ]
+        if detected_type is not None:
+            for cc in candidates:
+                cc["content_type"] = detected_type.value
+
+        if not candidates:
+            logger.warning("Manual mode: no timeranges provided, nothing to render.")
+            return []
+
+        if no_metadata:
+            logger.info(
+                f"Manual mode: --no-metadata set, skipping LLM titling for {len(candidates)} clip(s)."
+            )
+            return candidates
+
+        video_id = Path(audio_path).stem
+        content_type = self._resolve_content_type(detected_type)
+
+        from src.core.workspace import TMP_DIR
+
+        TMP_DIR.mkdir(parents=True, exist_ok=True)
+        slicer = AudioSlicer()
+
+        def _slice_chunk(i_range: tuple[int, dict]) -> tuple:
+            i, r = i_range
+            s_start, s_end = float(r["start_time"]), float(r["end_time"])
+            chunk_path = str(TMP_DIR / f"audio_{video_id}_manual_{i + 1}.aac")
+            success = slicer.slice_audio_chunk(audio_path, s_start, s_end, chunk_path)
+            return (i, candidates[i], chunk_path, s_start, s_end, success)
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=STT_THREAD_POOL
+        ) as executor:
+            slice_results = list(executor.map(_slice_chunk, enumerate(manual_ranges)))
+
+        sliced_chunks = [
+            (i, sp, cp, ss, se) for i, sp, cp, ss, se, ok in slice_results if ok
+        ]
+        for i, _sp, _cp, ss, se, ok in slice_results:
+            if not ok:
+                logger.error(
+                    f"Failed to cut audio for manual range {i + 1} "
+                    f"({ss:.2f}s-{se:.2f}s); rendering it without a title/caption."
+                )
+
+        if not sliced_chunks:
+            logger.warning(
+                "Manual mode: no audio slices succeeded, using default titles only."
+            )
+            return candidates
+
+        transcribed_slices, _failed, word_cache = self._transcribe_candidate_slices(
+            sliced_chunks, force, video_id
+        )
+        if word_cache:
+            save_words_cache(video_id, word_cache)
+
+        visual_by_index: dict[int, str] = {}
+        region_enabled = self.config.video_processing.region_detection.enabled
+        if video_path and region_enabled and transcribed_slices:
+            from src.vision.visual_analyzer import VisualAnalyzer
+
+            analyzer = VisualAnalyzer()
+            try:
+                for pos, (_, _, _, s_start, s_end, _) in enumerate(transcribed_slices):
+                    try:
+                        res = analyzer.analyze_window(Path(video_path), s_start, s_end)
+                        visual_by_index[pos] = res["descriptor"]
+                    except Exception as ve:
+                        logger.warning(
+                            f"Scene analysis failed for manual range {pos + 1}: {ve}"
+                        )
+            finally:
+                analyzer.release()
+
+        if not transcribed_slices:
+            return candidates
+
+        candidates_text = self._build_candidates_prompt(
+            transcribed_slices,
+            visual_by_index,
+            video_id,
+            detected_type,
+            detection_evidence,
+        )
+
+        try:
+            titled = self.run_batch_llm_analysis(
+                candidates_text=candidates_text,
+                target_clips=len(transcribed_slices),
+                content_type=content_type,
+                target_duration=int(
+                    sum(se - ss for _, _, _, ss, se, _ in transcribed_slices)
+                    / len(transcribed_slices)
+                ),
+            )
+        except Exception as e:
+            logger.error(
+                f"Manual mode LLM titling failed: {e}. Keeping default titles."
+            )
+            return candidates
+
+        # Map LLM metadata back onto the original candidate by index — boundaries never change.
+        for cc in titled:
+            try:
+                cand_idx = int(cc.get("candidate_index", 0)) - 1
+                if not (0 <= cand_idx < len(transcribed_slices)):
+                    continue
+                original_pos = transcribed_slices[cand_idx][0]
+                target = candidates[original_pos]
+                for key in ("title", "caption", "description", "hashtags", "reasoning"):
+                    if cc.get(key):
+                        target[key] = cc[key]
+                if detected_type is None:
+                    resolved = self._normalise_base_content_type(cc.get("content_type"))
+                    if resolved is not None:
+                        target["content_type"] = resolved
+            except Exception as map_e:
+                logger.error(f"Failed to map manual clip metadata: {map_e}")
+
+        logger.info(f"Manual mode: titled {len(candidates)} clip(s) via LLM.")
+        return candidates

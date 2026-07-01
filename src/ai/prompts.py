@@ -201,7 +201,9 @@ def get_system_prompt(
     max_duration = min_duration + clip_cfg.clip_length_margin_seconds
     # Content type instruction: confident → echo detected type; uncertain → LLM decides per clip.
     if content_type is not None:
-        content_type_line = _CONTENT_TYPE_CONFIDENT_LINE.format(content_type=content_type)
+        content_type_line = _CONTENT_TYPE_CONFIDENT_LINE.format(
+            content_type=content_type
+        )
     else:
         content_type_line = _CONTENT_TYPE_UNCERTAIN_LINE
     language_instruction = build_language_instruction(language)
@@ -249,7 +251,9 @@ def build_single_user_prompt(transcript: str, target_clips: int) -> str:
     )
 
 
-def build_batch_user_prompt(candidates_text: str, target_clips: int, base_sys_prompt: str) -> str:
+def build_batch_user_prompt(
+    candidates_text: str, target_clips: int, base_sys_prompt: str
+) -> str:
     """Build the user prompt for batch (multi-candidate) LLM clip selection.
 
     Used by both cloud (OpenAI / Gemini) and local LLM providers to avoid

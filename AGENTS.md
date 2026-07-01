@@ -116,7 +116,7 @@ Each component has its own `provider` setting:
 - **WebUI:** Implemented with `gradio`. Must be visually clean and logically organized into tabs: **Clipper**, **Review & Render**, **Settings**, and **Maintenance**.
 - **Gradio Task Queuing (CRITICAL):** Always initialize with `.queue().launch()`. Never use `.launch()` alone — this causes socket timeouts on long video jobs.
 - **WSL Compatibility:** Gradio MUST bind to `127.0.0.1:7860` (configurable) so headless Linux/WSL environments expose the UI to the host Windows browser cleanly.
-- **Execution Routing:** `app.py` is entry/routing only (load config → environment → logging) and delegates to the Typer app in `src/interfaces/cli.py`. If `sys.argv` has CLI arguments → route to Typer; if run bare → launch Gradio. CLI commands: `clip <URL>` (the pipeline, with `--clips/--duration/--language/--output-dir/--force/--debug` overrides), `config`, `cache status`, `cache purge [--dry-run]`, `serve` . `clean-workspace` remains as a hidden back-compat alias of `cache purge`.
+- **Execution Routing:** `app.py` is entry/routing only (load config → environment → logging) and delegates to the Typer app in `src/interfaces/cli.py`. If `sys.argv` has CLI arguments → route to Typer; if run bare → launch Gradio. CLI commands: `clip <URL>` (the pipeline, with `--clips/--duration/--language/--output-dir/--force/--debug` overrides, plus `--manual/--timerange-file/--no-metadata` for manual mode — see §5.2), `config`, `cache status`, `cache purge [--dry-run]`, `serve` . `clean-workspace` remains as a hidden back-compat alias of `cache purge`.
 - **WebUI parity
 
 ---
@@ -154,8 +154,11 @@ This means: 25 RMS spikes + user wants 5 clips + margin 2 → **7 STT calls, 1 L
 #### 5.2 Manual Mode
 
 - The user provides start and end timestamps directly. The format MUST accept both `MM:SS - MM:SS` and `HH:MM:SS - HH:MM:SS` on the same input.
-- **Bulk Input:** Multiple ranges entered one per line in a textarea (WebUI) or via a `.txt` file upload or `--timestamps-file` CLI flag. Each line is parsed into a separate clip job.
-- **Rendering is identical to Auto Mode:** Manual mode bypasses AI timestamp detection only. Layout detection, face tracking, subtitle generation, and all rendering logic run exactly the same as in Auto Mode.
+- **Bulk Input:** Multiple ranges entered one per line in a textarea (WebUI) or via a `.txt` file upload or `--timerange-file` CLI flag (`src.core.utils.parse_timerange_line` / `load_timerange_file`). Each line is parsed into a separate clip job.
+- **CLI flags (implemented):** `--manual` (bool, requires `--timerange-file`) and `--timerange-file <path>` (requires `--manual`) — passing one without the other logs an error and exits non-zero. `--no-metadata` (manual-mode only; errors if passed without `--manual`) skips STT+LLM titling entirely.
+- **Selection-config bypass:** Manual mode ignores `default_clips`, `min_clip_duration_seconds`/`max_clip_duration_seconds`, `candidate_margin`, dedup, and duration-enforcement — clips render at exactly the user's boundaries (only a `start < end` safety check applies, not `MIN_CLIP_SECONDS`).
+- **LLM titling still runs by default:** unlike AI clip *selection*, manual mode by default still transcribes each fixed range and sends it through the batched LLM so it gets a real title/caption/description/hashtags — only the timerange boundaries are user-fixed, not the metadata. Pass `--no-metadata` to skip STT+LLM entirely; clips then get a default `Manual_<start>_<end>` title (e.g. `Manual_1-30_2-30`) and no `.txt` sidecar is written.
+- **Rendering is identical to Auto Mode:** Manual mode bypasses AI timestamp *selection* only. Layout detection, face tracking, subtitle generation, and all rendering logic run exactly the same as in Auto Mode.
 - Manual clips MUST still go through the Review Gate (displayed for confirmation) unless the review gate is globally disabled in config.
 
 #### 5.3 Shared UI Controls (WebUI)
@@ -229,7 +232,7 @@ The detected `ContentType` is threaded from `ContentTypeDetector.detect_content_
 
 #### 6.3 Detection Confidence & Fallback
 
-- When the video-level detector returns `None` (uncertain), the LLM decides per-clip content types in auto mode; in manual mode (no LLM call), clips fall back to `PODCAST` (safest default). `video_processing.detection_confidence_threshold` remains the configured floor.
+- When the video-level detector returns `None` (uncertain), the LLM decides per-clip content types in auto mode, and in manual mode too unless `--no-metadata` was passed (no LLM call) — those clips fall back to `PODCAST` (safest default) via the renderer's visual classification. `video_processing.detection_confidence_threshold` remains the configured floor.
 - The detected content type MUST be displayed in the WebUI Review panel so the user can override it before rendering if the detection was wrong.
 
 ---

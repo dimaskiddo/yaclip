@@ -32,10 +32,14 @@ class SubtitleGenerator:
         """
         sub_cfg = self.config.video_processing.subtitles
         if not sub_cfg.enabled:
-            logger.info("Subtitles are disabled in config. Skipping subtitle file generation.")
+            logger.info(
+                "Subtitles are disabled in config. Skipping subtitle file generation."
+            )
             return False
 
-        logger.info(f"Generating subtitle file at: {SystemUtils.display_path(output_ass_path)}")
+        logger.info(
+            f"Generating subtitle file at: {SystemUtils.display_path(output_ass_path)}"
+        )
 
         force_upper = sub_cfg.uppercase
         words = self._extract_flat_words(transcript_segments, force_upper)
@@ -54,21 +58,29 @@ class SubtitleGenerator:
             return False
 
         clip_words = self._collapse_repeats(clip_words)
-        lines = self._group_into_lines(clip_words, timing.line_max_words, timing.line_gap_seconds)
+        lines = self._group_into_lines(
+            clip_words, timing.line_max_words, timing.line_gap_seconds
+        )
 
         ass_lines = self._build_ass_header()
         secondary_color = sub_cfg.highlight_color
         gap_smooth = timing.gap_smooth_ms / 1000.0
-        ass_lines.extend(self._build_karaoke_dialogues(lines, gap_smooth, secondary_color))
+        ass_lines.extend(
+            self._build_karaoke_dialogues(lines, gap_smooth, secondary_color)
+        )
 
         output_ass_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_ass_path, "w", encoding="utf-8") as f:
             f.write("\n".join(ass_lines) + "\n")
 
-        logger.info(f"Subtitle file generated successfully ({len(lines)} subtitle lines).")
+        logger.info(
+            f"Subtitle file generated successfully ({len(lines)} subtitle lines)."
+        )
         return True
 
-    def _extract_flat_words(self, transcript_segments: list[dict], force_upper: bool) -> list[dict]:
+    def _extract_flat_words(
+        self, transcript_segments: list[dict], force_upper: bool
+    ) -> list[dict]:
         """Extract all word-level entries from segments, uppercasing when configured."""
         words = []
         for segment in transcript_segments:
@@ -176,8 +188,14 @@ class SubtitleGenerator:
             line_end = line_words[-1]["end"]
             for i, active in enumerate(line_words):
                 seg_start = active["start"]
-                next_start = line_words[i + 1]["start"] if i + 1 < len(line_words) else line_end
-                seg_end = next_start if next_start - active["end"] <= gap_smooth else active["end"]
+                next_start = (
+                    line_words[i + 1]["start"] if i + 1 < len(line_words) else line_end
+                )
+                seg_end = (
+                    next_start
+                    if next_start - active["end"] <= gap_smooth
+                    else active["end"]
+                )
                 if seg_end <= seg_start:
                     seg_end = seg_start + 0.05
 
@@ -222,7 +240,10 @@ class SubtitleGenerator:
                 continue
             # Scan forward for consecutive identical words
             run_end = i
-            while run_end + 1 < len(words) and self._norm(words[run_end + 1]["word"]) == key:
+            while (
+                run_end + 1 < len(words)
+                and self._norm(words[run_end + 1]["word"]) == key
+            ):
                 run_end += 1
             run_len = run_end - i + 1
             if run_len >= min_repeats:

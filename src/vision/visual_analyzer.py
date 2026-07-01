@@ -152,7 +152,9 @@ class VisualAnalyzer:
         screen_box: tuple[int, int, int, int] | None = None
         max_persons_in_frame: int = 0
         if self.cfg.enabled:
-            persons, screen_box, max_persons_in_frame = self._detect_regions(frames, width, height)
+            persons, screen_box, max_persons_in_frame = self._detect_regions(
+                frames, width, height
+            )
         # Use the stable, video-level facecam box when provided so framing is identical
         # across every clip (the cam is positionally static; per-clip boxes drift with pose).
         # COLLAB passes the reliable detect_facecams() PAIR: [0] = primary (top), [1] = collaborator
@@ -189,7 +191,9 @@ class VisualAnalyzer:
                 f"(mediashare_present={mediashare_present})."
             )
         elif self.config.video_processing.preserve_donation_overlays:
-            ms_events, ms_box = self._scan_mediashare(video_path, start_time, end_time, facecam_box)
+            ms_events, ms_box = self._scan_mediashare(
+                video_path, start_time, end_time, facecam_box
+            )
             mediashare_box = ms_box or screen_box
             mediashare_present = bool(ms_events)
         else:
@@ -201,7 +205,13 @@ class VisualAnalyzer:
         # is parameterised so the 3-stack collab centre uses the same engine at its wider 1.6875 shape.
         if track_gameplay:
             gameplay_track, gameplay_box, motion_level = self._gameplay_pan(
-                video_path, start_time, end_time, exclude_boxes, width, height, gameplay_aspect
+                video_path,
+                start_time,
+                end_time,
+                exclude_boxes,
+                width,
+                height,
+                gameplay_aspect,
             )
         else:
             gameplay_track = []
@@ -280,7 +290,8 @@ class VisualAnalyzer:
         small_w, small_h = MOTION_GRID_W, MOTION_GRID_H
         scale_x, scale_y = width / small_w, height / small_h
         mask_rects = [
-            self._box_to_grid_rect(p["box"], scale_x, scale_y, small_w, small_h) for p in persons
+            self._box_to_grid_rect(p["box"], scale_x, scale_y, small_w, small_h)
+            for p in persons
         ]
 
         cap2 = cv2.VideoCapture(str(video_path))
@@ -330,7 +341,9 @@ class VisualAnalyzer:
             "person_count": person_count,
         }
 
-    def detect_stable_facecam(self, video_path: Path) -> tuple[int, int, int, int] | None:
+    def detect_stable_facecam(
+        self, video_path: Path
+    ) -> tuple[int, int, int, int] | None:
         """Detect one stable facecam box for the whole video (sampled across its length).
 
         The webcam is positionally static, so a single box reused for every clip keeps the
@@ -477,7 +490,9 @@ class VisualAnalyzer:
             return [], None
 
         if facecam_box is not None:
-            kept = [iv for iv in intervals if not boxes_overlap(iv["box"], facecam_box, 0.3)]
+            kept = [
+                iv for iv in intervals if not boxes_overlap(iv["box"], facecam_box, 0.3)
+            ]
             dropped = len(intervals) - len(kept)
             if dropped:
                 logger.info(
@@ -488,7 +503,10 @@ class VisualAnalyzer:
         if not intervals:
             return [], None
 
-        events = [(start_time + iv["start_time"], start_time + iv["end_time"]) for iv in intervals]
+        events = [
+            (start_time + iv["start_time"], start_time + iv["end_time"])
+            for iv in intervals
+        ]
         # Representative box = the longest-active interval's box.
         longest = max(intervals, key=lambda iv: iv["end_time"] - iv["start_time"])
         b = longest["box"]
@@ -512,7 +530,9 @@ class VisualAnalyzer:
         crop_w = make_even(int(base_w / zoom))
         crop_h = make_even(min(height, int(round(crop_w / aspect))))
 
-        bottom_tops = [int(b[1]) for b in (cams or []) if (b[1] + b[3] / 2.0) > 2 * height / 3.0]
+        bottom_tops = [
+            int(b[1]) for b in (cams or []) if (b[1] + b[3] / 2.0) > 2 * height / 3.0
+        ]
         if bottom_tops and min(bottom_tops) >= 0.45 * height:
             cam_top = min(bottom_tops)
             if crop_h > cam_top:  # shrink so the whole crop fits above the cam band
@@ -556,9 +576,7 @@ class VisualAnalyzer:
 
         # Smooth, static-first tuning.
         frame_center = width / 2.0
-        target_ema = (
-            GAMEPLAY_PAN_EMA  # smooth the motion target so it doesn't jitter frame-to-frame
-        )
+        target_ema = GAMEPLAY_PAN_EMA  # smooth the motion target so it doesn't jitter frame-to-frame
         deadzone = (
             GAMEPLAY_PAN_DEADZONE_FRAC * width
         )  # hold still until the target drifts past this from the crop centre
@@ -580,14 +598,18 @@ class VisualAnalyzer:
                 max_left = min(max_left, float(cam[0] - crop_w))
             else:  # cam on the left → keep crop fully right of it
                 min_left = max(min_left, float(cam[0] + cam[2]))
-        if max_left < min_left:  # cams too central to fully exclude → fall back to frame bounds
+        if (
+            max_left < min_left
+        ):  # cams too central to fully exclude → fall back to frame bounds
             min_left, max_left = 0.0, float(width - crop_w)
 
         small_w, small_h = MOTION_GRID_W, MOTION_GRID_H
         scale_x = width / small_w
         scale_y = height / small_h
         # Pre-compute each cam's region in the small motion grid so its movement never pulls the pan.
-        mask_rects = [self._box_to_grid_rect(c, scale_x, scale_y, small_w, small_h) for c in cams]
+        mask_rects = [
+            self._box_to_grid_rect(c, scale_x, scale_y, small_w, small_h) for c in cams
+        ]
 
         try:
             _w, _h, fps, total = video_props(cap)
@@ -595,7 +617,9 @@ class VisualAnalyzer:
             step = max(1, int(fps * 0.5))  # ~2 fps
             from src.core.constants import MAX_GAMEPLAY_SCAN_FRAMES
 
-            indices = list(range(s_frame, e_frame, step))[:MAX_GAMEPLAY_SCAN_FRAMES]  # bound cost
+            indices = list(range(s_frame, e_frame, step))[
+                :MAX_GAMEPLAY_SCAN_FRAMES
+            ]  # bound cost
 
             track: list[dict] = []
             levels: list[float] = []
@@ -608,7 +632,9 @@ class VisualAnalyzer:
                 ret, frame = cap.read()
                 if not ret:
                     break
-                gray = cv2.cvtColor(cv2.resize(frame, (small_w, small_h)), cv2.COLOR_BGR2GRAY)
+                gray = cv2.cvtColor(
+                    cv2.resize(frame, (small_w, small_h)), cv2.COLOR_BGR2GRAY
+                )
                 if prev is not None:
                     diff = cv2.GaussianBlur(cv2.absdiff(gray, prev), (21, 21), 0)
                     for mx0, mx1, my0, my1 in mask_rects:
@@ -618,13 +644,17 @@ class VisualAnalyzer:
                     total_motion = float(col_motion.sum())
                     if total_motion > 0:
                         # Motion CENTROID (stable) rather than argmax (jumpy).
-                        centroid = float((col_motion * cols).sum() / total_motion) * scale_x
+                        centroid = (
+                            float((col_motion * cols).sum() / total_motion) * scale_x
+                        )
                         smoothed_target += target_ema * (centroid - smoothed_target)
                     # Static-first: only move when the target leaves the deadzone, then glide slowly.
                     delta = smoothed_target - cur_c
                     if abs(delta) > deadzone:
                         cur_c += max(-max_vel, min(max_vel, delta))
-                    cur_c = min(frame_center + max_dev, max(frame_center - max_dev, cur_c))
+                    cur_c = min(
+                        frame_center + max_dev, max(frame_center - max_dev, cur_c)
+                    )
                 prev = gray
                 left = min(max_left, max(min_left, cur_c - crop_w / 2.0))
                 track.append(
@@ -646,7 +676,9 @@ class VisualAnalyzer:
         motion_level = float(np.mean(levels)) if levels else 0.0
         return track, repr_box, motion_level
 
-    def _sample_frames(self, cap: object, start_time: float, end_time: float) -> list[np.ndarray]:
+    def _sample_frames(
+        self, cap: object, start_time: float, end_time: float
+    ) -> list[np.ndarray]:
         """Sample up to ``sample_frames`` frames evenly across the window."""
         _w, _h, fps, total = video_props(cap)
         s_frame, e_frame = clip_frame_range(fps, total, start_time, end_time)
@@ -799,13 +831,19 @@ class VisualAnalyzer:
         motion = np.zeros((small_h, small_w), dtype=np.float32)
         prev = None
         for frame in frames:
-            gray = cv2.cvtColor(cv2.resize(frame, (small_w, small_h)), cv2.COLOR_BGR2GRAY)
+            gray = cv2.cvtColor(
+                cv2.resize(frame, (small_w, small_h)), cv2.COLOR_BGR2GRAY
+            )
             if prev is not None:
                 motion += cv2.absdiff(gray, prev).astype(np.float32)
             prev = gray
 
-        for cam in cams:  # zero every cam region so it never pulls the gameplay centroid
-            mx0, mx1, my0, my1 = self._box_to_grid_rect(cam, scale_x, scale_y, small_w, small_h)
+        for (
+            cam
+        ) in cams:  # zero every cam region so it never pulls the gameplay centroid
+            mx0, mx1, my0, my1 = self._box_to_grid_rect(
+                cam, scale_x, scale_y, small_w, small_h
+            )
             motion[my0:my1, mx0:mx1] = 0.0
 
         motion_level = float(motion.mean())
@@ -871,7 +909,9 @@ class VisualAnalyzer:
     def _build_descriptor(self, a: dict) -> str:
         """Compact natural-language summary of the window for a (text-only) LLM."""
         w, h = a["video_width"], a["video_height"]
-        parts = [f"{a['face_count']} person box(es) detected (may include on-screen characters)"]
+        parts = [
+            f"{a['face_count']} person box(es) detected (may include on-screen characters)"
+        ]
         if a["facecam_box"]:
             parts.append(f"facecam at {self._where(a['facecam_box'], w, h)}")
         if a.get("collab_box"):
@@ -917,6 +957,10 @@ class VisualAnalyzer:
     def _where(self, box: tuple[int, int, int, int], width: int, height: int) -> str:
         """Human-readable screen position of a box (e.g. 'bottom-right')."""
         cx, cy = box[0] + box[2] / 2, box[1] + box[3] / 2
-        vert = "top" if cy < height / 3 else "bottom" if cy > 2 * height / 3 else "centre"
-        horiz = "left" if cx < width / 3 else "right" if cx > 2 * width / 3 else "centre"
+        vert = (
+            "top" if cy < height / 3 else "bottom" if cy > 2 * height / 3 else "centre"
+        )
+        horiz = (
+            "left" if cx < width / 3 else "right" if cx > 2 * width / 3 else "centre"
+        )
         return "centre" if vert == "centre" and horiz == "centre" else f"{vert}-{horiz}"

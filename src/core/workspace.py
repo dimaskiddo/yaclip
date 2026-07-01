@@ -54,7 +54,9 @@ def audio_output_path(video_stem: str, ext: str) -> Path:
     return AUDIOS_DIR / f"{video_stem.upper()}.{ext}"
 
 
-def save_candidate_cache(video_id: str, suffix: str, candidates: list[dict], label: str) -> None:
+def save_candidate_cache(
+    video_id: str, suffix: str, candidates: list[dict], label: str
+) -> None:
     """Persist a ``{"video_id", "candidates": [...]}`` JSON cache for render-time reuse.
 
     Shared by the per-candidate word-timing and donation-scan caches (``stt_local.py``) — same
@@ -70,7 +72,9 @@ def save_candidate_cache(video_id: str, suffix: str, candidates: list[dict], lab
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         path.write_text(
-            json.dumps({"video_id": video_id, "candidates": candidates}, ensure_ascii=False),
+            json.dumps(
+                {"video_id": video_id, "candidates": candidates}, ensure_ascii=False
+            ),
             encoding="utf-8",
         )
         logger.info(f"Saved {label} ({len(candidates)} candidate(s)): {path.name}")
@@ -160,7 +164,10 @@ def ensure_workspace_integrity() -> None:
                 for file_name in z.namelist():
                     if file_name.endswith(exe_name):
                         target_path = BIN_DIR / exe_name
-                        with z.open(file_name) as source, open(target_path, "wb") as target:
+                        with (
+                            z.open(file_name) as source,
+                            open(target_path, "wb") as target,
+                        ):
                             shutil.copyfileobj(source, target)
                         if system != "windows":
                             os.chmod(target_path, 0o755)
@@ -173,15 +180,21 @@ def ensure_workspace_integrity() -> None:
     if not font_file.exists():
         logger.info("Downloading default high-impact font to workspace/fonts...")
         try:
-            font_url = "https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf"
+            font_url = (
+                "https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf"
+            )
             urllib.request.urlretrieve(font_url, font_file)
         except Exception as e:
             logger.error(f"Failed to download default font: {e}")
 
-    logger.info("Workspace check complete. All required tools and directories are ready.")
+    logger.info(
+        "Workspace check complete. All required tools and directories are ready."
+    )
 
 
-def run_purge_cycle(force: bool = False, specific_target: str | list[str] | None = None) -> None:
+def run_purge_cycle(
+    force: bool = False, specific_target: str | list[str] | None = None
+) -> None:
     """Run a single cache purge check sequentially, deleting stale files based on retention settings.
 
     Args:
@@ -283,10 +296,14 @@ def run_purge_cycle(force: bool = False, specific_target: str | list[str] | None
             except Exception as e:
                 # Ignore errors if file is already deleted by another process
                 if not isinstance(e, FileNotFoundError):
-                    logger.warning(f"Workspace Cleaner - Failed to process/delete file {path}: {e}")
+                    logger.warning(
+                        f"Workspace Cleaner - Failed to process/delete file {path}: {e}"
+                    )
 
     if files_deleted > 0 or total_freed_bytes > 0:
         freed_mb = total_freed_bytes / BYTES_PER_MB
-        logger.info(f"Workspace Cleaner - Purged {files_deleted} files, freeing {freed_mb:.2f} MB.")
+        logger.info(
+            f"Workspace Cleaner - Purged {files_deleted} files, freeing {freed_mb:.2f} MB."
+        )
     else:
         logger.info("Workspace Cleaner - Purge cycle completed. No stale files found.")

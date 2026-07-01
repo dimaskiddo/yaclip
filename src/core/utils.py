@@ -25,7 +25,60 @@ def make_even(value: int) -> int:
     return value if value % 2 == 0 else value - 1
 
 
-def box_iou(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+def parse_timerange_line(line: str) -> tuple[float, float]:
+    """Parse a manual timerange line into (start_seconds, end_seconds).
+
+    Accepts "MM:SS - MM:SS" or "HH:MM:SS - HH:MM:SS" (either side independently 2 or 3
+    colon-parts). Only a positivity/ordering safety check is enforced here — manual mode
+    intentionally bypasses ``MIN_CLIP_SECONDS`` and any other selection-config floor.
+    """
+
+    def _to_seconds(part: str) -> float:
+        pieces = part.strip().split(":")
+        if len(pieces) == 2:
+            m, s = pieces
+            h = "0"
+        elif len(pieces) == 3:
+            h, m, s = pieces
+        else:
+            raise ValueError(
+                f"Invalid timestamp {part!r} in line {line!r}: expected MM:SS or HH:MM:SS"
+            )
+        try:
+            return int(h) * 3600 + int(m) * 60 + float(s)
+        except ValueError as e:
+            raise ValueError(f"Invalid timestamp {part!r} in line {line!r}: {e}") from e
+
+    if "-" not in line:
+        raise ValueError(f"Invalid timerange line {line!r}: expected 'START - END'")
+    start_part, _, end_part = line.rpartition("-")
+    start, end = _to_seconds(start_part), _to_seconds(end_part)
+    if end <= start:
+        raise ValueError(f"Invalid timerange line {line!r}: end must be after start")
+    return start, end
+
+
+def load_timerange_file(path: Path) -> list[dict[str, Any]]:
+    """Read a manual timerange file into ``[{"start_time", "end_time"}, ...]``.
+
+    Blank lines and ``#``-prefixed comment lines are skipped. Raises ``ValueError`` if the
+    file yields no clips.
+    """
+    clips: list[dict[str, Any]] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        start, end = parse_timerange_line(line)
+        clips.append({"start_time": start, "end_time": end})
+    if not clips:
+        raise ValueError(f"No valid timerange entries found in {path}")
+    return clips
+
+
+def box_iou(
+    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
+) -> float:
     """Intersection-over-Union of two (x, y, w, h) boxes."""
     ax, ay, aw, ah = a
     bx, by, bw, bh = b
@@ -70,7 +123,9 @@ def box_center(box: tuple[float, float, float, float]) -> tuple[float, float]:
     return (box[0] + box[2] / 2.0, box[1] + box[3] / 2.0)
 
 
-def edge_score(box: tuple[float, float, float, float], width: int, height: int) -> float:
+def edge_score(
+    box: tuple[float, float, float, float], width: int, height: int
+) -> float:
     """1 − (centre's distance to the nearest frame edge) / (min(w,h)/2).
 
     ~0 for an interior box (far from every border), high for one hugging any edge/corner.
@@ -201,7 +256,9 @@ class SystemUtils:
         if alt.exists():
             return str(alt)
 
-        logger.warning("FFmpeg binary not found in workspace/bin. Falling back to system 'ffmpeg'.")
+        logger.warning(
+            "FFmpeg binary not found in workspace/bin. Falling back to system 'ffmpeg'."
+        )
         return "ffmpeg"
 
     @staticmethod
@@ -318,11 +375,15 @@ class AIUtils:
                             f"Multiple matches found. Auto-selecting the first one: {filename}"
                         )
 
-                logger.info(f"Locating model {filename} from HuggingFace repo {repo_id}...")
+                logger.info(
+                    f"Locating model {filename} from HuggingFace repo {repo_id}..."
+                )
                 return hf_hub_download(repo_id=repo_id, filename=filename)
 
             except Exception as e:
-                logger.error(f"Failed to download/resolve model from HuggingFace Hub: {e}")
+                logger.error(
+                    f"Failed to download/resolve model from HuggingFace Hub: {e}"
+                )
                 raise AIProviderError(f"HuggingFace model download failed: {e}") from e
         else:
             if not Path(model_path).exists():
@@ -359,7 +420,9 @@ class AIUtils:
                     parsed_data = v
                     break
             else:
-                raise AIProviderError("Parsed response is a JSON object with no array value.")
+                raise AIProviderError(
+                    "Parsed response is a JSON object with no array value."
+                )
 
         if not isinstance(parsed_data, list):
             raise AIProviderError("Parsed response is not a JSON array.")

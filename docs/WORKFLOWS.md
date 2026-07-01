@@ -67,8 +67,11 @@ flowchart TD
 
     subgraph S4["4. Clip Source Routing"]
         ClipModeRoute{clip_selection.mode?}
-        ClipModeRoute -- "manual" --> ManualParse[Parse user timestamp ranges<br/>Validate boundaries]
-        ManualParse --> ManualClips[Manual clip list ready]
+        ClipModeRoute -- "manual" --> ManualParse[Parse user timestamp ranges<br/>Safety check: start < end only<br/>no MIN_CLIP_SECONDS/count/margin bypass]
+        ManualParse --> NoMetaCheck{--no-metadata?}
+        NoMetaCheck -- "Yes" --> ManualClips["Manual clip list ready<br/>(Manual_start_end default titles)"]
+        NoMetaCheck -- "No (default)" --> ManualSliceStt["Slice exact user bounds<br/>STT + batched LLM titling<br/>(no selection — all ranges kept)"]
+        ManualSliceStt --> ManualClips
         ClipModeRoute -- "auto" --> PreSliceStart
         subgraph S4a["Auto: Pre-Slicing & Candidate Pre-Ranking"]
             PreSliceStart[process_audio] --> StratCheck{auto_strategy?}
@@ -265,8 +268,8 @@ Both signals produce a **scored, ranked list** of candidate windows. The pipelin
 
 **Why pre-ranking matters:** 25 RMS spikes, 5 clips wanted, margin 2 → 7 STT calls and 1 LLM call. Without pre-ranking, naïvely: 25 STT calls and 25 LLM calls. The margin is **additive** (not a multiplier), so the cost stays bounded as the requested clip count grows — 15 clips + 2 = 17 candidates, not 30.
 
-**Manual Mode** (when `clip_selection.mode: "manual"`):
-The pre-slicing and ranking steps are skipped entirely. User-provided timestamp ranges are parsed and validated (start < end, within video duration), then passed directly to the Review Gate. No AI analysis occurs.
+**Manual Mode** (when `clip_selection.mode: "manual"`, CLI: `--manual --timerange-file <path>`):
+The pre-ranking, candidate-margin, target-clip-count, and duration-enforcement steps are skipped entirely — clips render at exactly the user's boundaries (only a `start < end` safety check, no `MIN_CLIP_SECONDS` floor). By default, each range is still sliced and STT-transcribed, then sent through the same batched LLM used by auto mode (`target_clips = len(ranges)`, so nothing is dropped) purely for **titling** — title/caption/description/hashtags/content_type are mapped back by index, boundaries never change. `--no-metadata` skips STT+LLM entirely; clips get a default `Manual_<start>_<end>` title and no `.txt` sidecar. Either way, results pass to the Review Gate like auto mode.
 
 ---
 

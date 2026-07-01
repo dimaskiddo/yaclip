@@ -23,6 +23,7 @@ sdist/
 var/
 workspace/
 *.egg-info/
+.mypy_cache/
 .ruff_cache/
 .understand-anything/
 .installed.cfg

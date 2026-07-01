@@ -26,7 +26,9 @@ class CloudSTTProvider:
         self.cloud_config = self.config.ai_pipeline.stt.cloud
 
         if not self.cloud_config.provider:
-            raise ValueError("Cloud STT mode requires 'provider' to be defined in config.yaml.")
+            raise ValueError(
+                "Cloud STT mode requires 'provider' to be defined in config.yaml."
+            )
 
         self.provider = self.cloud_config.provider.lower()
         self.api_key = self.cloud_config.api_key
@@ -107,7 +109,9 @@ class CloudSTTProvider:
             language = self.config.video_processing.subtitles.language
             lang_instruction = ""
             if language and language.lower() != "auto":
-                lang_instruction = f" The primary language of the audio is '{language}'."
+                lang_instruction = (
+                    f" The primary language of the audio is '{language}'."
+                )
                 # Same native-language primer used by the OpenAI/local paths, for consistency.
                 lang_prompt = get_language_prompt(language)
                 if lang_prompt:
@@ -123,7 +127,9 @@ class CloudSTTProvider:
                 "Do not include any other markdown formatting outside the timestamps and spoken text."
             )
 
-            return gemini_generate(self.model_name, [uploaded_file, prompt], self.timeout)
+            return gemini_generate(
+                self.model_name, [uploaded_file, prompt], self.timeout
+            )
         except Exception as e:
             logger.error(f"Gemini transcription failed: {e}")
             raise AIProviderError(f"Gemini STT failed: {e}") from e
@@ -148,7 +154,9 @@ class CloudSTTProvider:
         elif self.provider == "openai" or self.base_url:
             transcript = self._transcribe_openai(str(audio_path))
         else:
-            raise NotImplementedError(f"Cloud STT provider '{self.provider}' is not supported.")
+            raise NotImplementedError(
+                f"Cloud STT provider '{self.provider}' is not supported."
+            )
 
         out_txt.parent.mkdir(parents=True, exist_ok=True)
         out_txt.write_text(transcript, encoding="utf-8")

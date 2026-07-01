@@ -46,7 +46,12 @@ from src.core.constants import (
 from src.core.utils import SystemUtils, box_iou, make_even
 from src.core.workspace import MODELS_DIR
 from src.media.energy import AudioEnergyAnalyzer
-from src.vision.frame_utils import clip_frame_range, load_yolo, video_props, yolo_predict_boxes
+from src.vision.frame_utils import (
+    clip_frame_range,
+    load_yolo,
+    video_props,
+    yolo_predict_boxes,
+)
 
 
 class FaceTracker:
@@ -89,7 +94,9 @@ class FaceTracker:
             return []
 
         width, height, fps, total_frames = video_props(cap)
-        start_frame, end_frame = clip_frame_range(fps, total_frames, start_time, end_time)
+        start_frame, end_frame = clip_frame_range(
+            fps, total_frames, start_time, end_time
+        )
         clip_frame_count = end_frame - start_frame
 
         logger.debug(
@@ -103,11 +110,15 @@ class FaceTracker:
         # Downsample detection to save CPU/GPU.  PODCAST samples faster so active-speaker
         # detection can resolve syllable-rate (~3-5 Hz) mouth movement; other types use 5 fps.
         sample_fps = (
-            PODCAST_DETECTION_FPS if (content_type == ContentType.PODCAST and not fast) else 5
+            PODCAST_DETECTION_FPS
+            if (content_type == ContentType.PODCAST and not fast)
+            else 5
         )
         detection_interval = max(1, int(fps / sample_fps))
 
-        raw_detections: list[dict] = []  # List of dicts: {"frame_idx": int, "faces": list}
+        raw_detections: list[
+            dict
+        ] = []  # List of dicts: {"frame_idx": int, "faces": list}
 
         # PODCAST uses MediaPipe FaceLandmarker (lip-landmark speaker detection) so it can
         # identify and cut to the active speaker when 2+ faces are present.  All other types
@@ -186,7 +197,9 @@ class FaceTracker:
         try:
             model = load_yolo(cfg)
         except ImportError:
-            logger.warning("Object detection unavailable — using center crops for this clip.")
+            logger.warning(
+                "Object detection unavailable — using center crops for this clip."
+            )
             return []
 
         device = SystemUtils.resolve_device(cfg.device)
@@ -283,7 +296,9 @@ class FaceTracker:
                 model_path,
             )
 
-        num_faces = max(1, min(person_count + FACE_COUNT_MARGIN, FACE_LANDMARKER_MAX_FACES))
+        num_faces = max(
+            1, min(person_count + FACE_COUNT_MARGIN, FACE_LANDMARKER_MAX_FACES)
+        )
         logger.info(
             f"Speaker tracking: {person_count} person(s) in video, tracking up to {num_faces} speakers."
         )
@@ -351,7 +366,9 @@ class FaceTracker:
         width = _dist(*MAR_WIDTH_PAIR)
         if width <= 1e-6:
             return 0.0
-        vertical = sum(_dist(a, b) for a, b in MAR_VERTICAL_PAIRS) / len(MAR_VERTICAL_PAIRS)
+        vertical = sum(_dist(a, b) for a, b in MAR_VERTICAL_PAIRS) / len(
+            MAR_VERTICAL_PAIRS
+        )
         return vertical / width
 
     def _map_faces_across_steps(self, detections: list[dict], width: int) -> list[dict]:
@@ -463,7 +480,9 @@ class FaceTracker:
                 continue
             ranges = sorted((b[0], b[0] + b[2]) for _, b, _ in faces)
             spans.append(ranges[-1][1] - ranges[0][0])
-            gaps.append(max(ranges[k][0] - ranges[k - 1][1] for k in range(1, len(ranges))))
+            gaps.append(
+                max(ranges[k][0] - ranges[k - 1][1] for k in range(1, len(ranges)))
+            )
         # Require two-face shots to dominate before committing to a two-shot for the whole clip.
         if not spans or len(spans) < max(1, int(len(steps) * 0.3)):
             return False
@@ -472,14 +491,18 @@ class FaceTracker:
             and float(np.median(gaps)) <= crop_w * GROUP_MAX_GAP_FACTOR
         )
 
-    def _single_face_step_centers(self, detections: list[dict], width: int) -> list[dict]:
+    def _single_face_step_centers(
+        self, detections: list[dict], width: int
+    ) -> list[dict]:
         """Non-PODCAST: track the first (usually only) detected face per step."""
         step_centers: list[dict] = []
         for s in self._map_faces_across_steps(detections, width):
             faces = s["faces"]
             if not faces:
                 if step_centers:
-                    step_centers.append({**step_centers[-1], "frame_idx": s["frame_idx"]})
+                    step_centers.append(
+                        {**step_centers[-1], "frame_idx": s["frame_idx"]}
+                    )
                 continue
             _fid, box, _mar = faces[0]
             # Rule-of-thirds: lift the center so the eyes sit in the upper third of the frame.
@@ -522,7 +545,8 @@ class FaceTracker:
         # Audio-visual sync: voiced gate + per-face correlation weight.
         voiced = self._voiced_mask(audio_rms, n)
         weights = {
-            fid: self._audio_correlation_weight(motion[fid], audio_rms, voiced) for fid in all_fids
+            fid: self._audio_correlation_weight(motion[fid], audio_rms, voiced)
+            for fid in all_fids
         }
 
         # Stable, clip-level two-shot decision.
@@ -586,7 +610,9 @@ class FaceTracker:
             coherence: dict[int, float] = {}
             for fid in visible:
                 if have_audio and hi - slo >= 3:
-                    coherence[fid] = self._pearson(motion[fid][slo:hi], audio_rms[slo:hi])
+                    coherence[fid] = self._pearson(
+                        motion[fid][slo:hi], audio_rms[slo:hi]
+                    )
                 else:
                     coherence[fid] = 1.0  # no audio → coherence not used as a gate
 
@@ -615,7 +641,10 @@ class FaceTracker:
                 # current speaker.  If NO face is eligible (e.g. the talker's mouth is behind a
                 # mic), we fall through and HOLD the current speaker — never jump to a smiler.
                 best = max(eligible, key=lambda f: score[f])
-                if best != active and score[best] > score.get(active, 0.0) * SPEAKER_SWITCH_MARGIN:
+                if (
+                    best != active
+                    and score[best] > score.get(active, 0.0) * SPEAKER_SWITCH_MARGIN
+                ):
                     active = best
 
             _emit(frame_idx, visible[active], active, visible[active][3])
@@ -646,7 +675,9 @@ class FaceTracker:
         """
         if not detections:
             # Fallback to static center crops
-            return self._generate_fallback_crops(start_frame, end_frame, fps, width, height)
+            return self._generate_fallback_crops(
+                start_frame, end_frame, fps, width, height
+            )
 
         # Target crop dimensions depend on content type.
         # Facecam crop is pre-shaped to the destination panel aspect so the downstream
@@ -703,12 +734,16 @@ class FaceTracker:
 
         if not step_centers:
             # No detections at all → static center fallback (handled by caller).
-            return self._generate_fallback_crops(start_frame, end_frame, fps, width, height)
+            return self._generate_fallback_crops(
+                start_frame, end_frame, fps, width, height
+            )
 
         committed_sid = step_centers[0]["speaker_id"]
         pending_sid = committed_sid
         pending_count = 0
-        committed_steps = 0  # steps on the current committed subject (enforces MIN_SHOT_SECONDS)
+        committed_steps = (
+            0  # steps on the current committed subject (enforces MIN_SHOT_SECONDS)
+        )
         seg_xs: list[float] = []
         seg_ys: list[float] = []
         seg_start = start_frame
@@ -780,7 +815,13 @@ class FaceTracker:
 
         # Close the final open segment.
         seg = _close_segment(
-            committed_sid, seg_xs, seg_ys, seg_start, end_frame, last_seg_cx, last_seg_cy
+            committed_sid,
+            seg_xs,
+            seg_ys,
+            seg_start,
+            end_frame,
+            last_seg_cx,
+            last_seg_cy,
         )
         segments.append(seg)
 

@@ -103,9 +103,9 @@ def setup_environment() -> None:
     # face_landmarker_graph.cc info lines, inference_feedback_manager warnings, and the
     # "Created TensorFlow Lite XNNPACK delegate" info.  Without this, every FaceLandmarker
     # load dumps ~10 lines of C++ noise to stderr.
-    os.environ["GLOG_minloglevel"] = "3"  # noqa: SIM112 — GLOG uses lowercase env vars
-    os.environ["GLOG_alsologtostderr"] = "0"  # noqa: SIM112
-    os.environ["GLOG_logtostderr"] = "0"  # noqa: SIM112
+    os.environ["GLOG_minloglevel"] = "3"
+    os.environ["GLOG_alsologtostderr"] = "0"
+    os.environ["GLOG_logtostderr"] = "0"
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
     # Guard against the MediaPipe × triton SIGSEGV (see guard_triton_segfault docstring).

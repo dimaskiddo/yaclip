@@ -80,7 +80,9 @@ class OverlayDetector:
             step_s = sample_step_seconds if sample_step_seconds is not None else 0.5
             step = max(1, int(fps * step_s))
 
-            s_frame, e_frame = clip_frame_range(fps, total_frames, scan_start_t, scan_end_t)
+            s_frame, e_frame = clip_frame_range(
+                fps, total_frames, scan_start_t, scan_end_t
+            )
 
             # Sample small frames; t is relative to the CLIP start (negative inside the lead pad).
             samples: list[tuple[float, np.ndarray]] = []
@@ -91,7 +93,9 @@ class OverlayDetector:
                     break
                 small = cv2.resize(frame, (OVERLAY_SMALL_W, OVERLAY_SMALL_H))
                 samples.append(((idx / fps) - start_time, small))
-                if len(samples) >= OVERLAY_MAX_SCAN_SAMPLES:  # bound cost on long windows
+                if (
+                    len(samples) >= OVERLAY_MAX_SCAN_SAMPLES
+                ):  # bound cost on long windows
                     break
         finally:
             cap.release()
@@ -105,7 +109,9 @@ class OverlayDetector:
 
         active_frames: list[tuple[float, tuple[int, int, int, int]]] = []
         for t, small in samples:
-            box = self._novelty_box(small, baseline, scale_x, scale_y, width, height, facecam_box)
+            box = self._novelty_box(
+                small, baseline, scale_x, scale_y, width, height, facecam_box
+            )
             if box is not None:
                 active_frames.append((t, box))
 
@@ -172,7 +178,9 @@ class OverlayDetector:
         )
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
 
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(
+            thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
         frame_area = float(width * height)
         best: tuple[int, int, int, int] | None = None
         best_area = 0.0
@@ -182,7 +190,11 @@ class OverlayDetector:
             fx, fy = int(x * scale_x), int(y * scale_y)
             fw, fh = int(w * scale_x), int(h_box * scale_y)
             area = float(fw * fh)
-            if not (MIN_POPUP_AREA_FRAC * frame_area < area < MAX_POPUP_AREA_FRAC * frame_area):
+            if not (
+                MIN_POPUP_AREA_FRAC * frame_area
+                < area
+                < MAX_POPUP_AREA_FRAC * frame_area
+            ):
                 continue
             aspect = fw / max(1, fh)
             if not (POPUP_ASPECT_MIN < aspect < POPUP_ASPECT_MAX):
@@ -205,11 +217,15 @@ class OverlayDetector:
     ) -> bool:
         """True for persistent furniture that must never be a popup (ticker, full-width band, cam)."""
         cy = y + h / 2.0
-        if cy > BOTTOM_STRIP_FRAC * height:  # full-width scrolling donation ticker at the bottom
+        if (
+            cy > BOTTOM_STRIP_FRAC * height
+        ):  # full-width scrolling donation ticker at the bottom
             return True
         if w >= FULLWIDTH_FRAC * width:  # ticker / lower-thirds banners span the width
             return True
-        if facecam_box is not None:  # the streamer cam is a moving bordered inset, not a popup
+        if (
+            facecam_box is not None
+        ):  # the streamer cam is a moving bordered inset, not a popup
             fx, fy, fw, fh = facecam_box
             cx = x + w / 2.0
             if fx <= cx <= fx + fw and fy <= cy <= fy + fh:
@@ -241,7 +257,9 @@ class OverlayDetector:
             # Box-centre jitter, normalised by the frame diagonal: ~0 for a static card, large for a
             # drifting (moving) novelty region. Distinguishes a popup from gameplay motion.
             centres = arr[:, :2] + arr[:, 2:] / 2.0
-            jitter = float(np.linalg.norm(centres - centres.mean(axis=0), axis=1).mean() / diag)
+            jitter = float(
+                np.linalg.norm(centres - centres.mean(axis=0), axis=1).mean() / diag
+            )
             return {
                 "raw_start": raw_start,
                 "raw_end": raw_end,

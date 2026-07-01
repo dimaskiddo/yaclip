@@ -79,7 +79,9 @@ class LayoutBuilder:
         ):
             layout_mode = LayoutMode.SINGLE_VERTICAL
             crops = self._facecam_single_vertical_crops(analysis, width, height)
-            logger.info("Webcam fills most of the frame — using single vertical layout.")
+            logger.info(
+                "Webcam fills most of the frame — using single vertical layout."
+            )
 
         logger.info(f"Building {content_type.value} layout ({layout_mode.value}).")
 
@@ -110,7 +112,9 @@ class LayoutBuilder:
             return False
         return (box[2] * box[3]) > FACECAM_DOMINANT_AREA_FRAC * (width * height)
 
-    def _facecam_single_vertical_crops(self, analysis: dict, width: int, height: int) -> list[dict]:
+    def _facecam_single_vertical_crops(
+        self, analysis: dict, width: int, height: int
+    ) -> list[dict]:
         """Synthesize a single static 9:16 crop centred on the facecam for Mode A rendering."""
         box = analysis.get("facecam_box")
         crop = center_crop(width, height, 9.0 / 16.0)
@@ -129,7 +133,12 @@ class LayoutBuilder:
     # ---------------------------------------------------------------- Mode B
 
     def _fill_mode_b(
-        self, spec: dict, analysis: dict, overlay_data: list[dict], width: int, height: int
+        self,
+        spec: dict,
+        analysis: dict,
+        overlay_data: list[dict],
+        width: int,
+        height: int,
     ) -> None:
         """2-stack: facecam top (always fits), gameplay bottom.
 
@@ -153,7 +162,12 @@ class LayoutBuilder:
     # ------------------------------------------------------- Donation Overlay
 
     def _fill_donation(
-        self, spec: dict, analysis: dict, overlay_data: list[dict], width: int, height: int
+        self,
+        spec: dict,
+        analysis: dict,
+        overlay_data: list[dict],
+        width: int,
+        height: int,
     ) -> None:
         """2-stack: facecam top (always fits) + the donation/mediashare popup forced as the bottom."""
         self._set_facecam_top(spec, analysis, width, height)
@@ -181,10 +195,17 @@ class LayoutBuilder:
     # ---------------------------------------------------------------- Mode C
 
     def _fill_mode_c(
-        self, spec: dict, analysis: dict, overlay_data: list[dict], width: int, height: int
+        self,
+        spec: dict,
+        analysis: dict,
+        overlay_data: list[dict],
+        width: int,
+        height: int,
     ) -> None:
         """3-stack: facecam top, gameplay centre, collaborator bottom (each 1080x640)."""
-        spec["facecam_crop"] = self._facecam_crop(analysis, width, height, STACK3_PANEL_ASPECT)
+        spec["facecam_crop"] = self._facecam_crop(
+            analysis, width, height, STACK3_PANEL_ASPECT
+        )
 
         # Collaborator = the SECOND facecam. Prefer the reliable detected cam PAIR (collab_box, locked
         # video-wide via detect_facecams) so the bottom panel is the actual 2nd webcam. Fall back to
@@ -216,7 +237,9 @@ class LayoutBuilder:
         frame_area = float(width * height)
 
         def _not_primary(box: tuple) -> bool:
-            return facecam_box is None or not boxes_overlap(tuple(box), tuple(facecam_box), 0.3)
+            return facecam_box is None or not boxes_overlap(
+                tuple(box), tuple(facecam_box), 0.3
+            )
 
         def _edge_cam(box: tuple) -> bool:
             return is_facecam_candidate(box, frame_area, width, height)
@@ -249,7 +272,9 @@ class LayoutBuilder:
 
     # --------------------------------------------------------------- Helpers
 
-    def _facecam_crop(self, analysis: dict, width: int, height: int, aspect: float) -> dict:
+    def _facecam_crop(
+        self, analysis: dict, width: int, height: int, aspect: float
+    ) -> dict:
         """Facecam box expanded to the destination panel aspect (or centre fallback)."""
         box = analysis.get("facecam_box")
         if not box:
@@ -279,12 +304,16 @@ class LayoutBuilder:
             return (int(ox), int(oy), int(ow), int(oh))
         return None
 
-    def _set_facecam_top(self, spec: dict, analysis: dict, width: int, height: int) -> None:
+    def _set_facecam_top(
+        self, spec: dict, analysis: dict, width: int, height: int
+    ) -> None:
         """Compute the always-fit top-panel facecam crop on the spec."""
         crop, _ = self._facecam_panel_crop(analysis, width, height)
         spec["facecam_crop"] = crop
 
-    def _facecam_panel_crop(self, analysis: dict, width: int, height: int) -> tuple[dict, str]:
+    def _facecam_panel_crop(
+        self, analysis: dict, width: int, height: int
+    ) -> tuple[dict, str]:
         """Facecam top crop — prominent and panel-aspect, crop-filled sharp (no blur, no bars).
 
         Expand the cam box by FACECAM_FIT_FACTOR (comfortable context margin) and shape it to the
@@ -303,5 +332,7 @@ class LayoutBuilder:
         eh = min(float(height), fh * FACECAM_FIT_FACTOR)
         ex = int(max(0, min(cx - ew / 2.0, width - ew)))
         ey = int(max(0, min(cy - eh / 2.0, height - eh)))
-        shaped = expand_box_to_aspect(ex, ey, int(ew), int(eh), width, height, STACK2_PANEL_ASPECT)
+        shaped = expand_box_to_aspect(
+            ex, ey, int(ew), int(eh), width, height, STACK2_PANEL_ASPECT
+        )
         return shaped, "fit"

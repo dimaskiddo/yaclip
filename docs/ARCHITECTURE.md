@@ -206,7 +206,7 @@ For `"heatmap"` and `"hybrid"`: spikes are ranked by score and pre-filtered to `
 
 `candidate_margin` is configurable (default: `2`) and **additive** (`pool = target + margin`), so cost stays bounded as the clip count grows. At margin `2`, a user requesting 5 clips from 25 RMS spikes triggers 7 STT calls and 1 LLM call — not 25 of each.
 
-**Manual Mode** (`clip_selection.mode: "manual"`): User provides start/end timestamp ranges. Format: `MM:SS - MM:SS` or `HH:MM:SS - HH:MM:SS`, one range per line. Accepted via WebUI textarea, `.txt` file upload, or `--timestamps-file` CLI flag. The AI brain step is skipped entirely. All layout detection, face tracking, and rendering are identical to Auto Mode.
+**Manual Mode** (`clip_selection.mode: "manual"`): User provides start/end timestamp ranges. Format: `MM:SS - MM:SS` or `HH:MM:SS - HH:MM:SS`, one range per line. Accepted via WebUI textarea, `.txt` file upload, or `--manual --timerange-file <path>` CLI flags (mutually required — passing one without the other errors out). Clip *selection* (candidate margin, target-clip count, min/max duration, dedup) is skipped entirely — clips render at exactly the user's boundaries. By default STT + the batched LLM still run per range so each clip gets a real title/caption/description/hashtags; `--no-metadata` (manual-mode only) skips this and falls back to a default `Manual_<start>_<end>` title with no `.txt` sidecar. All layout detection, face tracking, and rendering are identical to Auto Mode.
 
 **Review Gate**: Before any rendering begins, all clip proposals are presented in the WebUI review panel (Title, Reasoning, Start, End, detected ContentType). The user may approve, edit, or discard individual clips. Skippable via `clip_selection.require_review_before_render: false`.
 
@@ -261,7 +261,7 @@ Font resolved from `./workspace/fonts/`. Full styling configurable: `font_size` 
 
 ### 7. Multi-Interface Modularity
 
-**CLI** (`typer`, in `src/interfaces/cli.py`; `app.py` is entry/routing only): `clip <URL>` (download → AI selection → render, with `--clips/--duration/--language/--output-dir/--force/--debug` overrides that patch the config singleton for the run), `config` (dump validated config, keys masked), `cache status` / `cache purge [--dry-run]`, `serve` 
+**CLI** (`typer`, in `src/interfaces/cli.py`; `app.py` is entry/routing only): `clip <URL>` (download → AI selection → render, with `--clips/--duration/--language/--output-dir/--force/--debug` overrides that patch the config singleton for the run, plus `--manual/--timerange-file/--no-metadata` for manual mode — see §4 Clip Selection), `config` (dump validated config, keys masked), `cache status` / `cache purge [--dry-run]`, `serve` 
 
 **WebUI parity:** every `config.yaml` field must be editable in the Gradio UI, with each control defaulting from `config.yaml` — config stays the single source of truth.
 

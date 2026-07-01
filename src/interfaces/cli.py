@@ -24,7 +24,7 @@ from src.core.config import load_config
 from src.core.constants import BYTES_PER_MB
 from src.core.environment import ensure_vision_runtime
 from src.core.exceptions import DetectionError
-from src.core.utils import SystemUtils
+from src.core.utils import SystemUtils, load_timerange_file
 from src.core.workspace import (
     AUDIOS_DIR,
     CLIPS_DIR,
@@ -36,7 +36,9 @@ from src.core.workspace import (
     run_purge_cycle,
 )
 
-cli = typer.Typer(help="Yet Another AI Auto-Clipper (YaClip) — CLI", add_completion=False)
+cli = typer.Typer(
+    help="Yet Another AI Auto-Clipper (YaClip) — CLI", add_completion=False
+)
 cache_app = typer.Typer(help="Inspect or purge the ./workspace cache.")
 cli.add_typer(cache_app, name="cache")
 
@@ -48,6 +50,7 @@ def _apply_overrides(
     max_duration: int | None,
     language: str | None,
     output_dir: str | None,
+    manual: bool = False,
 ) -> None:
     """Patch the loaded config singleton with CLI flag overrides (Pydantic models are mutable)."""
     cfg = load_config()
@@ -66,9 +69,17 @@ def _apply_overrides(
         cfg.video_processing.subtitles.language = language
     if output_dir is not None:
         cfg.video_processing.output_dir = output_dir
+    if manual:
+        cs.mode = "manual"
 
 
-def _run_pipeline(url: str, force: bool, debug: bool) -> None:
+def _run_pipeline(
+    url: str,
+    force: bool,
+    debug: bool,
+    manual_ranges: list[dict] | None = None,
+    no_metadata: bool = False,
+) -> None:
     """Download → AI clip selection → render. Shared by `clip` and the `test-pipeline` alias."""
     ensure_workspace_integrity()
     run_purge_cycle()
@@ -88,14 +99,18 @@ def _run_pipeline(url: str, force: bool, debug: bool) -> None:
         audio_path = result.get("audio_path")
         video_path_str = result.get("video_path")
         if not audio_path or not video_path_str:
-            logger.error("Download did not produce both video and audio files. Cannot continue.")
+            logger.error(
+                "Download did not produce both video and audio files. Cannot continue."
+            )
             return
 
         # Detect content type ONCE for the whole video (aggregated evidence: gameplay gate,
         # webcam count, HUD, donation overlay). Returns None when uncertain → LLM decides.
         from src.vision.content_type_detector import ContentTypeDetector
 
-        detection_result = ContentTypeDetector().detect_content_type_full(Path(video_path_str))
+        detection_result = ContentTypeDetector().detect_content_type_full(
+            Path(video_path_str)
+        )
         content_type = detection_result.content_type
 
         logger.info("--- STEP 2: AI CLIP SELECTION ---")
@@ -107,13 +122,17 @@ def _run_pipeline(url: str, force: bool, debug: bool) -> None:
             detection_evidence=(
                 detection_result.evidence if not detection_result.is_confident else None
             ),
+            manual_ranges=manual_ranges,
+            no_metadata=no_metadata,
         )
 
         video_id = Path(audio_path).stem
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         out_json = DATA_DIR / f"{video_id}.json"
         out_json.write_text(json.dumps(clips, indent=2), encoding="utf-8")
-        logger.info(f"Saved AI highlight results to {SystemUtils.display_path(out_json)}")
+        logger.info(
+            f"Saved AI highlight results to {SystemUtils.display_path(out_json)}"
+        )
 
         logger.info("--- FINAL EXTRACTED CLIPS ---")
         for idx, c in enumerate(clips):
@@ -162,16 +181,24 @@ def clip(
         None, "--clips", "-n", help="Number of clips (overrides config)"
     ),
     duration: int | None = typer.Option(
-        None, "--duration", "-t", help="Target clip duration in seconds (overrides config)"
+        None,
+        "--duration",
+        "-t",
+        help="Target clip duration in seconds (overrides config)",
     ),
     min_duration: int | None = typer.Option(
-        None, "--min-duration", help="Minimum clip duration in seconds (guaranteed floor)"
+        None,
+        "--min-duration",
+        help="Minimum clip duration in seconds (guaranteed floor)",
     ),
     max_duration: int | None = typer.Option(
         None, "--max-duration", help="Maximum clip duration in seconds (hard cap)"
     ),
     language: str | None = typer.Option(
-        None, "--language", "-l", help="Subtitle language: auto | ISO 639-1 code or name"
+        None,
+        "--language",
+        "-l",
+        help="Subtitle language: auto | ISO 639-1 code or name",
     ),
     output_dir: str | None = typer.Option(
         None, "--output-dir", "-o", help="Output directory for rendered clips"
@@ -179,11 +206,64 @@ def clip(
     force: bool = typer.Option(
         False, "--force", "-f", help="Re-download / re-transcribe, ignoring caches"
     ),
-    debug: bool = typer.Option(False, "--debug", "-d", help="Keep workspace/tmp scratch files"),
+    debug: bool = typer.Option(
+        False, "--debug", "-d", help="Keep workspace/tmp scratch files"
+    ),
+    manual: bool = typer.Option(
+        False,
+        "--manual",
+        help="Manual mode: use fixed timeranges from --timerange-file, bypassing AI "
+        "selection (clip count, min-duration, candidate margin all ignored)",
+    ),
+    timerange_file: Path | None = typer.Option(
+        None,
+        "--timerange-file",
+        help="Path to a manual timerange file (one 'START - END' per line, "
+        "MM:SS or HH:MM:SS); requires --manual",
+    ),
+    no_metadata: bool = typer.Option(
+        False,
+        "--no-metadata",
+        help="Skip LLM titling/metadata entirely (manual mode only); clips get "
+        "Manual_<start>_<end> titles and no .txt sidecar",
+    ),
 ) -> None:
     """Download a video, auto-select highlights, and render vertical 9:16 clips."""
-    _apply_overrides(clips, duration, min_duration, max_duration, language, output_dir)
-    _run_pipeline(url, force=force, debug=debug)
+    if manual and not timerange_file:
+        logger.error(
+            "--manual requires --timerange-file (path to your timerange file)."
+        )
+        raise typer.Exit(1)
+    if timerange_file and not manual:
+        logger.error("--timerange-file requires --manual to be passed.")
+        raise typer.Exit(1)
+    if no_metadata and not manual:
+        logger.error(
+            "--no-metadata requires --manual (auto/hybrid mode needs the LLM for clip selection)."
+        )
+        raise typer.Exit(1)
+
+    manual_ranges: list[dict] | None = None
+    if manual:
+        try:
+            manual_ranges = load_timerange_file(timerange_file)  # type: ignore[arg-type]
+        except (ValueError, OSError) as e:
+            logger.error(f"Failed to load timerange file: {e}")
+            raise typer.Exit(1) from e
+        logger.info(
+            f"Manual mode: loaded {len(manual_ranges)} timerange(s) from {timerange_file}."
+        )
+
+    _apply_overrides(
+        clips, duration, min_duration, max_duration, language, output_dir, manual=manual
+    )
+    _run_pipeline(
+        url,
+        force=force,
+        debug=debug,
+        manual_ranges=manual_ranges,
+        no_metadata=no_metadata,
+    )
 
 
 @cli.command("config")
@@ -194,7 +274,10 @@ def show_config() -> None:
 
     def _mask(node: object) -> object:
         if isinstance(node, dict):
-            return {k: ("***" if k == "api_key" and v else _mask(v)) for k, v in node.items()}
+            return {
+                k: ("***" if k == "api_key" and v else _mask(v))
+                for k, v in node.items()
+            }
         if isinstance(node, list):
             return [_mask(v) for v in node]
         return node
@@ -219,13 +302,17 @@ def cache_status() -> None:
     for name, path in targets.items():
         files = [p for p in path.rglob("*") if p.is_file()] if path.exists() else []
         size_mb = sum(p.stat().st_size for p in files) / BYTES_PER_MB
-        oldest = f"{(now - min(p.stat().st_mtime for p in files)) / 86400:.1f}d" if files else "-"
+        oldest = (
+            f"{(now - min(p.stat().st_mtime for p in files)) / 86400:.1f}d"
+            if files
+            else "-"
+        )
         typer.echo(f"{name:<12}{size_mb:>12.1f}{len(files):>8}{oldest:>12}")
 
 
 @cache_app.command("purge")
 def cache_purge(
-    target: list[str] | None = typer.Argument(  # noqa: B008
+    target: list[str] | None = typer.Argument(
         None,
         help="Space-separated dirs to purge (videos|audios|subtitles|data|tmp|clips|logs); all if omitted",
     ),
@@ -236,13 +323,15 @@ def cache_purge(
     """Manually purge the workspace cache (bypasses retention)."""
     if not concern:
         load_config().workspace_cleanup.dry_run = True
-    logger.info(f"Manual cache purge (target: {target or 'all'}, concern: {concern})...")
+    logger.info(
+        f"Manual cache purge (target: {target or 'all'}, concern: {concern})..."
+    )
     run_purge_cycle(force=concern, specific_target=target)
 
 
 @cache_app.command("clean")
 def cache_clean(
-    target: list[str] = typer.Argument(  # noqa: B008
+    target: list[str] = typer.Argument(
         None, help="Space-separated workspace directories to force-clean"
     ),
 ) -> None:
@@ -253,7 +342,7 @@ def cache_clean(
 
 @cli.command("clean-workspace", hidden=True)
 def clean_workspace(
-    target: list[str] = typer.Argument(  # noqa: B008
+    target: list[str] = typer.Argument(
         None, help="Space-separated workspace directories to clean"
     ),
 ) -> None:

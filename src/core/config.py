@@ -133,7 +133,9 @@ class DownloaderRetryConfig(BaseModel):
 
 
 class DownloaderConfig(BaseModel):
-    browser_cookies: Literal["edge", "chrome", "firefox", "brave", "opera"] = Field(default="edge")
+    browser_cookies: Literal["edge", "chrome", "firefox", "brave", "opera"] = Field(
+        default="edge"
+    )
     target_resolution: str = Field(default="1080p")
     video_format: str = Field(default="mp4")
     audio_format: str = Field(default="aac")
@@ -154,10 +156,18 @@ class ClipSelectionConfig(BaseModel):
     # Clip length = [default, default + margin]. `default` is the target/floor; `margin` is how much
     # longer a clip may run than the target. min/max are NOT per-clip bounds — they are the allowed
     # RANGE of the duration slider in the (future) Gradio WebUI.
-    min_clip_duration_seconds: int = Field(default=30)  # WebUI duration-slider lower bound
-    max_clip_duration_seconds: int = Field(default=180)  # WebUI duration-slider upper bound
-    default_clip_duration_seconds: int = Field(default=60)  # target clip length (and floor)
-    clip_length_margin_seconds: int = Field(default=15, ge=0)  # a clip may run up to default+margin
+    min_clip_duration_seconds: int = Field(
+        default=30
+    )  # WebUI duration-slider lower bound
+    max_clip_duration_seconds: int = Field(
+        default=180
+    )  # WebUI duration-slider upper bound
+    default_clip_duration_seconds: int = Field(
+        default=60
+    )  # target clip length (and floor)
+    clip_length_margin_seconds: int = Field(
+        default=15, ge=0
+    )  # a clip may run up to default+margin
 
     @model_validator(mode="after")
     def _coherent_durations(self) -> ClipSelectionConfig:
@@ -186,10 +196,16 @@ class SubtitleTimingConfig(BaseModel):
 
 class SubtitleConfig(BaseModel):
     enabled: bool = Field(default=True)
-    collab_enabled: bool = Field(default=False)  # subtitles on the cramped 3-stack collab layout
-    uppercase: bool = Field(default=True)  # render caption text in CAPITALS for readability
+    collab_enabled: bool = Field(
+        default=False
+    )  # subtitles on the cramped 3-stack collab layout
+    uppercase: bool = Field(
+        default=True
+    )  # render caption text in CAPITALS for readability
     language: str = Field(default="auto")
-    stt_context: str = Field(default="")  # vocab hint (names/game/terms) → STT initial_prompt
+    stt_context: str = Field(
+        default=""
+    )  # vocab hint (names/game/terms) → STT initial_prompt
     font_file: str = Field(default="Anton.ttf")
     font_size: int = Field(default=80)
     # Colours accept human #RRGGBB(/AA) and are stored as ASS &HAABBGGRR (see hex_to_ass_color).
@@ -199,7 +215,9 @@ class SubtitleConfig(BaseModel):
     outline_thickness: int = Field(default=6)
     bold: bool = Field(default=True)
     shadow: bool = Field(default=True)
-    alignment: int = Field(default=2)  # accepts names like "bottom-center" (→ ASS numpad int)
+    alignment: int = Field(
+        default=2
+    )  # accepts names like "bottom-center" (→ ASS numpad int)
     margin_v: int = Field(
         default=760, ge=0, le=1920
     )  # bottom margin in px; for bottom-center alignment: 760px up from canvas bottom = ~60% down from top
@@ -224,7 +242,9 @@ class RegionDetectionConfig(BaseModel):
     gameplay_follow_motion: bool = Field(
         default=False
     )  # false = static centred crop; true = animated motion-following pan
-    gameplay_zoom: float = Field(default=1.25, ge=1.0, le=2.0)  # >1 zooms the gameplay crop tighter
+    gameplay_zoom: float = Field(
+        default=1.25, ge=1.0, le=2.0
+    )  # >1 zooms the gameplay crop tighter
 
 
 class VideoProcessingConfig(BaseModel):
@@ -233,7 +253,9 @@ class VideoProcessingConfig(BaseModel):
     # FFmpeg video encoder: auto | cpu | nvenc | qsv | videotoolbox.  "auto" uses nvenc when CUDA is
     # present, else cpu (libx264).  GPU encoders that fail at runtime automatically fall back to
     # libx264 (see renderer._run_render_with_fallback), so "auto" is safe as the default.
-    video_encoder: Literal["auto", "cpu", "nvenc", "qsv", "videotoolbox"] = Field(default="auto")
+    video_encoder: Literal["auto", "cpu", "nvenc", "qsv", "videotoolbox"] = Field(
+        default="auto"
+    )
     # Low-spec opt-in: when true, PODCAST clips are tracked with a fast OpenCV Haar-cascade
     # largest-face crop instead of the heavier MediaPipe + audio active-speaker pipeline.  Trades
     # multi-speaker accuracy for speed.  Does NOT affect content-type detection or Mode B/C.
@@ -250,7 +272,9 @@ class VideoProcessingConfig(BaseModel):
         default_factory=lambda: ["PODCAST", "GAMING_COLLAB"]
     )
     default_resolution: str = Field(default="1080p")
-    region_detection: RegionDetectionConfig = Field(default_factory=RegionDetectionConfig)
+    region_detection: RegionDetectionConfig = Field(
+        default_factory=RegionDetectionConfig
+    )
     subtitles: SubtitleConfig = Field(default_factory=SubtitleConfig)
 
 
@@ -267,7 +291,9 @@ class WorkspaceCleanupConfig(BaseModel):
     run_on_startup: bool = Field(default=True)
     dry_run: bool = Field(default=False)
     retention_days: RetentionDaysConfig = Field(default_factory=RetentionDaysConfig)
-    protected_dirs: list[str] = Field(default_factory=lambda: ["bin", "fonts", "models"])
+    protected_dirs: list[str] = Field(
+        default_factory=lambda: ["bin", "fonts", "models"]
+    )
 
 
 class AppConfig(BaseModel):
@@ -276,8 +302,12 @@ class AppConfig(BaseModel):
     ai_pipeline: AIPipelineConfig = Field(default_factory=AIPipelineConfig)
     downloader: DownloaderConfig = Field(default_factory=DownloaderConfig)
     clip_selection: ClipSelectionConfig = Field(default_factory=ClipSelectionConfig)
-    video_processing: VideoProcessingConfig = Field(default_factory=VideoProcessingConfig)
-    workspace_cleanup: WorkspaceCleanupConfig = Field(default_factory=WorkspaceCleanupConfig)
+    video_processing: VideoProcessingConfig = Field(
+        default_factory=VideoProcessingConfig
+    )
+    workspace_cleanup: WorkspaceCleanupConfig = Field(
+        default_factory=WorkspaceCleanupConfig
+    )
     dk_clipper_sys_prompt: str | None = Field(default=None)
 
 
@@ -299,7 +329,9 @@ def load_config(force_reload: bool = False) -> AppConfig:
         with open(CONFIG_PATH, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
     except Exception as e:
-        raise ConfigValidationError(f"Failed to read/parse {CONFIG_PATH} as YAML: {e}") from e
+        raise ConfigValidationError(
+            f"Failed to read/parse {CONFIG_PATH} as YAML: {e}"
+        ) from e
 
     try:
         _config_cache = AppConfig.model_validate(data)

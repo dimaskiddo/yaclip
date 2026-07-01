@@ -432,6 +432,26 @@ Optional options you can add:
 | `--language id` | Subtitle language (e.g. `en`, `id`, `ja`) | auto-detect |
 | `--output-dir ./my-clips` | Where to save the finished clips | `workspace/clips/` |
 | `--force` | Re-download the video even if already downloaded | off |
+| `--manual` | Use your own timestamps instead of AI selection (requires `--timerange-file`) | off |
+| `--timerange-file ranges.txt` | Path to your timestamp file (requires `--manual`) | — |
+| `--no-metadata` | Manual mode only: skip AI titles/captions, just render at your timestamps | off |
+
+**✂️ Manual mode — pick your own clip timestamps:**
+
+Create a text file, one clip per line, `START - END` in `MM:SS` or `HH:MM:SS`:
+```
+1:30 - 2:30
+10:44 - 12:44
+```
+Then run:
+```bash
+# AI still writes a title/caption/description for each clip:
+python app.py clip "https://www.youtube.com/watch?v=<id>" --manual --timerange-file ranges.txt
+
+# Skip AI entirely — fastest, plain "Manual_1-30_2-30" filenames, no caption/description:
+python app.py clip "https://www.youtube.com/watch?v=<id>" --manual --timerange-file ranges.txt --no-metadata
+```
+Manual mode ignores the clip-count and duration settings above — you always get exactly the clips you listed, at exactly those timestamps.
 
 **Other commands:**
 

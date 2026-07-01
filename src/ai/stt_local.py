@@ -26,7 +26,9 @@ from src.core.workspace import DATA_DIR, load_candidate_cache, save_candidate_ca
 
 def segments_to_transcript(segments: list[dict]) -> str:
     """Flatten word-level segments into the ``[start - end] text`` lines the LLM expects."""
-    return "\n".join(f"[{s['start']:.2f} - {s['end']:.2f}] {s['text']}" for s in segments)
+    return "\n".join(
+        f"[{s['start']:.2f} - {s['end']:.2f}] {s['text']}" for s in segments
+    )
 
 
 def _norm_token(word: str) -> str:
@@ -59,7 +61,9 @@ def _is_hallucinated_segment(seg: object, adv: object) -> bool:
             return True
 
     tokens = [
-        _norm_token(w.word) for w in (getattr(seg, "words", None) or []) if _norm_token(w.word)
+        _norm_token(w.word)
+        for w in (getattr(seg, "words", None) or [])
+        if _norm_token(w.word)
     ]
     if len(tokens) > STT_REPEAT_TOKEN_MAX and len(set(tokens)) <= 1:
         return True
@@ -131,7 +135,9 @@ def load_words_cache(video_id: str) -> dict | None:
 
 def save_mediashare_cache(video_id: str, candidates: list[dict]) -> None:
     """Persist per-candidate donation/MediaShare scan results for render-time reuse."""
-    save_candidate_cache(video_id, "_mediashare.json", candidates, "donation scan results")
+    save_candidate_cache(
+        video_id, "_mediashare.json", candidates, "donation scan results"
+    )
 
 
 def load_mediashare_cache(video_id: str) -> dict | None:
@@ -184,7 +190,9 @@ class LocalSTTProvider:
             kwargs["initial_prompt"] = primer
         return kwargs
 
-    def _transcribe_whisper(self, audio_path: str, model: WhisperModel | None = None) -> str:
+    def _transcribe_whisper(
+        self, audio_path: str, model: WhisperModel | None = None
+    ) -> str:
         """Run faster-whisper locally to extract transcript with timestamps."""
         if model is None:
             logger.info("Loading local transcription model...")

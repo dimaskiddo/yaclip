@@ -30,7 +30,9 @@ class InterceptHandler(logging.Handler):
                 frame = frame.f_back
             depth += 1
 
-        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+        logger.opt(depth=depth, exception=record.exc_info).log(
+            level, record.getMessage()
+        )
 
 
 def setup_logger() -> None:
@@ -83,7 +85,9 @@ def setup_logger() -> None:
     logger.configure(patcher=_pad_source)
 
     fmt_stdout = "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{extra[source_padded]}</cyan> | <level>{message}</level>"
-    fmt_file = "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {extra[source_padded]} | {message}"
+    fmt_file = (
+        "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {extra[source_padded]} | {message}"
+    )
 
     logger.add(sys.stdout, format=fmt_stdout, level=level)
     logger.add(

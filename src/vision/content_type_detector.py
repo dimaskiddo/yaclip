@@ -34,7 +34,11 @@ from src.core.constants import (
     ContentType,
 )
 from src.core.workspace import DATA_DIR
-from src.vision.frame_utils import sample_frame_indices_evenly, sample_frames_timed, video_props
+from src.vision.frame_utils import (
+    sample_frame_indices_evenly,
+    sample_frames_timed,
+    video_props,
+)
 
 
 @dataclass
@@ -116,7 +120,9 @@ class ContentTypeDetector:
         # 2. Sample frames from video (HUD heuristic + face count across middle 80%)
         sampled = self._sample_frames(video_path, num_samples=25)
         if not sampled:
-            logger.warning("Could not read any video frames. Defaulting to PODCAST type.")
+            logger.warning(
+                "Could not read any video frames. Defaulting to PODCAST type."
+            )
             return ContentTypeDetectionResult(
                 content_type=ContentType.PODCAST,
                 evidence={"fallback": "no_frames_readable"},
@@ -129,7 +135,9 @@ class ContentTypeDetector:
         gaming_hint = self.metadata_gaming_hint(video_path)
         hud_score = self._compute_hud_score(frames)
         hud_threshold = (
-            HUD_SCORE_THRESHOLD_GAMING_HINT if gaming_hint else HUD_SCORE_THRESHOLD_DEFAULT
+            HUD_SCORE_THRESHOLD_GAMING_HINT
+            if gaming_hint
+            else HUD_SCORE_THRESHOLD_DEFAULT
         )
         has_hud = hud_score >= hud_threshold
         logger.debug(
@@ -184,7 +192,9 @@ class ContentTypeDetector:
         }
         if gp:
             evidence["open_area_frac"] = round(float(gp.get("open_area_frac", 1.0)), 3)
-            evidence["non_person_motion"] = round(float(gp.get("non_person_motion", 0.0)), 2)
+            evidence["non_person_motion"] = round(
+                float(gp.get("non_person_motion", 0.0)), 2
+            )
 
         # 6. Decision tree (strengthened — detect_facecams already filters out game
         #    characters, so ≥2 cams + gameplay is definitively GAMING_COLLAB).
@@ -197,31 +207,43 @@ class ContentTypeDetector:
             )
 
         if gameplay_present:
-            logger.info("Video type detected as gaming with 1 webcam, using gaming solo layout.")
+            logger.info(
+                "Video type detected as gaming with 1 webcam, using gaming solo layout."
+            )
             return ContentTypeDetectionResult(
                 content_type=ContentType.GAMING_SOLO, evidence=evidence
             )
 
         if cam_count >= 2:
             # Two+ persistent webcams, no gameplay → talking heads / panel / podcast.
-            logger.info("Video type detected as panel or podcast with 2 faces and no gameplay.")
-            return ContentTypeDetectionResult(content_type=ContentType.PODCAST, evidence=evidence)
+            logger.info(
+                "Video type detected as panel or podcast with 2 faces and no gameplay."
+            )
+            return ContentTypeDetectionResult(
+                content_type=ContentType.PODCAST, evidence=evidence
+            )
 
         # Donation overlay detection (colour heuristic) for single-face, no-gameplay content.
         has_donation_alerts = self._check_donation_overlays(frames)
         evidence["donation_detected"] = has_donation_alerts
         if has_donation_alerts:
             logger.info("Video type detected as live stream with donation alerts.")
-            return ContentTypeDetectionResult(content_type=ContentType.JUST_CHAT, evidence=evidence)
+            return ContentTypeDetectionResult(
+                content_type=ContentType.JUST_CHAT, evidence=evidence
+            )
 
         if cam_count == 1:
-            return ContentTypeDetectionResult(content_type=ContentType.PODCAST, evidence=evidence)
+            return ContentTypeDetectionResult(
+                content_type=ContentType.PODCAST, evidence=evidence
+            )
 
         # Truly ambiguous: no gameplay, no webcams, no donation, no faces.
         logger.info("Video type undetermined, will have AI decide per clip.")
         return ContentTypeDetectionResult(content_type=None, evidence=evidence)
 
-    def classify_from_analysis(self, analysis: dict, gaming_hint: bool) -> ContentType | None:
+    def classify_from_analysis(
+        self, analysis: dict, gaming_hint: bool
+    ) -> ContentType | None:
         """Classify ONE clip window from its ``VisualAnalyzer.analyze_window()`` result.
 
         Used only by the renderer for manual-mode clips (no LLM call). The per-clip signals
@@ -240,7 +262,9 @@ class ContentTypeDetector:
         mediashare = bool(analysis.get("mediashare_present", False))
 
         open_threshold = (
-            GAMEPLAY_MIN_OPEN_AREA_FRAC_GAMING_HINT if gaming_hint else GAMEPLAY_MIN_OPEN_AREA_FRAC
+            GAMEPLAY_MIN_OPEN_AREA_FRAC_GAMING_HINT
+            if gaming_hint
+            else GAMEPLAY_MIN_OPEN_AREA_FRAC
         )
         open_enough = open_frac >= open_threshold
         gameplay_confirmed = open_enough and (
@@ -327,7 +351,9 @@ class ContentTypeDetector:
         sobely = cv2.Sobel(avg_frame, cv2.CV_64F, 0, 1, ksize=3)
         spatial_grad = np.sqrt(sobelx**2 + sobely**2)
 
-        hud_mask = (temp_std < HUD_TEMP_STD_THRESH) & (spatial_grad > HUD_SPATIAL_GRAD_THRESH)
+        hud_mask = (temp_std < HUD_TEMP_STD_THRESH) & (
+            spatial_grad > HUD_SPATIAL_GRAD_THRESH
+        )
 
         margin = HUD_EDGE_MARGIN
         hud_mask[:margin, :] = False
@@ -350,14 +376,20 @@ class ContentTypeDetector:
 
             # Red/pink alert range: H: 170-180 (or 0-10), S: 100-255, V: 100-255
             mask_rp = cv2.inRange(hsv, DONATION_HSV_RED_LOWER1, DONATION_HSV_RED_UPPER1)
-            mask_rp2 = cv2.inRange(hsv, DONATION_HSV_RED_LOWER2, DONATION_HSV_RED_UPPER2)
+            mask_rp2 = cv2.inRange(
+                hsv, DONATION_HSV_RED_LOWER2, DONATION_HSV_RED_UPPER2
+            )
             mask_rp = cv2.bitwise_or(mask_rp, mask_rp2)
 
             # Orange alert range: H: 5-25, S: 100-255, V: 100-255
-            mask_or = cv2.inRange(hsv, DONATION_HSV_ORANGE_LOWER, DONATION_HSV_ORANGE_UPPER)
+            mask_or = cv2.inRange(
+                hsv, DONATION_HSV_ORANGE_LOWER, DONATION_HSV_ORANGE_UPPER
+            )
 
             mask = cv2.bitwise_or(mask_rp, mask_or)
-            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contours, _ = cv2.findContours(
+                mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
 
             for c in contours:
                 area = cv2.contourArea(c)

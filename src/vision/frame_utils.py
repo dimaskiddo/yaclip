@@ -84,7 +84,9 @@ def sample_frame_indices_in_range(
         ``n`` frame indices spanning ``[start_frac, end_frac]`` of ``total_frames``.
     """
     span = end_frac - start_frac
-    return [int(total_frames * (start_frac + span * i / max(1, n - 1))) for i in range(n)]
+    return [
+        int(total_frames * (start_frac + span * i / max(1, n - 1))) for i in range(n)
+    ]
 
 
 def sample_frame_indices_evenly(s_frame: int, e_frame: int, n: int) -> list[int]:

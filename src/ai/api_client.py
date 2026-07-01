@@ -25,7 +25,9 @@ def require_package(import_name: str, pip_name: str) -> None:
     raise ImportError(f"{pip_name} package missing.")
 
 
-def make_openai_client(api_key: str | None, base_url: str | None, timeout: float) -> Any:
+def make_openai_client(
+    api_key: str | None, base_url: str | None, timeout: float
+) -> Any:
     """Build an OpenAI SDK client with the shared per-channel timeout + retry settings.
 
     Args:
@@ -50,7 +52,9 @@ def make_openai_client(api_key: str | None, base_url: str | None, timeout: float
     return OpenAI(
         api_key=api_key,
         base_url=base_url,
-        timeout=HTTPXTimeout(connect=timeout, read=timeout, write=timeout, pool=timeout),
+        timeout=HTTPXTimeout(
+            connect=timeout, read=timeout, write=timeout, pool=timeout
+        ),
         max_retries=3,
     )
 
@@ -88,7 +92,9 @@ def gemini_generate(
     def _generate() -> str:
         from google.api_core import retry as google_retry
 
-        model = genai.GenerativeModel(model_name=model_name, system_instruction=system_instruction)
+        model = genai.GenerativeModel(
+            model_name=model_name, system_instruction=system_instruction
+        )
         stream = model.generate_content(
             contents,
             stream=True,
@@ -176,7 +182,9 @@ def retry_api_call(
                     time.sleep(delay)
                     delay *= backoff_factor
 
-            logger.error(f"Cloud service request failed after {max_retries} attempts. Giving up.")
+            logger.error(
+                f"Cloud service request failed after {max_retries} attempts. Giving up."
+            )
             raise last_err
 
         return wrapper

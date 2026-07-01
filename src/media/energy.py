@@ -70,9 +70,15 @@ class AudioEnergyAnalyzer:
         RMS value per ``chunk_duration_sec`` chunk.  Shared by ``analyze_audio_energy``
         (whole-file heatmap) and ``rms_envelope`` (windowed, aligned to detection steps)."""
         try:
-            with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
-                chunk_size = int(RMS_SAMPLE_RATE * chunk_duration_sec * 2)  # 2 bytes/sample
-                chunk_size = max(2, chunk_size - (chunk_size % 2))  # keep whole 16-bit samples
+            with subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            ) as process:
+                chunk_size = int(
+                    RMS_SAMPLE_RATE * chunk_duration_sec * 2
+                )  # 2 bytes/sample
+                chunk_size = max(
+                    2, chunk_size - (chunk_size % 2)
+                )  # keep whole 16-bit samples
 
                 rms_values: list[float] = []
                 while True:
@@ -82,7 +88,9 @@ class AudioEnergyAnalyzer:
                     samples = struct.unpack(f"<{len(data) // 2}h", data)
                     if not samples:
                         break
-                    rms_values.append(math.sqrt(sum(s * s for s in samples) / len(samples)))
+                    rms_values.append(
+                        math.sqrt(sum(s * s for s in samples) / len(samples))
+                    )
 
                 process.wait()
                 return rms_values
@@ -110,7 +118,9 @@ class AudioEnergyAnalyzer:
         cmd = self._pcm_cmd(media_path, start, end)
         return self._stream_rms(cmd, step_seconds)
 
-    def analyze_audio_energy(self, audio_path: str, chunk_duration_sec: float = 1.0) -> list[dict]:
+    def analyze_audio_energy(
+        self, audio_path: str, chunk_duration_sec: float = 1.0
+    ) -> list[dict]:
         """
         Generates a pseudo-heatmap by calculating RMS energy of audio chunks.
         Returns standard clip objects based on the loudest spikes.
@@ -120,7 +130,8 @@ class AudioEnergyAnalyzer:
         rms_values = self._stream_rms(cmd, chunk_duration_sec)
 
         energies = [
-            {"time": i * chunk_duration_sec, "rms": rms} for i, rms in enumerate(rms_values)
+            {"time": i * chunk_duration_sec, "rms": rms}
+            for i, rms in enumerate(rms_values)
         ]
 
         if not energies:
