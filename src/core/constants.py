@@ -7,6 +7,10 @@ class ContentType(str, Enum):
     PODCAST = "PODCAST"
     JUST_CHAT = "JUST_CHAT"
     GAMING_SOLO = "GAMING_SOLO"
+    # Pin/override-only variant of GAMING_SOLO (facecam bottom, gameplay top) — top/bottom
+    # preference isn't visually detectable, so this is never auto-detected or LLM-assigned;
+    # only reachable via manual timerange "| GAMING_SOLO_BOTTOM" or content_type_override.
+    GAMING_SOLO_BOTTOM = "GAMING_SOLO_BOTTOM"
     GAMING_COLLAB = "GAMING_COLLAB"
     # Per-clip type (not a video-level detection): any clip whose window contains a
     # mediashare/donation overlay is promoted to this, routing to the facecam+popup 2-stack.
@@ -428,6 +432,7 @@ CONTENT_TYPE_HUMAN_NAMES: dict[str, str] = {
     "GAMING_SOLO": "gaming solo",
     "GAMING_COLLAB": "gaming collaboration",
     "DONATION_OVERLAY": "donation overlay",
+    "GAMING_SOLO_BOTTOM": "gaming solo (cam bottom)",
 }
 
 # ── LLM inference constants ──

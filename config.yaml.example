@@ -90,7 +90,9 @@ video_processing:
   fast_mode: false                     # true = low-spec PODCAST tracking via OpenCV Haar largest-face
                                        #   (no MediaPipe/audio, no multi-speaker). Does not affect
                                        #   content-type detection or gaming/just-chat layouts.
-  content_type_override: "auto"        # auto | PODCAST | JUST_CHAT | GAMING_SOLO | GAMING_COLLAB | DONATION_OVERLAY
+  content_type_override: "auto"        # auto | PODCAST | JUST_CHAT | GAMING_SOLO | GAMING_SOLO_BOTTOM | GAMING_COLLAB | DONATION_OVERLAY
+                                       #   GAMING_SOLO_BOTTOM = GAMING_SOLO mirrored (facecam bottom, gameplay
+                                       #   top). Never auto-detected/LLM-assigned — override or manual-pin only.
   detection_confidence_threshold: 0.6  # Below this, detection falls back to PODCAST and logs a warning
   auto_face_tracking: true             # Smooth face-centered crop for all layout modes
   preserve_donation_overlays: false    # Master on/off for donation/MediaShare handling. true = auto-detect

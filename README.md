@@ -444,7 +444,7 @@ Create a text file, one clip per line, `START - END` in `MM:SS` or `HH:MM:SS`. O
 10:44 - 11:55 | GAMING_COLLAB
 12:30 - 14:20
 ```
-Valid types: `PODCAST`, `JUST_CHAT`, `GAMING_SOLO`, `GAMING_COLLAB`, `DONATION_OVERLAY` (case-insensitive). The third line above has no type, so its layout is auto-detected.
+Valid types: `PODCAST`, `JUST_CHAT`, `GAMING_SOLO`, `GAMING_SOLO_BOTTOM`, `GAMING_COLLAB`, `DONATION_OVERLAY` (case-insensitive). The third line above has no type, so its layout is auto-detected. `GAMING_SOLO_BOTTOM` is a mirrored `GAMING_SOLO` (facecam bottom, gameplay top) — pin it explicitly here or via `content_type_override`, since auto-detection always defaults to regular `GAMING_SOLO`.
 
 Then run:
 ```bash

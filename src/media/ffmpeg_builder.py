@@ -260,7 +260,8 @@ class FFmpegCommandBuilder:
         Bottom panel (1080x960) = MediaShare popup when one is active in the clip, otherwise
         the motion-tracked gameplay region. The bottom crop was already pre-shaped to the
         panel aspect (1.125) by LayoutBuilder, so both panels scale in without stretching.
-        Final canvas = vstack of the two panels = 1080x1920.
+        Final canvas = vstack of the two panels = 1080x1920. GAMING_SOLO_BOTTOM (spec's
+        "facecam_bottom" flag) swaps the vstack order — gameplay top, facecam bottom.
         """
         panel_w = STACK2_PANEL_W
         panel_h = STACK2_PANEL_H
@@ -293,8 +294,10 @@ class FFmpegCommandBuilder:
             # gameplay default and mediashare both zoom-out + blur-fill their crop region.
             filters.extend(self._blurred_fill_filters("[v_bot]", crop_box, "[bot]"))
 
-        # Stack the two equal panels into the 1080x1920 canvas.
-        filters.append("[top][bot]vstack=inputs=2[stacked]")
+        # Stack the two equal panels into the 1080x1920 canvas. GAMING_SOLO_BOTTOM flips the
+        # order (gameplay top, facecam bottom) — same panels, mirrored stack.
+        stack_order = "[bot][top]" if spec.get("facecam_bottom") else "[top][bot]"
+        filters.append(f"{stack_order}vstack=inputs=2[stacked]")
 
         # Burn subtitles onto the stacked canvas (or just normalise pixel format).
         v_filter = "[stacked]format=yuv420p,setsar=1"

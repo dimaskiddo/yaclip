@@ -59,6 +59,7 @@ class LayoutBuilder:
             layout_mode = LayoutMode.SINGLE_VERTICAL
         elif content_type in (
             ContentType.GAMING_SOLO,
+            ContentType.GAMING_SOLO_BOTTOM,
             ContentType.JUST_CHAT,
             ContentType.DONATION_OVERLAY,
         ):
@@ -93,6 +94,9 @@ class LayoutBuilder:
             "target_width": TARGET_WIDTH,
             "target_height": TARGET_HEIGHT,
             "crops": crops,  # Mode A smooth-pan facecam (or synthesized full-face crop)
+            # GAMING_SOLO_BOTTOM = GAMING_SOLO with panels swapped (facecam bottom, gameplay
+            # top) — ffmpeg_builder reads this to flip the vstack order; crops are unchanged.
+            "facecam_bottom": content_type == ContentType.GAMING_SOLO_BOTTOM,
         }
 
         if layout_mode == LayoutMode.STACKED_SPLIT:
@@ -144,7 +148,8 @@ class LayoutBuilder:
 
         MediaShare/donation moments are no longer handled here — a clip with a popup is promoted to
         DONATION_OVERLAY (see _fill_donation) before reaching this path, so the bottom is always the
-        gameplay region for GAMING_SOLO / JUST_CHAT.
+        gameplay region for GAMING_SOLO / JUST_CHAT. Crops are identical for GAMING_SOLO_BOTTOM —
+        the panel order is flipped later by ffmpeg_builder via spec["facecam_bottom"].
         """
         self._set_facecam_top(spec, analysis, width, height)
 

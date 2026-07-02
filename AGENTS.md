@@ -54,6 +54,7 @@ The application recognizes four content types. Detection is automatic unless ove
 | `GAMING_SOLO` | Confirmed gameplay detected (animated non-person screen region), single facecam in corner, donation overlays must be preserved |
 | `GAMING_COLLAB` | Confirmed gameplay detected, multiple persistent webcam faces (Discord grid, dual-screen collab layout), donation overlays must be preserved |
 | `DONATION_OVERLAY` | **Per-clip, not a video-level type.** Any clip whose window contains a transient mediashare/donation overlay is promoted to this type (from whatever base type the video has) and routed to a dedicated facecam + popup layout. This is the single home for donation handling — the other layouts no longer embed donations. |
+| `GAMING_SOLO_BOTTOM` | **Pin/override-only, never auto-detected or LLM-assigned.** Identical to `GAMING_SOLO` (same crops, same donation handling) but with the two panels mirrored — gameplay top, facecam bottom. Top/bottom cam preference isn't visually detectable, so this type is only reachable via manual timerange `\| GAMING_SOLO_BOTTOM` or `content_type_override`. |
 
 #### 1.2 Target Output Formats
 
@@ -225,6 +226,7 @@ The detected `ContentType` is threaded from `ContentTypeDetector.detect_content_
 | `PODCAST` | Mode A — Single Vertical | Yes — active speaker when 2+ faces | **Excluded by default** (pre-recorded; no live donation widgets) |
 | `JUST_CHAT` | Mode B — Stacked Split-Screen | No | **Disabled by default** (opt-in via `preserve_donation_overlays`) |
 | `GAMING_SOLO` | Mode B — Stacked Split-Screen | No | **Disabled by default** (opt-in via `preserve_donation_overlays`) |
+| `GAMING_SOLO_BOTTOM` | Mode B — Stacked Split-Screen, panels mirrored (gameplay top / facecam bottom) | No | Same as `GAMING_SOLO` — **disabled by default** (opt-in via `preserve_donation_overlays`) |
 | `GAMING_COLLAB` | Mode C — Multi-Face Collab Stack | No | **Excluded by default** (popup must not displace a collab panel) |
 | `DONATION_OVERLAY` | Mode B geometry — Facecam top + popup bottom | No | This **is** the donation layout |
 
@@ -267,13 +269,14 @@ Use `opencv-python-headless` and `mediapipe` or `yolov8-face`. The headless Open
 
 #### Layout Mode B — Stacked Split-Screen (Gaming Solo / Just Chat)
 
-**Applies to:** `GAMING_SOLO`, `JUST_CHAT`
+**Applies to:** `GAMING_SOLO`, `JUST_CHAT`, `GAMING_SOLO_BOTTOM`
 
 - Construct a **two-region vertical stack** (each panel 1080×960, total 1080×1920):
   - **Top panel = Facecam (always fits).** A **single stable cam box** is detected once for the whole video (`detect_stable_facecam`, sampled across its length) and reused for every clip, so the framing does not drift with the streamer's pose. The cam box is expanded by `FACECAM_FIT_FACTOR` (≈1.45× — comfortable context margin, cam ≈69% of panel height) and shaped to the panel aspect (1.125), then **crop-filled into the 1080×960 panel — sharp, prominent, no blur and no left/right bars** (mild upscale when the cam region is smaller than the panel).
   - **Bottom panel = Gameplay.** A **centered, panel-aspect gameplay crop** zoomed by `region_detection.gameplay_zoom` (default 1.25× — crops the bottom ticker from the panel). The crop is **fully static** (motion-centroid–centered at analysis time by `_motion_region`; no panning at render). This keeps the viewer's eye steady on the gameplay. The legacy motion-following pan (`gameplay_follow_motion: true` in config) is available but disabled by default. (Donation/MediaShare popups are **not** shown here — a clip with a popup is promoted to `DONATION_OVERLAY`; see below.)
   - **Fullscreen-cam override:** when the facecam covers >55% of the frame (a just-chatting / reaction moment with no real gameplay), the clip renders as a **single full-face 9:16 vertical** (Mode A) instead of a 2-stack — avoids face-over-face. (Skipped for `DONATION_OVERLAY`.)
 - **CRITICAL LAYOUT ORDER:** Facecam is always the top panel, gameplay the bottom. No third (black/subtitle-pad) zone — the stack is exactly two equal panels.
+- **`GAMING_SOLO_BOTTOM` — mirrored variant:** identical crops and identical rules above, except the final `vstack` order is flipped — **gameplay top, facecam bottom**. This type is **never auto-detected or LLM-assigned** (top/bottom cam preference isn't visually detectable); it is only reachable via a manual timerange `\| GAMING_SOLO_BOTTOM` suffix or `video_processing.content_type_override: "GAMING_SOLO_BOTTOM"`. Subtitles still burn lower-center, so on this variant they sit over the facecam panel — expected and acceptable.
 - Detect static streaming HUD elements (corner overlays, alert boxes) and exclude them from the gameplay motion crop so the crop locks onto gameplay, not the HUD.
 
 ---
@@ -403,7 +406,7 @@ video_processing:
   output_dir: "./workspace/clips"
   video_encoder: "cpu"                 # cpu | auto | nvenc | qsv | videotoolbox (FFmpeg H.264 encoder)
   fast_mode: false                     # true = low-spec Haar largest-face PODCAST tracking (no MediaPipe/audio)
-  content_type_override: "auto"        # auto | PODCAST | JUST_CHAT | GAMING_SOLO | GAMING_COLLAB | DONATION_OVERLAY
+  content_type_override: "auto"        # auto | PODCAST | JUST_CHAT | GAMING_SOLO | GAMING_SOLO_BOTTOM | GAMING_COLLAB | DONATION_OVERLAY
   detection_confidence_threshold: 0.6  # Below this, detection falls back to PODCAST and logs a warning
   auto_face_tracking: true             # Smooth face-centered crop for Mode A (talking heads)
   preserve_donation_overlays: false    # Detect and composite Trakteer/MediaShare alerts (default: disabled)
@@ -523,7 +526,7 @@ except: pass
 #### 11.5 Constants & Enums (No Magic Values)
 
 - Zero magic strings or numbers in the codebase. All fixed values in `src/core/constants.py` as `Enum` classes or typed constants.
-- Key enums: `ContentType` (`PODCAST`, `JUST_CHAT`, `GAMING_SOLO`, `GAMING_COLLAB`, `DONATION_OVERLAY`), `LayoutMode` (`SINGLE_VERTICAL`, `STACKED_SPLIT`, `MULTI_COLLAB`), `AIProvider` (`GOOGLE`, `OPENAI`, `LOCAL`), `ClipMode` (`AUTO`, `MANUAL`).
+- Key enums: `ContentType` (`PODCAST`, `JUST_CHAT`, `GAMING_SOLO`, `GAMING_COLLAB`, `DONATION_OVERLAY`, `GAMING_SOLO_BOTTOM` — pin/override-only mirror of `GAMING_SOLO`, never auto-detected or LLM-assigned), `LayoutMode` (`SINGLE_VERTICAL`, `STACKED_SPLIT`, `MULTI_COLLAB`), `AIProvider` (`GOOGLE`, `OPENAI`, `LOCAL`), `ClipMode` (`AUTO`, `MANUAL`).
 - Key numeric constants (selection): `GAMEPLAY_MIN_NONPERSON_MOTION`, `GAMEPLAY_MIN_OPEN_AREA_FRAC` — gameplay gate thresholds; `FACE_LANDMARKER_MAX_FACES` — ceiling for FaceLandmarker capacity (default 8); `FACE_COUNT_MARGIN` — safety headroom added to the YOLO person count before sizing `num_faces` (default 2, so 4 YOLO persons → capacity 6); `PERSON_COUNT_CONF_MIN` — minimum YOLO box confidence for counting simultaneous persons per frame (default 0.5); `SPEAKER_HOLD_SECONDS` — debounce confirm window before committing a speaker cut (default 2.0 s); `PODCAST_DETECTION_FPS` — face/lip sampling rate for PODCAST (default 10, vs 5 for other types); `GROUP_FRAMING_FIT_FACTOR` — two-shot allowed when all-faces span ≤ this × crop_w (default 0.9); `GROUP_MAX_GAP_FACTOR` — two-shot also requires the largest inter-face gap ≤ this × crop_w (default 0.25, prevents empty-table centering); `GROUP_SPEAKER_ID` — pseudo-id for a group/two-shot segment (−2); `LIP_ACTIVITY_WINDOW_SECONDS` — rolling window for MAR-movement std-dev (default 0.8 s); `LIP_ACTIVITY_MIN` — floor below which a face is treated as silent (default 0.003); `SPEAKER_SWITCH_MARGIN` — challenger score ratio to trigger hysteresis switch (default 1.5); `MIN_SHOT_SECONDS` — minimum hold time before any subject switch is allowed (default 2.0 s); `VOICE_ACTIVITY_FLOOR_FACTOR` — a step is "voiced" when its audio RMS ≥ this × the clip median (default 0.5; gates speaker switching to voiced moments); `AV_SYNC_WINDOW_SECONDS` — window for moment-to-moment audio-visual coherence (default 1.0 s); `COHERENCE_MIN` — minimum local mouth↔audio correlation for a face to be an eligible speaker (default 0.25; below → occlusion-aware hold); `HEADROOM_FACTOR` — rule-of-thirds vertical lift as a fraction of face height (default 0.18); `IOU_MATCH_MIN` — minimum box IoU to match a face to an existing track (default 0.3); `PAN_SMOOTHING_FACTOR` — gentle EMA pan rate for PODCAST crop centers (default 0.03; τ ≈ 1.1 s, 95% settle ~3 s — cinematic glide); `HAAR_DOWNSCALE` / `HAAR_SCALE_FACTOR` / `HAAR_MIN_NEIGHBORS` — OpenCV Haar params for the opt-in `fast_mode` PODCAST tracker (0.5 / 1.1 / 5).
 
 **Render encoding & GPU fallback:** the FFmpeg video encoder is selected by `video_processing.video_encoder` (`auto` default = nvenc when CUDA present else libx264; `cpu`/`nvenc`/`qsv`/`videotoolbox` force a specific encoder). `FFmpegCommandBuilder._video_encoder_args` maps each to its `-c:v` + rate-control flags (shared flags stay common). If a GPU encoder fails at runtime, `ClipRenderer._run_render_with_fallback` detects the hardware-failure signature in FFmpeg stderr, rebuilds the command with `video_encoder="cpu"`, and retries once — a genuine (non-hardware) error is re-raised. **`fast_mode`** (opt-in, default off) swaps the MediaPipe+audio PODCAST tracker for an OpenCV Haar largest-face crop (`FaceTracker._track_haar_fast` → single-face path); content-type detection and Mode B/C are untouched.
