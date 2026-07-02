@@ -15,6 +15,7 @@ from src.core.constants import (
     FACECAM_MAX_AREA_FRAC,
     FACECAM_MIN_AREA_FRAC,
     LLAMA_N_CTX,
+    ContentType,
 )
 from src.core.exceptions import AIProviderError
 from src.core.workspace import BIN_DIR
@@ -59,18 +60,33 @@ def parse_timerange_line(line: str) -> tuple[float, float]:
 
 
 def load_timerange_file(path: Path) -> list[dict[str, Any]]:
-    """Read a manual timerange file into ``[{"start_time", "end_time"}, ...]``.
+    """Read a manual timerange file into ``[{"start_time", "end_time", ...}, ...]``.
 
-    Blank lines and ``#``-prefixed comment lines are skipped. Raises ``ValueError`` if the
-    file yields no clips.
+    Each line is ``START - END`` with an optional ``| CONTENT_TYPE`` suffix that pins the
+    layout for that range (e.g. ``1:30 - 2:30 | JUST_CHAT``). A line without the suffix
+    omits ``content_type``, so the pipeline falls back to auto detection for it. The type
+    is matched case-insensitively against ``ContentType`` (PODCAST, JUST_CHAT, GAMING_SOLO,
+    GAMING_COLLAB, DONATION_OVERLAY). Blank lines and ``#``-prefixed comments are skipped;
+    raises ``ValueError`` on an unknown type or if the file yields no clips.
     """
     clips: list[dict[str, Any]] = []
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        start, end = parse_timerange_line(line)
-        clips.append({"start_time": start, "end_time": end})
+        range_part, _, type_part = line.partition("|")
+        start, end = parse_timerange_line(range_part)
+        clip: dict[str, Any] = {"start_time": start, "end_time": end}
+        type_part = type_part.strip()
+        if type_part:
+            try:
+                clip["content_type"] = ContentType(type_part.upper()).value
+            except ValueError as e:
+                raise ValueError(
+                    f"Invalid content type {type_part!r} in line {line!r}: expected one of "
+                    f"{', '.join(t.value for t in ContentType)}"
+                ) from e
+        clips.append(clip)
     if not clips:
         raise ValueError(f"No valid timerange entries found in {path}")
     return clips

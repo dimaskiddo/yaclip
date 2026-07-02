@@ -1091,6 +1091,8 @@ class AIPipeline:
         through the batched LLM so it gets a real title/caption/description/hashtags —
         only the boundaries are fixed by the user, not "chosen" by the AI.
         """
+        # Per-range content_type (from the "| TYPE" suffix) wins over the video-level
+        # detected_type; a range with neither is left untyped so the renderer auto-detects it.
         candidates = [
             {
                 "start_time": r["start_time"],
@@ -1099,8 +1101,11 @@ class AIPipeline:
             }
             for r in manual_ranges
         ]
-        if detected_type is not None:
-            for cc in candidates:
+        for cc, r in zip(candidates, manual_ranges, strict=True):
+            pinned = r.get("content_type")
+            if pinned:
+                cc["content_type"] = pinned
+            elif detected_type is not None:
                 cc["content_type"] = detected_type.value
 
         if not candidates:
@@ -1211,7 +1216,9 @@ class AIPipeline:
                 for key in ("title", "caption", "description", "hashtags", "reasoning"):
                     if cc.get(key):
                         target[key] = cc[key]
-                if detected_type is None:
+                # Only let the LLM assign a type to ranges that have none — a user-pinned
+                # (or detected) type is never overridden.
+                if "content_type" not in target:
                     resolved = self._normalise_base_content_type(cc.get("content_type"))
                     if resolved is not None:
                         target["content_type"] = resolved

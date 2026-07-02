@@ -438,11 +438,14 @@ Optional options you can add:
 
 **✂️ Manual mode — pick your own clip timestamps:**
 
-Create a text file, one clip per line, `START - END` in `MM:SS` or `HH:MM:SS`:
+Create a text file, one clip per line, `START - END` in `MM:SS` or `HH:MM:SS`. Optionally add `| CONTENT_TYPE` to pin the layout for that clip; leave it off to auto-detect that range:
 ```
-1:30 - 2:30
-10:44 - 12:44
+1:30 - 2:30 | JUST_CHAT
+10:44 - 11:55 | GAMING_COLLAB
+12:30 - 14:20
 ```
+Valid types: `PODCAST`, `JUST_CHAT`, `GAMING_SOLO`, `GAMING_COLLAB`, `DONATION_OVERLAY` (case-insensitive). The third line above has no type, so its layout is auto-detected.
+
 Then run:
 ```bash
 # AI still writes a title/caption/description for each clip:

@@ -219,7 +219,7 @@ def clip(
         None,
         "--timerange-file",
         help="Path to a manual timerange file (one 'START - END' per line, "
-        "MM:SS or HH:MM:SS); requires --manual",
+        "MM:SS or HH:MM:SS, optional '| CONTENT_TYPE' to pin the layout); requires --manual",
     ),
     no_metadata: bool = typer.Option(
         False,
