@@ -10,7 +10,7 @@ ENV LANG=C.UTF-8 \
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-WORKDIR /usr/app/yaclip
+WORKDIR /usr/app
 
 # Install system deps: EGL/GLES/GL for MediaPipe, FFmpeg for video processing.
 RUN apt-get -y update --allow-releaseinfo-change \
@@ -28,11 +28,6 @@ RUN apt-get -y update --allow-releaseinfo-change \
 RUN pip3 install --no-cache-dir --upgrade --break-system-packages \
       uv
 
-RUN uv pip install --no-cache --system --upgrade --break-system-packages \
-      pip \
-      setuptools \
-      wheel
-
 # Copy dependency manifest first (Docker layer caching).
 COPY requirements.txt .
 
@@ -45,7 +40,8 @@ RUN uv venv \
         setuptools \
         wheel \
     && uv pip install --no-cache -r requirements.txt \
-    && uv pip install --no-cache --force-reinstall --no-deps opencv-python-headless
+    && uv pip install --no-cache --force-reinstall --no-deps \
+        opencv-python-headless
 
 # Copy the rest of the application.
 COPY . .
