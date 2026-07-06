@@ -327,7 +327,10 @@ def serve(
     host: str = typer.Option("127.0.0.1", help="Host IP to bind Gradio to"),
     port: int = typer.Option(7860, help="Port to bind Gradio to"),
 ) -> None:
-    """Launch the Gradio WebUI (placeholder — next phase)."""
+    """Launch the Gradio WebUI."""
     ensure_workspace_integrity()
     run_purge_cycle()
-    logger.info(f"WebUI not yet implemented. Starting on http://{host}:{port}...")
+
+    from src.interfaces.webui import launch_webui
+
+    launch_webui(host, port)

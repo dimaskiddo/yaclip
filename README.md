@@ -384,7 +384,7 @@ docker run --rm -p 7860:7860 \
   dimaskiddo/yaclip serve
 ```
 
-Then open `http://localhost:7860` in your browser. *(WebUI is not yet implemented — this will log a placeholder message.)*
+Then open `http://localhost:7860` in your browser. *(Launches the YaClip WebUI with 4 tabs: Clipper, Settings, Maintenance, and Review & Render.)*
 
 > Your downloaded videos, AI models, and finished clips are saved to the `workspace/` folder on your computer — not inside the container — so they are kept between runs.
 
@@ -394,9 +394,9 @@ Then open `http://localhost:7860` in your browser. *(WebUI is not yet implemente
 
 ### 🌐 Browser Interface
 
-> **Note:** The browser interface is not available yet. Running `python app.py` without arguments starts a placeholder. Use the Terminal Commands below to run clips.
+> **Note:** Running `python app.py` without arguments launches the WebUI. Use the CLI commands below for direct terminal usage.
 
-When the WebUI is implemented, it will start with:
+The WebUI starts with:
 
 ```bash
 python app.py
