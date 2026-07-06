@@ -187,7 +187,17 @@ def build_ui() -> gr.Blocks:
                 label="YouTube URL",
                 placeholder="https://www.youtube.com/watch?v=...",
             )
+            download_resolution = gr.Dropdown(
+                choices=["480p", "720p", "1080p", "1440p", "4K"],
+                value=cfg.downloader.target_resolution,
+                label="Video Download Resolution",
+            )
             force_redo = gr.Checkbox(label="Force Re-Download Video", value=False)
+
+            cookies_file_input = gr.File(
+                label="Cookies File (Optional)",
+                file_types=[".txt"],
+            )
 
             mode_radio = gr.Radio(
                 choices=["Auto", "Manual"],
@@ -261,7 +271,7 @@ def build_ui() -> gr.Blocks:
                     lines=4,
                 )
                 timerange_file = gr.File(
-                    label="Or upload Timerange File (.txt)",
+                    label="Or Upload Timerange File",
                     file_types=[".txt"],
                 )
 
@@ -308,6 +318,7 @@ def build_ui() -> gr.Blocks:
                     gr.update(value=vp.content_type_override),
                     gr.update(value=vp.fast_mode),
                     gr.update(value=vp.default_resolution),
+                    gr.update(value=cfg.downloader.target_resolution),
                     gr.update(value=vp.video_encoder),
                     gr.update(value=vp.subtitles.stt_context),
                 ]
@@ -324,6 +335,7 @@ def build_ui() -> gr.Blocks:
                     content_type_override,
                     fast_mode,
                     target_resolution,
+                    download_resolution,
                     video_encoder,
                     stt_context,
                 ],
@@ -343,11 +355,13 @@ def build_ui() -> gr.Blocks:
                     content_type_override,
                     fast_mode,
                     target_resolution,
+                    download_resolution,
                     video_encoder,
                     stt_context,
                     language_dropdown,
                     sys_prompt_override,
                     force_redo,
+                    cookies_file_input,
                     timerange_input,
                     timerange_file,
                 ],
@@ -553,11 +567,6 @@ def _build_settings_tab(cfg):
             l_l_model = gr.Textbox(label="Model Name", value=llm_l.model_name)
 
     with gr.Accordion("Download", open=True):
-        d_browser = gr.Dropdown(
-            _browser_choices,
-            label="Login Using Browser",
-            value=dl.browser_cookies,
-        )
         d_vid_fmt = gr.Dropdown(
             ["mp4", "webm", "mkv"],
             label="Video Format",
@@ -722,7 +731,6 @@ def _build_settings_tab(cfg):
         l_l_device,
         l_l_n_gpu,
         l_l_model,
-        d_browser,
         d_vid_fmt,
         d_aud_fmt,
         d_aud_q,
@@ -782,7 +790,6 @@ def _build_settings_tab(cfg):
         "ai_pipeline.llm.local.device",
         "ai_pipeline.llm.local.n_gpu_layers",
         "ai_pipeline.llm.local.model_name",
-        "downloader.browser_cookies",
         "downloader.video_format",
         "downloader.audio_format",
         "downloader.audio_quality",
@@ -853,11 +860,13 @@ async def _run_clipper_pipeline(
     content_type_override: str,
     fast_mode: bool,
     target_resolution: str,
+    download_resolution: str,
     video_encoder: str,
     stt_context: str,
     language: str,
     sys_prompt_override: str,
     force: bool,
+    cookies_file_input: str | None,
     timerange_text: str,
     timerange_file: str | None,
     progress: gr.Progress = None,
@@ -897,6 +906,7 @@ async def _run_clipper_pipeline(
     cfg.video_processing.content_type_override = content_type_override
     cfg.video_processing.fast_mode = fast_mode
     cfg.video_processing.default_resolution = target_resolution
+    cfg.downloader.target_resolution = download_resolution
     cfg.video_processing.video_encoder = video_encoder
     cs.mode = "manual" if mode == "Manual" else "auto"
     if sys_prompt_override.strip():
@@ -911,12 +921,14 @@ async def _run_clipper_pipeline(
     from src.media.downloader import VideoDownloader
 
     progress(0.1, desc="Downloading video...")
+    cookies_path = cookies_file_input or None
     try:
         result = await asyncio.to_thread(
             VideoDownloader().download_video,
             url,
             str(VIDEOS_DIR),
             force=force,
+            cookies_file=cookies_path,
         )
     except Exception as e:
         raise gr.Error(f"Download failed: {e}") from e

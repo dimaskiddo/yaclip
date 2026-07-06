@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import sys
 import time
 from pathlib import Path
@@ -13,12 +12,7 @@ from loguru import logger
 from src.core.config import load_config
 from src.core.exceptions import DownloadError
 from src.core.utils import SystemUtils, extract_digits
-from src.core.workspace import (
-    DATA_DIR,
-    TMP_DIR,
-    active_pipeline_event,
-    video_output_path,
-)
+from src.core.workspace import DATA_DIR, active_pipeline_event, video_output_path
 from src.media.audio import AudioExtractor
 
 
@@ -105,66 +99,6 @@ class VideoDownloader:
             "title": title,
         }
 
-    def _resolve_wsl_cookies(self, browser: str) -> str | None:
-        """
-        Resolve and copy Windows browser cookies into Linux ./workspace/tmp/ to bypass SQLite locks.
-        Returns the fake profile directory path containing the copied cookies database.
-        """
-        win_user = SystemUtils.get_windows_username()
-        if not win_user:
-            logger.error("Could not resolve Windows username for cookie mapping.")
-            return None
-
-        paths = {
-            "edge": f"/mnt/c/Users/{win_user}/AppData/Local/Microsoft/Edge/User Data/Default/Network/Cookies",
-            "chrome": f"/mnt/c/Users/{win_user}/AppData/Local/Google/Chrome/User Data/Default/Network/Cookies",
-            "firefox": f"/mnt/c/Users/{win_user}/AppData/Roaming/Mozilla/Firefox/Profiles",
-        }
-
-        browser = browser.lower()
-        if browser not in paths:
-            logger.warning(f"Unsupported WSL browser cookie mapping: {browser}")
-            return None
-
-        src_path = Path(paths[browser])
-
-        if browser == "firefox":
-            if src_path.exists():
-                for profile in src_path.iterdir():
-                    if profile.is_dir() and profile.name.endswith(".default-release"):
-                        db_path = profile / "cookies.sqlite"
-                        if db_path.exists():
-                            src_path = db_path
-                            break
-                else:
-                    logger.warning("Could not find Firefox default profile cookies.")
-                    return None
-            else:
-                logger.warning(f"Firefox profile path not found: {src_path}")
-                return None
-        elif not src_path.exists():
-            logger.warning(f"Cookie database not found at {src_path}")
-            return None
-
-        # Fake profile structure for yt-dlp in ./workspace/tmp/
-        tmp_profile = (TMP_DIR / f"wsl_{browser}_cookies").resolve()
-        if browser in ("edge", "chrome"):
-            tmp_db_dir = tmp_profile / "Network"
-            tmp_db_dir.mkdir(parents=True, exist_ok=True)
-            dest_path = tmp_db_dir / "Cookies"
-        else:
-            tmp_db_dir = tmp_profile
-            tmp_db_dir.mkdir(parents=True, exist_ok=True)
-            dest_path = tmp_db_dir / "cookies.sqlite"
-
-        try:
-            shutil.copy2(src_path, dest_path)
-            logger.info(f"Copied {browser} cookie DB from {src_path} to {dest_path}")
-            return str(tmp_profile)
-        except Exception as e:
-            logger.error(f"Failed to copy cookie database: {e}")
-            return None
-
     def _extract_metadata(self, info: dict) -> dict[str, object]:
         """Pull lightweight game/show context fields from the yt-dlp info dict.
 
@@ -187,6 +121,7 @@ class VideoDownloader:
         output_dir: str,
         progress_callback: object | None = None,
         force: bool = False,
+        cookies_file: str | None = None,
     ) -> dict[str, str]:
         """
         Download a video and extract its audio track dynamically pulling settings
@@ -200,7 +135,6 @@ class VideoDownloader:
             out_dir_path.mkdir(parents=True, exist_ok=True)
 
             dl_cfg = self.config.downloader
-            browser = dl_cfg.browser_cookies
 
             # Robustly parse resolution and audio quality digits
             target_res = extract_digits(dl_cfg.target_resolution, default="1080")
@@ -258,18 +192,12 @@ class VideoDownloader:
 
             ydl_opts["progress_hooks"] = [progress_hook]
 
-            # Handle Cookies
-            if SystemUtils.is_wsl():
-                logger.info("WSL detected. Resolving Windows host cookies...")
-                tmp_profile = self._resolve_wsl_cookies(browser)
-                if tmp_profile:
-                    ydl_opts["cookiesfrombrowser"] = (browser, tmp_profile, None, None)
-                else:
-                    logger.warning(
-                        "WSL cookie resolution failed, proceeding without cookies..."
-                    )
+            # Handle cookies file (manually exported browser cookies in Netscape format).
+            if cookies_file and Path(cookies_file).exists():
+                ydl_opts["cookiefile"] = cookies_file
+                logger.info(f"Using cookies file: {cookies_file}")
             else:
-                ydl_opts["cookiesfrombrowser"] = (browser, None, None, None)
+                logger.info("No cookies file provided, proceeding without cookies.")
 
             # Single AudioExtractor instance shared by pre-flight and download paths.
             audio_extractor = AudioExtractor()

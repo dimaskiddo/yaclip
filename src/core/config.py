@@ -133,9 +133,6 @@ class DownloaderRetryConfig(BaseModel):
 
 
 class DownloaderConfig(BaseModel):
-    browser_cookies: Literal["edge", "chrome", "firefox", "brave", "opera"] = Field(
-        default="edge"
-    )
     target_resolution: str = Field(default="1080p")
     video_format: str = Field(default="mp4")
     audio_format: str = Field(default="aac")

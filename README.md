@@ -435,6 +435,7 @@ Optional options you can add:
 | `--manual` | Use your own timestamps instead of AI selection (requires `--timerange-file`) | off |
 | `--timerange-file ranges.txt` | Path to your timestamp file (requires `--manual`) | — |
 | `--no-metadata` | Manual mode only: skip AI titles/captions, just render at your timestamps | off |
+| `--cookies-file cookies.txt` | Path to a cookies.txt file for YouTube authentication | — |
 
 **✂️ Manual mode — pick your own clip timestamps:**
 

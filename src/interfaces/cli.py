@@ -73,6 +73,7 @@ def _run_pipeline(
     debug: bool,
     manual_ranges: list[dict] | None = None,
     no_metadata: bool = False,
+    cookies_file: str | None = None,
 ) -> None:
     """Download → AI clip selection → render. Shared by `clip` and the `test-pipeline` alias."""
     ensure_workspace_integrity()
@@ -87,7 +88,9 @@ def _run_pipeline(
         ensure_vision_runtime()
 
         logger.info("--- STEP 1: DOWNLOAD AND EXTRACT ---")
-        result = VideoDownloader().download_video(url, str(VIDEOS_DIR), force=force)
+        result = VideoDownloader().download_video(
+            url, str(VIDEOS_DIR), force=force, cookies_file=cookies_file
+        )
         logger.info(f"Download complete: {result.get('title', 'Unknown')}")
 
         audio_path = result.get("audio_path")
@@ -221,6 +224,12 @@ def clip(
         help="Skip LLM titling/metadata entirely (manual mode only); clips get "
         "Manual_<start>_<end> titles and no .txt sidecar",
     ),
+    cookies_file: Path | None = typer.Option(
+        None,
+        "--cookies-file",
+        "-c",
+        help="Path to a cookies.txt file for YouTube authentication",
+    ),
 ) -> None:
     """Download a video, auto-select highlights, and render vertical 9:16 clips."""
     if manual and not timerange_file:
@@ -257,6 +266,7 @@ def clip(
         debug=debug,
         manual_ranges=manual_ranges,
         no_metadata=no_metadata,
+        cookies_file=str(cookies_file) if cookies_file else None,
     )
 
 

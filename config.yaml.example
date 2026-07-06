@@ -49,7 +49,6 @@ ai_pipeline:
       model_name: "microsoft/Phi-3-mini-4k-instruct-gguf:q4"
 
 downloader:
-  browser_cookies: "edge"              # Browser for yt-dlp cookie extraction: edge | chrome | firefox
   target_resolution: "1080p"
   video_format: "mp4"
   audio_format: "aac"
