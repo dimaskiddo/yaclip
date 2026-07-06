@@ -46,6 +46,13 @@ def setup_logger() -> None:
     for name in ["urllib3", "httpx", "httpcore", "huggingface_hub", "faster_whisper"]:
         logging.getLogger(name).setLevel(logging.ERROR)
 
+    # Gradio installs its own handlers and doesn't propagate to root by default —
+    # clear them and re-enable propagation so InterceptHandler routes it into loguru.
+    gradio_logger = logging.getLogger("gradio")
+    gradio_logger.handlers.clear()
+    gradio_logger.propagate = True
+    gradio_logger.setLevel(logging.WARNING)
+
     # Route standard warnings into loguru
     def showwarning(
         message: Warning | str,

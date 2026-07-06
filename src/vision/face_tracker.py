@@ -520,7 +520,6 @@ class FaceTracker:
         self,
         detections: list[dict],
         width: int,
-        height: int,
         crop_w: int,
         audio_rms: list[float],
         steps_per_second: float,
@@ -710,7 +709,7 @@ class FaceTracker:
         # active-speaker selection.
         if content_type == ContentType.PODCAST and not fast_mode:
             step_centers = self._podcast_step_centers(
-                detections, width, height, crop_w, audio_rms or [], steps_per_second
+                detections, width, crop_w, audio_rms or [], steps_per_second
             )
         else:
             step_centers = self._single_face_step_centers(detections, width)

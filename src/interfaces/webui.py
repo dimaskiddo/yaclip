@@ -128,11 +128,11 @@ def _refresh_cache_info() -> list[list]:
     ]
 
 
-def _run_purge(dry_run: bool) -> tuple[list[list], str]:
+def _run_purge(targets: list[str], dry_run: bool) -> tuple[list[list], str]:
     from src.core.workspace import cache_usage, run_purge_cycle
 
     before = {r["name"]: r for r in cache_usage()}
-    run_purge_cycle(force=not dry_run)
+    run_purge_cycle(force=not dry_run, specific_target=targets or None)
     after = {r["name"]: r for r in cache_usage()}
     lines: list[str] = []
     total_freed = 0.0
@@ -312,6 +312,12 @@ def build_ui() -> gr.Blocks:
                 row_count=10,
             )
 
+            purge_targets = gr.CheckboxGroup(
+                ["videos", "audios", "subtitles", "data", "tmp", "clips", "logs"],
+                label="Select Directories to Clean",
+                value=["tmp"],
+            )
+
             with gr.Row():
                 dry_run_cb = gr.Checkbox(
                     label="Dry Run (preview only, no deletion)", value=True
@@ -325,7 +331,7 @@ def build_ui() -> gr.Blocks:
 
             clear_btn.click(
                 fn=_run_purge,
-                inputs=[dry_run_cb],
+                inputs=[purge_targets, dry_run_cb],
                 outputs=[usage_table, result_log],
             )
 

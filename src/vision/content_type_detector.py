@@ -75,17 +75,6 @@ class ContentTypeDetector:
     # Public API
     # ------------------------------------------------------------------
 
-    def detect_content_type(self, video_path: Path) -> ContentType | None:
-        """Analyze the full video and determine its content type.
-
-        Returns a ``ContentType`` enum value, or ``None`` when the video is
-        ambiguous (the LLM resolves uncertain videos).
-
-        This is a backwards-compatibility wrapper. For the full decision plus
-        structured evidence, use ``detect_content_type_full()``.
-        """
-        return self.detect_content_type_full(video_path).content_type
-
     def detect_content_type_full(self, video_path: Path) -> ContentTypeDetectionResult:
         """Analyze the full video, return decision + structured evidence.
 

@@ -51,7 +51,7 @@ torchvision = [{ index = "pytorch-cpu" }]
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+select = ["E", "F", "I", "UP", "B", "SIM", "ARG"]
 ignore = ["E501"]
 
 [tool.ruff.lint.flake8-bugbear]
@@ -61,6 +61,10 @@ extend-immutable-calls = ["typer.Option", "typer.Argument"]
 [tool.ruff.lint.per-file-ignores]
 # Third-party env var names here must stay lowercase as-is.
 "src/core/environment.py" = ["SIM112"]
+# Unused function arguments
+"src/core/logger.py" = ["ARG001"]
+"src/vision/face_tracker.py" = ["ARG002"]
+"src/vision/layout_builder.py" = ["ARG002"]
 
 [tool.ruff.format]
 quote-style = "double"

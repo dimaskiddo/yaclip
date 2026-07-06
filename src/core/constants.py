@@ -32,11 +32,6 @@ BASE_CONTENT_TYPES: frozenset[str] = frozenset(
 PLACEHOLDER_API_KEY: str = "your-api-key-here"
 
 
-class ClipMode(StrEnum):
-    AUTO = "auto"
-    MANUAL = "manual"
-
-
 class LayoutMode(StrEnum):
     SINGLE_VERTICAL = "single_vertical"
     STACKED_SPLIT = "stacked_split"

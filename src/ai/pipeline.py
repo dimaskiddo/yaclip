@@ -533,7 +533,6 @@ class AIPipeline:
         self,
         sliced_chunks: list[tuple],
         force: bool,
-        video_id: str,
     ) -> tuple[list[tuple], list[dict], list[dict]]:
         """Transcribe all sliced audio chunks (STT). Local whisper loaded once; cloud via executor.
 
@@ -965,7 +964,6 @@ class AIPipeline:
                 self._transcribe_candidate_slices(
                     sliced_chunks,
                     force,
-                    video_id,
                 )
             )
             if word_cache:
@@ -1155,7 +1153,7 @@ class AIPipeline:
             return candidates
 
         transcribed_slices, _failed, word_cache = self._transcribe_candidate_slices(
-            sliced_chunks, force, video_id
+            sliced_chunks, force
         )
         if word_cache:
             save_words_cache(video_id, word_cache)

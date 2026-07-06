@@ -16,16 +16,6 @@ if TYPE_CHECKING:
     from src.core.config import ClipSelectionConfig
 
 
-def section_header(title: str, subtitle: str | None = None) -> gr.Markdown:
-    """A bold section title with an optional muted subtitle line."""
-    import gradio as gr
-
-    body = f"### {title}"
-    if subtitle:
-        body += f"\n<span style='opacity:0.7'>{subtitle}</span>"
-    return gr.Markdown(body)
-
-
 def clip_count_slider(cs: ClipSelectionConfig) -> gr.Slider:
     """Number-of-clips slider bounded by ``min_clips``/``max_clips`` from config."""
     import gradio as gr
