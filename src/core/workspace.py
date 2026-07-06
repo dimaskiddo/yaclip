@@ -42,11 +42,9 @@ CACHE_DIR_PATHS: dict[str, Path] = {
     "logs": LOGS_DIR,
 }
 
-# Cache directories surfaced by cache_usage() — excludes "logs" (loguru manages its own
-# rotation/retention, not part of the workspace purge-status display).
-CACHE_STATUS_DIRS: dict[str, Path] = {
-    name: path for name, path in CACHE_DIR_PATHS.items() if name != "logs"
-}
+# Cache directories surfaced by cache_usage() — shared across CLI and WebUI for
+# a consistent user experience (even though loguru manages its own rotation/retention).
+CACHE_STATUS_DIRS: dict[str, Path] = CACHE_DIR_PATHS.copy()
 
 # Global pipeline execution guard — set while any pipeline or download is active
 active_pipeline_event: threading.Event = threading.Event()

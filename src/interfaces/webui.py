@@ -5,14 +5,19 @@ from pathlib import Path
 
 import gradio as gr
 
-from src.core.config import load_config
+from src.ai.prompts import LANGUAGE_MAP
+from src.core.config import apply_session_overrides, load_config
 from src.core.utils import load_timerange_file, parse_timerange_text
-from src.core.workspace import VIDEOS_DIR, ensure_workspace_integrity, run_purge_cycle
+from src.core.workspace import (
+    VIDEOS_DIR,
+    cache_usage,
+    ensure_workspace_integrity,
+    run_purge_cycle,
+)
 from src.interfaces.components import clip_count_slider, clip_duration_slider
 
 
 def _build_language_choices() -> list[tuple[str, str]]:
-    from src.ai.prompts import LANGUAGE_MAP
 
     seen: set[str] = set()
     choices = [("Auto-Detect", "auto")]
@@ -30,8 +35,8 @@ _CONTENT_TYPE_CHOICES: list[tuple[str, str]] = [
     ("Auto-Detect", "auto"),
     ("Podcast", "PODCAST"),
     ("Just Chat", "JUST_CHAT"),
-    ("Gaming Solo", "GAMING_SOLO"),
-    ("Gaming Solo (Cam Bottom)", "GAMING_SOLO_BOTTOM"),
+    ("Gaming Solo (FaceCam at Top)", "GAMING_SOLO"),
+    ("Gaming Solo (FaceCam at Bottom)", "GAMING_SOLO_BOTTOM"),
     ("Gaming Collab", "GAMING_COLLAB"),
     ("Donation / Alert", "DONATION_OVERLAY"),
 ]
@@ -112,14 +117,32 @@ _browser_choices: list[tuple[str, str]] = [
 # Populated by _build_settings_tab, consumed by _apply_settings.
 _SETTINGS_PATHS: list[str] = []
 
+_NAME_SORT = {
+    "clips": 0,
+    "videos": 1,
+    "audios": 2,
+    "subtitles": 3,
+    "data": 4,
+    "tmp": 5,
+    "logs": 6,
+}
+
+_NAME_DISPLAY: dict[str, str] = {
+    "clips": "Clips",
+    "videos": "Videos",
+    "audios": "Audios",
+    "subtitles": "Subtitles",
+    "data": "Data",
+    "tmp": "Temp",
+    "logs": "Logs",
+}
+
 
 def _refresh_cache_info() -> list[list]:
-    from src.core.workspace import cache_usage
-
-    rows = cache_usage()
+    rows = sorted(cache_usage(), key=lambda r: _NAME_SORT.get(r["name"], 99))
     return [
         [
-            r["name"],
+            _NAME_DISPLAY.get(r["name"], r["name"].title()),
             round(r["size_mb"], 2),
             r["count"],
             f"{r['oldest_days']:.1f}d" if r["oldest_days"] is not None else "-",
@@ -129,7 +152,6 @@ def _refresh_cache_info() -> list[list]:
 
 
 def _run_purge(targets: list[str], dry_run: bool) -> tuple[list[list], str]:
-    from src.core.workspace import cache_usage, run_purge_cycle
 
     before = {r["name"]: r for r in cache_usage()}
     run_purge_cycle(force=not dry_run, specific_target=targets or None)
@@ -142,7 +164,7 @@ def _run_purge(targets: list[str], dry_run: bool) -> tuple[list[list], str]:
             lines.append(f"{name}: {freed:.2f} MB freed")
             total_freed += freed
     summary = (
-        f"Dry run — would free {total_freed:.2f} MB"
+        f"Dry run — Would free {total_freed:.2f} MB"
         if dry_run
         else f"Freed {total_freed:.2f} MB total"
     )
@@ -156,7 +178,7 @@ def build_ui() -> gr.Blocks:
     with gr.Blocks(title="YaClip — AI Auto-Clipper") as app:
         gr.Markdown("# YaClip — AI Auto-Clipper")
 
-        with gr.Tab("Clipper"):
+        with gr.Tab("Clipper") as clipper_tab:
             gr.HTML("<style>.mode-hide{display:none!important}</style>")
 
             is_manual = cs.mode == "manual"
@@ -215,7 +237,7 @@ def build_ui() -> gr.Blocks:
                 target_resolution = gr.Dropdown(
                     choices=["480p", "720p", "1080p", "1440p", "4K"],
                     value=cfg.video_processing.default_resolution,
-                    label="Output Resolution",
+                    label="Video Clip Output Resolution",
                 )
                 video_encoder = gr.Dropdown(
                     choices=_encoder_choices,
@@ -269,6 +291,44 @@ def build_ui() -> gr.Blocks:
                 queue=False,
             )
 
+            def _refresh_controls():
+                cfg = load_config()
+                cs = cfg.clip_selection
+                vp = cfg.video_processing
+                return [
+                    gr.update(value=cs.auto_strategy),
+                    gr.update(minimum=cs.min_clips, maximum=cs.max_clips),
+                    gr.update(
+                        minimum=cs.min_clip_duration_seconds,
+                        maximum=cs.max_clip_duration_seconds,
+                    ),
+                    gr.update(value=cs.clip_length_margin_seconds),
+                    gr.update(value=cs.candidate_margin),
+                    gr.update(value=cs.require_review_before_render),
+                    gr.update(value=vp.content_type_override),
+                    gr.update(value=vp.fast_mode),
+                    gr.update(value=vp.default_resolution),
+                    gr.update(value=vp.video_encoder),
+                    gr.update(value=vp.subtitles.stt_context),
+                ]
+
+            clipper_tab.select(
+                fn=_refresh_controls,
+                outputs=[
+                    auto_strategy,
+                    clip_count,
+                    clip_duration,
+                    clip_margin,
+                    candidate_margin,
+                    require_review,
+                    content_type_override,
+                    fast_mode,
+                    target_resolution,
+                    video_encoder,
+                    stt_context,
+                ],
+            )
+
             find_btn.click(
                 fn=_run_clipper_pipeline,
                 inputs=[
@@ -303,7 +363,6 @@ def build_ui() -> gr.Blocks:
         with gr.Tab("Maintenance") as maintenance_tab:
             gr.Markdown("## Cache Management")
 
-            refresh_btn = gr.Button("⟳ Refresh Cache Info")
             usage_table = gr.Dataframe(
                 value=_refresh_cache_info(),
                 headers=["Directory", "Size (MB)", "Files", "Oldest"],
@@ -311,16 +370,25 @@ def build_ui() -> gr.Blocks:
                 column_count=(4, "fixed"),
                 row_count=10,
             )
+            refresh_btn = gr.Button("⟳ Refresh Cache Info")
 
             purge_targets = gr.CheckboxGroup(
-                ["videos", "audios", "subtitles", "data", "tmp", "clips", "logs"],
+                [
+                    ("Clips", "clips"),
+                    ("Videos", "videos"),
+                    ("Audios", "audios"),
+                    ("Subtitles", "subtitles"),
+                    ("Data", "data"),
+                    ("Temp", "tmp"),
+                    ("Logs", "logs"),
+                ],
                 label="Select Directories to Clean",
                 value=["tmp"],
             )
 
             with gr.Row():
                 dry_run_cb = gr.Checkbox(
-                    label="Dry Run (preview only, no deletion)", value=True
+                    label="Dry Run (Preview Only, No Deletion)", value=True
                 )
                 clear_btn = gr.Button("🗑️ Clear Cache Now", variant="stop")
 
@@ -760,8 +828,6 @@ def _build_settings_tab(cfg):
 
 
 def _apply_settings(*values) -> str:
-    from src.core.config import apply_session_overrides
-
     global _SETTINGS_PATHS
     overrides: dict[str, object] = {}
     for path, val in zip(_SETTINGS_PATHS, values, strict=True):

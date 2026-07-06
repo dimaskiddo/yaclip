@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import logging
 import sys
 import warnings
@@ -105,3 +106,27 @@ def setup_logger() -> None:
         retention=retention,
         encoding="utf-8",
     )
+
+    # Redirect raw sys.stdout.write() calls (e.g. Gradio's print() for the startup
+    # banner) into loguru so every line is formatted consistently.  loguru internally
+    # holds a reference to the original stdout from the logger.add() call above, so
+    # writing to logger.info() will reach the terminal through that — no recursion.
+    sys.stdout = _LoguruStream(sys.__stdout__)  # type: ignore[assignment]
+
+
+class _LoguruStream:
+    """Wrap a stream so write() calls go through loguru."""
+
+    def __init__(self, original: io.TextIOWrapper) -> None:
+        self._original = original
+
+    def write(self, msg: str) -> None:
+        stripped = msg.rstrip()
+        if stripped:
+            logger.info(stripped)
+
+    def flush(self) -> None:
+        self._original.flush()
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._original, name)
