@@ -13,7 +13,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from src.core.constants import BYTES_PER_MB
+from src.core.constants import BYTES_PER_MB, SECONDS_PER_DAY
 from src.core.exceptions import CacheInitError
 
 # Global Path Constants
@@ -28,6 +28,25 @@ DATA_DIR = WORKSPACE_DIR / "data"  # STT transcripts + AI/cache JSON
 CLIPS_DIR = WORKSPACE_DIR / "clips"
 LOGS_DIR = WORKSPACE_DIR / "logs"
 TMP_DIR = WORKSPACE_DIR / "tmp"
+
+# Named cache directories, keyed by the name used in config (`retention_days`, `protected_dirs`,
+# `specific_target`) and CLI/WebUI display. Single source of truth for run_purge_cycle and
+# cache_usage so both walk the same paths under the same names.
+CACHE_DIR_PATHS: dict[str, Path] = {
+    "videos": VIDEOS_DIR,
+    "audios": AUDIOS_DIR,
+    "subtitles": SUBTITLES_DIR,
+    "data": DATA_DIR,
+    "tmp": TMP_DIR,
+    "clips": CLIPS_DIR,
+    "logs": LOGS_DIR,
+}
+
+# Cache directories surfaced by cache_usage() — excludes "logs" (loguru manages its own
+# rotation/retention, not part of the workspace purge-status display).
+CACHE_STATUS_DIRS: dict[str, Path] = {
+    name: path for name, path in CACHE_DIR_PATHS.items() if name != "logs"
+}
 
 # Global pipeline execution guard — set while any pipeline or download is active
 active_pipeline_event: threading.Event = threading.Event()
@@ -261,7 +280,7 @@ def run_purge_cycle(
             )
             continue
 
-        dir_path = WORKSPACE_DIR / dir_name
+        dir_path = CACHE_DIR_PATHS[dir_name]
         if not dir_path.exists():
             continue
 
@@ -307,3 +326,26 @@ def run_purge_cycle(
         )
     else:
         logger.info("Workspace Cleaner - Purge cycle completed. No stale files found.")
+
+
+def cache_usage() -> list[dict[str, object]]:
+    """Per-directory disk usage (name, size_mb, count, oldest_days) for the workspace cache."""
+    now = datetime.now().timestamp()
+    rows: list[dict[str, object]] = []
+    for name, path in CACHE_STATUS_DIRS.items():
+        stats = (
+            [p.stat() for p in path.rglob("*") if p.is_file()] if path.exists() else []
+        )
+        size_mb = sum(s.st_size for s in stats) / BYTES_PER_MB
+        oldest_days = (
+            (now - min(s.st_mtime for s in stats)) / SECONDS_PER_DAY if stats else None
+        )
+        rows.append(
+            {
+                "name": name,
+                "size_mb": size_mb,
+                "count": len(stats),
+                "oldest_days": oldest_days,
+            }
+        )
+    return rows

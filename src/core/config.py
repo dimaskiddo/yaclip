@@ -338,3 +338,31 @@ def load_config(force_reload: bool = False) -> AppConfig:
         return _config_cache
     except ValidationError as e:
         raise ConfigValidationError(f"Configuration validation failed:\n{e}") from e
+
+
+def apply_session_overrides(overrides: dict[str, object]) -> AppConfig:
+    """Apply dotted-key overrides to the config singleton, session-only.
+
+    e.g. ``{"clip_selection.default_clips": 3}``. Re-validated through AppConfig so every
+    constraint + validator runs; invalid values raise ``ConfigValidationError`` and leave the
+    singleton untouched. Never writes ``config.yaml`` (WebUI Settings uses this for live edits).
+    """
+    global _config_cache
+    data = load_config().model_dump()
+    for dotted, value in overrides.items():
+        node = data
+        *parents, leaf = dotted.split(".")
+        for key in parents:
+            child = node.get(key)
+            if not isinstance(child, dict):
+                raise ConfigValidationError(f"Unknown config path: {dotted!r}")
+            node = child
+        if leaf not in node:
+            raise ConfigValidationError(f"Unknown config path: {dotted!r}")
+        node[leaf] = value
+
+    try:
+        _config_cache = AppConfig.model_validate(data)
+        return _config_cache
+    except ValidationError as e:
+        raise ConfigValidationError(f"Configuration override failed:\n{e}") from e

@@ -59,18 +59,18 @@ def parse_timerange_line(line: str) -> tuple[float, float]:
     return start, end
 
 
-def load_timerange_file(path: Path) -> list[dict[str, Any]]:
-    """Read a manual timerange file into ``[{"start_time", "end_time", ...}, ...]``.
+def parse_timerange_text(text: str) -> list[dict[str, Any]]:
+    """Parse manual timerange lines from a raw string into ``[{"start_time", "end_time", ...}]``.
 
     Each line is ``START - END`` with an optional ``| CONTENT_TYPE`` suffix that pins the
     layout for that range (e.g. ``1:30 - 2:30 | JUST_CHAT``). A line without the suffix
     omits ``content_type``, so the pipeline falls back to auto detection for it. The type
     is matched case-insensitively against ``ContentType`` (PODCAST, JUST_CHAT, GAMING_SOLO,
-    GAMING_COLLAB, DONATION_OVERLAY). Blank lines and ``#``-prefixed comments are skipped;
-    raises ``ValueError`` on an unknown type or if the file yields no clips.
+    GAMING_SOLO_BOTTOM, GAMING_COLLAB, DONATION_OVERLAY). Blank lines and ``#``-prefixed
+    comments are skipped; raises ``ValueError`` on an unknown type or if no clips are found.
     """
     clips: list[dict[str, Any]] = []
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
+    for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
@@ -88,8 +88,22 @@ def load_timerange_file(path: Path) -> list[dict[str, Any]]:
                 ) from e
         clips.append(clip)
     if not clips:
-        raise ValueError(f"No valid timerange entries found in {path}")
+        raise ValueError("No valid timerange entries found")
     return clips
+
+
+def load_timerange_file(path: Path) -> list[dict[str, Any]]:
+    """Read a manual timerange file into ``[{"start_time", "end_time", ...}, ...]``.
+
+    Thin file wrapper over :func:`parse_timerange_text`; see it for the line format.
+    Raises ``ValueError`` on an unknown type or if the file yields no clips.
+    """
+    try:
+        return parse_timerange_text(path.read_text(encoding="utf-8"))
+    except ValueError as e:
+        if "No valid timerange entries found" in str(e):
+            raise ValueError(f"No valid timerange entries found in {path}") from e
+        raise
 
 
 def box_iou(

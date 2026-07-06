@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class ContentType(str, Enum):
+class ContentType(StrEnum):
     PODCAST = "PODCAST"
     JUST_CHAT = "JUST_CHAT"
     GAMING_SOLO = "GAMING_SOLO"
@@ -32,12 +32,12 @@ BASE_CONTENT_TYPES: frozenset[str] = frozenset(
 PLACEHOLDER_API_KEY: str = "your-api-key-here"
 
 
-class ClipMode(str, Enum):
+class ClipMode(StrEnum):
     AUTO = "auto"
     MANUAL = "manual"
 
 
-class LayoutMode(str, Enum):
+class LayoutMode(StrEnum):
     SINGLE_VERTICAL = "single_vertical"
     STACKED_SPLIT = "stacked_split"
     MULTI_COLLAB = "multi_collab"
@@ -458,6 +458,9 @@ VISUAL_THREAD_POOL: int = 5
 
 # ── Bytes-to-MB conversion factor ──
 BYTES_PER_MB: int = 1024 * 1024
+
+# ── Seconds-to-days conversion factor (cache/file age calculations) ──
+SECONDS_PER_DAY: int = 24 * 60 * 60
 
 # ── Gameplay scan upper bound ──
 # Maximum number of frames scanned during gameplay pan / motion-region analysis.

@@ -7,13 +7,11 @@
   cache purge       — retention-respecting manual cleanup (opt-in --concern)
   cache clean       — force-clean specific workspace directories
   serve             — launch the Gradio WebUI (stub; next phase)
-  clean-workspace   — hidden alias of `cache clean`
 """
 
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 
 import typer
@@ -21,17 +19,13 @@ import yaml
 from loguru import logger
 
 from src.core.config import load_config
-from src.core.constants import BYTES_PER_MB
 from src.core.environment import ensure_vision_runtime
 from src.core.exceptions import DetectionError
 from src.core.utils import SystemUtils, load_timerange_file
 from src.core.workspace import (
-    AUDIOS_DIR,
-    CLIPS_DIR,
     DATA_DIR,
-    SUBTITLES_DIR,
-    TMP_DIR,
     VIDEOS_DIR,
+    cache_usage,
     ensure_workspace_integrity,
     run_purge_cycle,
 )
@@ -289,25 +283,13 @@ def show_config() -> None:
 def cache_status() -> None:
     """Show per-directory size, file count, and oldest file for the workspace cache."""
 
-    targets = {
-        "videos": VIDEOS_DIR,
-        "audios": AUDIOS_DIR,
-        "subtitles": SUBTITLES_DIR,
-        "data": DATA_DIR,
-        "clips": CLIPS_DIR,
-        "tmp": TMP_DIR,
-    }
     typer.echo(f"{'dir':<12}{'size (MB)':>12}{'files':>8}{'oldest':>12}")
-    now = time.time()
-    for name, path in targets.items():
-        files = [p for p in path.rglob("*") if p.is_file()] if path.exists() else []
-        size_mb = sum(p.stat().st_size for p in files) / BYTES_PER_MB
-        oldest = (
-            f"{(now - min(p.stat().st_mtime for p in files)) / 86400:.1f}d"
-            if files
-            else "-"
+    for row in cache_usage():
+        oldest_days = row["oldest_days"]
+        oldest = f"{oldest_days:.1f}d" if oldest_days is not None else "-"
+        typer.echo(
+            f"{row['name']:<12}{row['size_mb']:>12.1f}{row['count']:>8}{oldest:>12}"
         )
-        typer.echo(f"{name:<12}{size_mb:>12.1f}{len(files):>8}{oldest:>12}")
 
 
 @cache_app.command("purge")
@@ -337,16 +319,6 @@ def cache_clean(
 ) -> None:
     """Force-clean specific workspace directories (bypasses retention & dry-run)."""
     logger.info(f"Cache clean: {target or 'all'}...")
-    run_purge_cycle(force=True, specific_target=target)
-
-
-@cli.command("clean-workspace", hidden=True)
-def clean_workspace(
-    target: list[str] = typer.Argument(
-        None, help="Space-separated workspace directories to clean"
-    ),
-) -> None:
-    """Deprecated alias of `cache purge`."""
     run_purge_cycle(force=True, specific_target=target)
 
 
