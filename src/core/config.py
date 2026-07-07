@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -10,6 +12,9 @@ from src.core.exceptions import ConfigValidationError
 from src.core.workspace import CLIPS_DIR, LOGS_DIR
 
 CONFIG_PATH = Path("config.yaml")
+BACKUP_DIR = Path("backups")
+_BACKUP_PREFIX = "config.yaml_"
+_BACKUP_TS_FMT = "%Y-%m-%d_%H-%M-%S"
 
 # Friendly subtitle-alignment names → ASS numpad code (1-9). Raw ints are also accepted.
 ALIGNMENT_NAMES = {
@@ -364,3 +369,71 @@ def apply_session_overrides(overrides: dict[str, object]) -> AppConfig:
         return _config_cache
     except ValidationError as e:
         raise ConfigValidationError(f"Configuration override failed:\n{e}") from e
+
+
+def backup_config() -> Path | None:
+    """Create a timestamped copy of the current config.yaml in BACKUP_DIR.
+
+    No-op if config.yaml does not exist yet. Returns the backup Path, or None.
+    """
+    if not CONFIG_PATH.exists():
+        return None
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime(_BACKUP_TS_FMT)
+    backup = BACKUP_DIR / f"{_BACKUP_PREFIX}{ts}"
+    shutil.copy(CONFIG_PATH, backup)
+    return backup
+
+
+def save_config_to_disk() -> Path:
+    """Persist the current validated config singleton to config.yaml.
+
+    First backs up the old config.yaml to BACKUP_DIR, then writes the singleton.
+    Returns the backup Path (so the caller can name it in a toast).
+    """
+    backup = backup_config()
+    CONFIG_PATH.write_text(
+        yaml.safe_dump(
+            load_config().model_dump(),
+            sort_keys=False,
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+    return backup
+
+
+def list_config_backups() -> list[tuple[str, str]]:
+    """Return (label, filename) pairs for every backup, newest-first.
+
+    label is a human-friendly "YYYY-MM-DD HH:MM:SS" — suitable for a dropdown.
+    filename is the bare basename (e.g. config.yaml_2026-07-07_10-50-32).
+    """
+    if not BACKUP_DIR.exists():
+        return []
+    paths = sorted(
+        (p for p in BACKUP_DIR.iterdir() if p.name.startswith(_BACKUP_PREFIX)),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    result: list[tuple[str, str]] = []
+    for p in paths:
+        ts = datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        result.append((ts, p.name))
+    return result
+
+
+def restore_config(filename: str) -> AppConfig:
+    """Restore a named backup file to config.yaml and reload the singleton.
+
+    Validates the file resides inside BACKUP_DIR (path-traversal guard).
+    Returns the freshly-reloaded AppConfig.
+    Raises ConfigValidationError on validation failure.
+    """
+    backup = (BACKUP_DIR / filename).resolve()
+    if not backup.exists():
+        raise ConfigValidationError(f"Backup not found: {filename}")
+    if backup.parent != BACKUP_DIR.resolve():
+        raise ConfigValidationError(f"Invalid backup path: {filename}")
+    shutil.copy(backup, CONFIG_PATH)
+    return load_config(force_reload=True)

@@ -458,3 +458,12 @@ class AIUtils:
             raise AIProviderError("Parsed response is not a JSON array.")
 
         return parsed_data
+
+
+def mask_api_key(key: str) -> str:
+    """Mask an API key for display — never reveal the real value to the browser."""
+    if not key or key == "your-api-key-here":
+        return "Not set"
+    if len(key) <= 7:
+        return "•" * len(key)
+    return f"{key[:4]}{'•' * 6}{key[-3:]}"

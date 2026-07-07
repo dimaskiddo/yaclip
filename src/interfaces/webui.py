@@ -5,117 +5,39 @@ from pathlib import Path
 
 import gradio as gr
 
-from src.ai.prompts import LANGUAGE_MAP
-from src.core.config import apply_session_overrides, load_config
-from src.core.utils import load_timerange_file, parse_timerange_text
+from src.core.config import (
+    apply_session_overrides,
+    list_config_backups,
+    load_config,
+    restore_config,
+    save_config_to_disk,
+)
+from src.core.utils import load_timerange_file, mask_api_key, parse_timerange_text
 from src.core.workspace import (
     VIDEOS_DIR,
     cache_usage,
     ensure_workspace_integrity,
     run_purge_cycle,
 )
-from src.interfaces.components import clip_count_slider, clip_duration_slider
+from src.interfaces.components import (
+    _ALIGNMENT_CHOICES,
+    _CLOUD_PROVIDER_CHOICES,
+    _CONTENT_TYPE_CHOICES,
+    _DONATION_EXCLUDE_CHOICES,
+    _ENCODER_CHOICES,
+    _HALLUCINATION_CHOICES,
+    _HARDWARE_CHOICES,
+    _MODEL_SIZE_CHOICES,
+    _PROVIDER_CHOICES,
+    _STRATEGY_CHOICES,
+    LANGUAGE_CHOICES,
+    clip_count_slider,
+    clip_duration_slider,
+)
 
-
-def _build_language_choices() -> list[tuple[str, str]]:
-
-    seen: set[str] = set()
-    choices = [("Auto-Detect", "auto")]
-    for name, code in sorted(LANGUAGE_MAP.items()):
-        display = name.title()
-        if display not in seen:
-            seen.add(display)
-            choices.append((display, code))
-    return choices
-
-
-_LANGUAGE_CHOICES = _build_language_choices()
-
-_CONTENT_TYPE_CHOICES: list[tuple[str, str]] = [
-    ("Auto-Detect", "auto"),
-    ("Podcast", "PODCAST"),
-    ("Just Chat", "JUST_CHAT"),
-    ("Gaming Solo (FaceCam at Top)", "GAMING_SOLO"),
-    ("Gaming Solo (FaceCam at Bottom)", "GAMING_SOLO_BOTTOM"),
-    ("Gaming Collab", "GAMING_COLLAB"),
-    ("Donation / Alert", "DONATION_OVERLAY"),
-]
-
-# ── Human-friendly choice mappings ──
-
-_strategy_choices: list[tuple[str, str]] = [
-    ("Combined (Recommended)", "hybrid"),
-    ("YouTube Most Replayed", "heatmap"),
-    ("AI Analysis", "ai"),
-]
-
-_encoder_choices: list[tuple[str, str]] = [
-    ("Auto-Detect", "auto"),
-    ("CPU (Software)", "cpu"),
-    ("NVIDIA GPU", "nvenc"),
-    ("Intel GPU", "qsv"),
-    ("Apple GPU", "videotoolbox"),
-]
-
-_provider_choices: list[tuple[str, str]] = [
-    ("Auto (Cloud First)", "auto"),
-    ("Online (Cloud)", "cloud"),
-    ("On This Computer (Local)", "local"),
-]
-
-_cloud_provider_choices: list[tuple[str, str]] = [
-    ("Google (Gemini)", "google"),
-    ("OpenAI / Compatible", "openai"),
-]
-
-_hardware_choices: list[tuple[str, str]] = [
-    ("Auto-Detect", "auto"),
-    ("CPU", "cpu"),
-    ("NVIDIA GPU", "cuda"),
-]
-
-_model_size_choices: list[tuple[str, str]] = [
-    ("Fastest", "tiny"),
-    ("Basic", "base"),
-    ("Balanced", "small"),
-    ("Better", "medium"),
-    ("Best", "large-v3"),
-]
-
-_hallucination_choices: list[tuple[str, str]] = [
-    ("Strict", "and"),
-    ("Relaxed", "or"),
-]
-
-_donation_exclude_choices: list[tuple[str, str]] = [
-    ("Podcast", "PODCAST"),
-    ("Just Chat", "JUST_CHAT"),
-    ("Gaming Solo", "GAMING_SOLO"),
-    ("Gaming Collab", "GAMING_COLLAB"),
-]
-
-_alignment_choices: list[tuple[str, str]] = [
-    ("Bottom Left", "bottom-left"),
-    ("Bottom Center", "bottom-center"),
-    ("Bottom Right", "bottom-right"),
-    ("Middle Left", "middle-left"),
-    ("Center", "center"),
-    ("Middle Right", "middle-right"),
-    ("Top Left", "top-left"),
-    ("Top Center", "top-center"),
-    ("Top Right", "top-right"),
-]
-
-_browser_choices: list[tuple[str, str]] = [
-    ("Edge", "edge"),
-    ("Chrome", "chrome"),
-    ("Firefox", "firefox"),
-    ("Brave", "brave"),
-    ("Opera", "opera"),
-]
-
-# Populated by _build_settings_tab, consumed by _apply_settings.
 _SETTINGS_PATHS: list[str] = []
+
+_WIDGET_LIST: list = []
 
 _NAME_SORT = {
     "clips": 0,
@@ -136,15 +58,6 @@ _NAME_DISPLAY: dict[str, str] = {
     "tmp": "Temp",
     "logs": "Logs",
 }
-
-
-def _mask_key(key: str) -> str:
-    """Mask an API key for display — never reveal the real value to the browser."""
-    if not key or key == "your-api-key-here":
-        return "Not set"
-    if len(key) <= 7:
-        return "•" * len(key)
-    return f"{key[:4]}{'•' * 6}{key[-3:]}"
 
 
 def _refresh_cache_info() -> list[list]:
@@ -173,6 +86,7 @@ def _run_purge(targets: list[str], dry_run: bool) -> tuple[list[list], str]:
         if freed > 0.01:
             lines.append(f"{name}: {freed:.2f} MB freed")
             total_freed += freed
+
     summary = (
         f"Dry run — Would free {total_freed:.2f} MB"
         if dry_run
@@ -180,6 +94,31 @@ def _run_purge(targets: list[str], dry_run: bool) -> tuple[list[list], str]:
     )
 
     return _refresh_cache_info(), summary
+
+
+def _refresh_controls() -> list[gr.update]:
+    """Return Clipper-tab control updates from the current config singleton."""
+    cfg = load_config()
+    cs = cfg.clip_selection
+    vp = cfg.video_processing
+
+    return [
+        gr.update(value=cs.auto_strategy),
+        gr.update(minimum=cs.min_clips, maximum=cs.max_clips),
+        gr.update(
+            minimum=cs.min_clip_duration_seconds,
+            maximum=cs.max_clip_duration_seconds,
+        ),
+        gr.update(value=cs.clip_length_margin_seconds),
+        gr.update(value=cs.candidate_margin),
+        gr.update(value=cs.require_review_before_render),
+        gr.update(value=vp.content_type_override),
+        gr.update(value=vp.fast_mode),
+        gr.update(value=vp.default_resolution),
+        gr.update(value=cfg.downloader.target_resolution),
+        gr.update(value=vp.video_encoder),
+        gr.update(value=vp.subtitles.stt_context),
+    ]
 
 
 def build_ui() -> gr.Blocks:
@@ -222,7 +161,7 @@ def build_ui() -> gr.Blocks:
                 else ["auto-controls"]
             ):
                 auto_strategy = gr.Radio(
-                    choices=_strategy_choices,
+                    choices=_STRATEGY_CHOICES,
                     value=cs.auto_strategy,
                     label="Selection Method",
                 )
@@ -261,7 +200,7 @@ def build_ui() -> gr.Blocks:
                     label="Video Clip Output Resolution",
                 )
                 video_encoder = gr.Dropdown(
-                    choices=_encoder_choices,
+                    choices=_ENCODER_CHOICES,
                     value=cfg.video_processing.video_encoder,
                     label="Video Encoder",
                 )
@@ -287,7 +226,7 @@ def build_ui() -> gr.Blocks:
                 )
 
             language_dropdown = gr.Dropdown(
-                choices=_LANGUAGE_CHOICES,
+                choices=LANGUAGE_CHOICES,
                 value="auto",
                 label="Language",
             )
@@ -311,28 +250,6 @@ def build_ui() -> gr.Blocks:
                 """,
                 queue=False,
             )
-
-            def _refresh_controls():
-                cfg = load_config()
-                cs = cfg.clip_selection
-                vp = cfg.video_processing
-                return [
-                    gr.update(value=cs.auto_strategy),
-                    gr.update(minimum=cs.min_clips, maximum=cs.max_clips),
-                    gr.update(
-                        minimum=cs.min_clip_duration_seconds,
-                        maximum=cs.max_clip_duration_seconds,
-                    ),
-                    gr.update(value=cs.clip_length_margin_seconds),
-                    gr.update(value=cs.candidate_margin),
-                    gr.update(value=cs.require_review_before_render),
-                    gr.update(value=vp.content_type_override),
-                    gr.update(value=vp.fast_mode),
-                    gr.update(value=vp.default_resolution),
-                    gr.update(value=cfg.downloader.target_resolution),
-                    gr.update(value=vp.video_encoder),
-                    gr.update(value=vp.subtitles.stt_context),
-                ]
 
             clipper_tab.select(
                 fn=_refresh_controls,
@@ -382,8 +299,8 @@ def build_ui() -> gr.Blocks:
         with gr.Tab("Review & Render"):
             pass
 
-        with gr.Tab("Settings"):
-            _build_settings_tab(cfg)
+        with gr.Tab("Settings") as settings_tab:
+            _build_settings_tab(cfg, settings_tab)
 
         with gr.Tab("Maintenance") as maintenance_tab:
             gr.Markdown("## Cache Management")
@@ -441,7 +358,7 @@ def launch_webui(host: str = "127.0.0.1", port: int = 7860) -> None:
     )
 
 
-def _build_settings_tab(cfg):
+def _build_settings_tab(cfg, settings_tab):
     stt = cfg.ai_pipeline.stt
     stt_c = stt.cloud
     stt_l = stt.local
@@ -463,13 +380,13 @@ def _build_settings_tab(cfg):
 
     with gr.Accordion("Speech to Text", open=True):
         s_provider = gr.Radio(
-            _provider_choices,
+            _PROVIDER_CHOICES,
             label="Engine",
             value=stt.provider,
         )
         with gr.Accordion("Online (Cloud)", open=False):
             s_c_provider = gr.Radio(
-                _cloud_provider_choices,
+                _CLOUD_PROVIDER_CHOICES,
                 label="Online Service",
                 value=stt_c.provider,
             )
@@ -480,7 +397,7 @@ def _build_settings_tab(cfg):
             s_c_api_key = gr.Textbox(
                 label="API Key",
                 type="password",
-                placeholder=_mask_key(stt_c.api_key),
+                placeholder=mask_api_key(stt_c.api_key),
             )
             s_c_model = gr.Textbox(label="Model", value=stt_c.model)
             s_c_timeout = gr.Slider(
@@ -492,12 +409,12 @@ def _build_settings_tab(cfg):
             )
         with gr.Accordion("On This Computer (Local)", open=False):
             s_l_device = gr.Dropdown(
-                _hardware_choices,
+                _HARDWARE_CHOICES,
                 label="Hardware",
                 value=stt_l.device,
             )
             s_l_model_size = gr.Dropdown(
-                _model_size_choices,
+                _MODEL_SIZE_CHOICES,
                 label="Accuracy / Speed",
                 value=stt_l.model_size,
             )
@@ -528,7 +445,7 @@ def _build_settings_tab(cfg):
                     value=stt_a.suppress_blank,
                 )
                 s_l_a_hall = gr.Radio(
-                    _hallucination_choices,
+                    _HALLUCINATION_CHOICES,
                     label="Filter Repeating Words",
                     value=stt_a.hallucination_gate,
                 )
@@ -549,13 +466,13 @@ def _build_settings_tab(cfg):
 
     with gr.Accordion("AI Clip Selection", open=True):
         l_provider = gr.Radio(
-            _provider_choices,
+            _PROVIDER_CHOICES,
             label="Engine",
             value=llm.provider,
         )
         with gr.Accordion("Online (Cloud)", open=False):
             l_c_provider = gr.Radio(
-                _cloud_provider_choices,
+                _CLOUD_PROVIDER_CHOICES,
                 label="Online Service",
                 value=llm_c.provider,
             )
@@ -566,7 +483,7 @@ def _build_settings_tab(cfg):
             l_c_api_key = gr.Textbox(
                 label="API Key",
                 type="password",
-                placeholder=_mask_key(llm_c.api_key),
+                placeholder=mask_api_key(llm_c.api_key),
             )
             l_c_model = gr.Textbox(label="Model", value=llm_c.model)
             l_c_timeout = gr.Slider(
@@ -578,7 +495,7 @@ def _build_settings_tab(cfg):
             )
         with gr.Accordion("On This Computer (Local)", open=False):
             l_l_device = gr.Dropdown(
-                _hardware_choices,
+                _HARDWARE_CHOICES,
                 label="Hardware",
                 value=llm_l.device,
             )
@@ -654,7 +571,7 @@ def _build_settings_tab(cfg):
 
     with gr.Accordion("Video Processing", open=True):
         vp_device = gr.Dropdown(
-            _hardware_choices,
+            _HARDWARE_CHOICES,
             label="Processing Hardware",
             value=vp.device,
         )
@@ -674,7 +591,7 @@ def _build_settings_tab(cfg):
             value=vp.preserve_donation_overlays,
         )
         vp_don_excl = gr.CheckboxGroup(
-            _donation_exclude_choices,
+            _DONATION_EXCLUDE_CHOICES,
             label="Don't Show Popups On",
             value=list(vp.donation_overlay_exclude_types),
         )
@@ -690,7 +607,7 @@ def _build_settings_tab(cfg):
             value=rd.sample_frames,
         )
         rd_device = gr.Dropdown(
-            _hardware_choices,
+            _HARDWARE_CHOICES,
             label="Hardware",
             value=rd.device,
         )
@@ -723,7 +640,7 @@ def _build_settings_tab(cfg):
         sub_bold = gr.Checkbox(label="Bold", value=sub.bold)
         sub_shadow = gr.Checkbox(label="Shadow", value=sub.shadow)
         sub_align = gr.Dropdown(
-            _alignment_choices,
+            _ALIGNMENT_CHOICES,
             label="Position",
             value="bottom-center",
         )
@@ -731,7 +648,25 @@ def _build_settings_tab(cfg):
             0, 1920, step=10, label="Distance from Bottom", value=sub.margin_v
         )
 
-    apply_btn = gr.Button("Apply Settings")
+    with gr.Accordion("Save Settings", open=True):
+        persist_cb = gr.Checkbox(
+            label="Also Save to config.yaml file",
+            value=False,
+        )
+        apply_btn = gr.Button("Apply Settings")
+
+    _init_backups = list_config_backups()
+    with gr.Accordion("Restore Settings from Backup", open=False):
+        restore_dd = gr.Dropdown(
+            label="Configuration Settings Backups",
+            choices=_init_backups or [],
+            value=None,
+        )
+        restore_btn = gr.Button(
+            "Restore Settings",
+            variant="secondary",
+            interactive=bool(_init_backups),
+        )
 
     widget_list: list[gr.components.Component] = [
         s_provider,
@@ -793,7 +728,11 @@ def _build_settings_tab(cfg):
         sub_margin,
     ]
 
-    global _SETTINGS_PATHS
+    global _SETTINGS_PATHS, _WIDGET_LIST
+
+    _WIDGET_LIST.clear()
+    _WIDGET_LIST.extend(widget_list)
+
     _SETTINGS_PATHS.clear()
     path_list = [
         "ai_pipeline.stt.provider",
@@ -854,34 +793,101 @@ def _build_settings_tab(cfg):
         "video_processing.subtitles.alignment",
         "video_processing.subtitles.margin_v",
     ]
+
     _SETTINGS_PATHS.extend(path_list)
 
     apply_btn.click(
         fn=_apply_settings,
-        inputs=widget_list,
-        outputs=[s_c_api_key, l_c_api_key],
+        inputs=widget_list + [persist_cb],
+        outputs=[s_c_api_key, l_c_api_key, restore_dd, restore_btn],
+    )
+
+    restore_btn.click(
+        fn=_restore_settings,
+        inputs=[restore_dd],
+        outputs=widget_list + [restore_dd],
+    )
+
+    settings_tab.select(
+        fn=_refresh_backup_list,
+        outputs=[restore_dd, restore_btn],
+    )
+
+
+def _refresh_backup_list() -> tuple[gr.update, gr.update]:
+    _bk = list_config_backups()
+    return (
+        gr.update(choices=_bk or [], interactive=bool(_bk)),
+        gr.update(interactive=bool(_bk)),
     )
 
 
 def _apply_settings(*values):
-    global _SETTINGS_PATHS
+    *setting_values, persist = values
     overrides: dict[str, object] = {}
-    for path, val in zip(_SETTINGS_PATHS, values, strict=True):
+    for path, val in zip(_SETTINGS_PATHS, setting_values, strict=True):
         if path.endswith("api_key"):
             if val:  # blank → keep existing key, never overwrite with empty
                 overrides[path] = val
             continue
         overrides[path] = None if val == "" else val
+
     try:
         cfg = apply_session_overrides(overrides)
-        gr.Success("Settings applied for this session.")
+        if persist:
+            save_config_to_disk()
+            gr.Success("Settings applied and saved to config.yaml.")
+        else:
+            gr.Success("Settings applied for this session.")
     except Exception as e:
         cfg = load_config()
         gr.Warning(f"Failed to apply settings: {e}")
+
+    _bk = list_config_backups()
     return (
-        gr.update(value="", placeholder=_mask_key(cfg.ai_pipeline.stt.cloud.api_key)),
-        gr.update(value="", placeholder=_mask_key(cfg.ai_pipeline.llm.cloud.api_key)),
+        gr.update(
+            value="", placeholder=mask_api_key(cfg.ai_pipeline.stt.cloud.api_key)
+        ),
+        gr.update(
+            value="", placeholder=mask_api_key(cfg.ai_pipeline.llm.cloud.api_key)
+        ),
+        gr.update(choices=_bk or [], interactive=bool(_bk)),
+        gr.update(interactive=bool(_bk)),
     )
+
+
+def _restore_settings(filename: str) -> list[gr.update]:
+    """Restore a chosen backup, reload config, refresh the whole form."""
+    if not filename:
+        gr.Warning("Select a backup first.")
+        _bk = list_config_backups()
+        return [gr.update() for _ in _WIDGET_LIST] + [
+            gr.update(choices=_bk or [], interactive=bool(_bk)),
+        ]
+
+    try:
+        cfg = restore_config(filename)
+        gr.Success("Settings restored from backup. All settings reloaded.")
+    except Exception as e:
+        cfg = load_config()
+        gr.Warning(f"Failed to restore: {e}")
+
+    data = cfg.model_dump()
+    updates: list[gr.update] = []
+    for path in _SETTINGS_PATHS:
+        node = data
+        for key in path.split("."):
+            node = node.get(key, {})  # type: ignore[assignment]
+
+        val = node if not isinstance(node, dict) else None
+        if path.endswith("api_key"):
+            updates.append(gr.update(value="", placeholder=mask_api_key(val)))
+        else:
+            updates.append(gr.update(value=("" if val is None else val)))
+
+    _bk = list_config_backups()
+    updates.append(gr.update(choices=_bk or [], interactive=bool(_bk)))
+    return updates
 
 
 async def _run_clipper_pipeline(

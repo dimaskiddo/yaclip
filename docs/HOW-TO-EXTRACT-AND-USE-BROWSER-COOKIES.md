@@ -13,7 +13,7 @@ Choose one for your browser:
 
 | Browser | Extension |
 |---|---|
-| **Chrome / Brave / Edge** | [Get cookies.txt](https://chromewebstore.google.com/detail/get-cookiestxt/bgaddhkoddajcdgocldbbfleckgcbcid) |
+| **Chrome / Brave / Edge** | [Get cookies.txt](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc?hl=en) |
 | **Firefox** | [cookies.txt](https://addons.mozilla.org/en-US/firefox/addon/cookies-txt/) |
 
 ## Step 2 — Export YouTube Cookies
