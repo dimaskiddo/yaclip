@@ -138,6 +138,15 @@ _NAME_DISPLAY: dict[str, str] = {
 }
 
 
+def _mask_key(key: str) -> str:
+    """Mask an API key for display — never reveal the real value to the browser."""
+    if not key or key == "your-api-key-here":
+        return "Not set"
+    if len(key) <= 7:
+        return "•" * len(key)
+    return f"{key[:4]}{'•' * 6}{key[-3:]}"
+
+
 def _refresh_cache_info() -> list[list]:
     rows = sorted(cache_usage(), key=lambda r: _NAME_SORT.get(r["name"], 99))
     return [
@@ -152,12 +161,13 @@ def _refresh_cache_info() -> list[list]:
 
 
 def _run_purge(targets: list[str], dry_run: bool) -> tuple[list[list], str]:
-
     before = {r["name"]: r for r in cache_usage()}
     run_purge_cycle(force=not dry_run, specific_target=targets or None)
+
     after = {r["name"]: r for r in cache_usage()}
     lines: list[str] = []
     total_freed = 0.0
+
     for name in before:
         freed = before[name]["size_mb"] - after[name]["size_mb"]
         if freed > 0.01:
@@ -168,6 +178,7 @@ def _run_purge(targets: list[str], dry_run: bool) -> tuple[list[list], str]:
         if dry_run
         else f"Freed {total_freed:.2f} MB total"
     )
+
     return _refresh_cache_info(), summary
 
 
@@ -462,6 +473,11 @@ def _build_settings_tab(cfg):
                 label="Online Service",
                 value=stt_c.provider,
             )
+            s_c_api_key = gr.Textbox(
+                label="API Key",
+                type="password",
+                placeholder=_mask_key(stt_c.api_key),
+            )
             s_c_model = gr.Textbox(label="Model", value=stt_c.model)
             s_c_timeout = gr.Slider(
                 30,
@@ -542,6 +558,11 @@ def _build_settings_tab(cfg):
             l_c_base = gr.Textbox(
                 label="Custom API URL (Optional)",
                 value=llm_c.base_url or "",
+            )
+            l_c_api_key = gr.Textbox(
+                label="API Key",
+                type="password",
+                placeholder=_mask_key(llm_c.api_key),
             )
             l_c_model = gr.Textbox(label="Model", value=llm_c.model)
             l_c_timeout = gr.Slider(
@@ -707,11 +728,11 @@ def _build_settings_tab(cfg):
         )
 
     apply_btn = gr.Button("Apply Settings")
-    apply_status = gr.Markdown(visible=False)
 
     widget_list: list[gr.components.Component] = [
         s_provider,
         s_c_provider,
+        s_c_api_key,
         s_c_model,
         s_c_timeout,
         s_l_device,
@@ -725,6 +746,7 @@ def _build_settings_tab(cfg):
         s_l_a_rep_pen,
         l_provider,
         l_c_provider,
+        l_c_api_key,
         l_c_base,
         l_c_model,
         l_c_timeout,
@@ -771,6 +793,7 @@ def _build_settings_tab(cfg):
     path_list = [
         "ai_pipeline.stt.provider",
         "ai_pipeline.stt.cloud.provider",
+        "ai_pipeline.stt.cloud.api_key",
         "ai_pipeline.stt.cloud.model",
         "ai_pipeline.stt.cloud.timeout",
         "ai_pipeline.stt.local.device",
@@ -784,6 +807,7 @@ def _build_settings_tab(cfg):
         "ai_pipeline.stt.local.advanced.repetition_penalty",
         "ai_pipeline.llm.provider",
         "ai_pipeline.llm.cloud.provider",
+        "ai_pipeline.llm.cloud.api_key",
         "ai_pipeline.llm.cloud.base_url",
         "ai_pipeline.llm.cloud.model",
         "ai_pipeline.llm.cloud.timeout",
@@ -829,23 +853,29 @@ def _build_settings_tab(cfg):
     apply_btn.click(
         fn=_apply_settings,
         inputs=widget_list,
-        outputs=[apply_status],
-        queue=False,
+        outputs=[s_c_api_key, l_c_api_key],
     )
 
 
-def _apply_settings(*values) -> str:
+def _apply_settings(*values):
     global _SETTINGS_PATHS
     overrides: dict[str, object] = {}
     for path, val in zip(_SETTINGS_PATHS, values, strict=True):
-        if val == "" or val is None:
-            val = None
-        overrides[path] = val
+        if path.endswith("api_key"):
+            if val:  # blank → keep existing key, never overwrite with empty
+                overrides[path] = val
+            continue
+        overrides[path] = None if val == "" else val
     try:
-        apply_session_overrides(overrides)
-        return "✅ Settings applied for this session."
+        cfg = apply_session_overrides(overrides)
+        gr.Success("Settings applied for this session.")
     except Exception as e:
-        return f"❌ Failed: {e}"
+        cfg = load_config()
+        gr.Warning(f"Failed to apply settings: {e}")
+    return (
+        gr.update(value="", placeholder=_mask_key(cfg.ai_pipeline.stt.cloud.api_key)),
+        gr.update(value="", placeholder=_mask_key(cfg.ai_pipeline.llm.cloud.api_key)),
+    )
 
 
 async def _run_clipper_pipeline(
