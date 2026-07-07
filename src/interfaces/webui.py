@@ -31,6 +31,7 @@ from src.interfaces.components import (
     _PROVIDER_CHOICES,
     _STRATEGY_CHOICES,
     LANGUAGE_CHOICES,
+    SETTINGS_HELP,
     clip_count_slider,
     clip_duration_slider,
 )
@@ -383,40 +384,49 @@ def _build_settings_tab(cfg, settings_tab):
             _PROVIDER_CHOICES,
             label="Engine",
             value=stt.provider,
+            info=SETTINGS_HELP["stt_provider"],
         )
         with gr.Accordion("Online (Cloud)", open=False):
             s_c_provider = gr.Radio(
                 _CLOUD_PROVIDER_CHOICES,
                 label="Online Service",
                 value=stt_c.provider,
+                info=SETTINGS_HELP["stt_cloud_provider"],
             )
             s_c_base = gr.Textbox(
                 label="Custom API URL (Optional)",
                 value=stt_c.base_url or "",
+                info=SETTINGS_HELP["stt_cloud_base_url"],
             )
             s_c_api_key = gr.Textbox(
                 label="API Key",
                 type="password",
                 placeholder=mask_api_key(stt_c.api_key),
+                info=SETTINGS_HELP["stt_cloud_api_key"],
             )
-            s_c_model = gr.Textbox(label="Model", value=stt_c.model)
+            s_c_model = gr.Textbox(
+                label="Model", value=stt_c.model, info=SETTINGS_HELP["stt_cloud_model"]
+            )
             s_c_timeout = gr.Slider(
                 30,
                 600,
                 step=10,
                 label="Timeout (seconds)",
                 value=stt_c.timeout,
+                info=SETTINGS_HELP["stt_cloud_timeout"],
             )
         with gr.Accordion("On This Computer (Local)", open=False):
             s_l_device = gr.Dropdown(
                 _HARDWARE_CHOICES,
                 label="Hardware",
                 value=stt_l.device,
+                info=SETTINGS_HELP["stt_local_device"],
             )
             s_l_model_size = gr.Dropdown(
                 _MODEL_SIZE_CHOICES,
                 label="Accuracy / Speed",
                 value=stt_l.model_size,
+                info=SETTINGS_HELP["stt_local_model_size"],
             )
             with gr.Accordion("Advanced", open=False):
                 s_l_a_beam = gr.Slider(
@@ -425,6 +435,7 @@ def _build_settings_tab(cfg, settings_tab):
                     step=1,
                     label="Whisper Accuracy",
                     value=stt_a.beam_size,
+                    info=SETTINGS_HELP["stt_local_beam_size"],
                 )
                 s_l_a_vad_t = gr.Slider(
                     0.0,
@@ -432,6 +443,7 @@ def _build_settings_tab(cfg, settings_tab):
                     step=0.05,
                     label="Voice Detection Sensitivity",
                     value=stt_a.vad_threshold,
+                    info=SETTINGS_HELP["stt_local_vad_threshold"],
                 )
                 s_l_a_vad_ms = gr.Slider(
                     100,
@@ -439,15 +451,18 @@ def _build_settings_tab(cfg, settings_tab):
                     step=50,
                     label="Minimum Pause Between Sentences (ms)",
                     value=stt_a.vad_min_silence_ms,
+                    info=SETTINGS_HELP["stt_local_vad_min_silence_ms"],
                 )
                 s_l_a_suppress = gr.Checkbox(
                     label="Skip Silent Sections",
                     value=stt_a.suppress_blank,
+                    info=SETTINGS_HELP["stt_local_suppress_blank"],
                 )
                 s_l_a_hall = gr.Radio(
                     _HALLUCINATION_CHOICES,
                     label="Filter Repeating Words",
                     value=stt_a.hallucination_gate,
+                    info=SETTINGS_HELP["stt_local_hallucination_gate"],
                 )
                 s_l_a_repeat = gr.Slider(
                     0.1,
@@ -455,6 +470,7 @@ def _build_settings_tab(cfg, settings_tab):
                     step=0.05,
                     label="Repetition Filter Level",
                     value=stt_a.repeat_token_ratio_max,
+                    info=SETTINGS_HELP["stt_local_repeat_token_ratio_max"],
                 )
                 s_l_a_rep_pen = gr.Slider(
                     1.0,
@@ -462,6 +478,7 @@ def _build_settings_tab(cfg, settings_tab):
                     step=0.05,
                     label="Anti-Repetition Strength",
                     value=stt_a.repetition_penalty,
+                    info=SETTINGS_HELP["stt_local_repetition_penalty"],
                 )
 
     with gr.Accordion("AI Clip Selection", open=True):
@@ -469,35 +486,43 @@ def _build_settings_tab(cfg, settings_tab):
             _PROVIDER_CHOICES,
             label="Engine",
             value=llm.provider,
+            info=SETTINGS_HELP["llm_provider"],
         )
         with gr.Accordion("Online (Cloud)", open=False):
             l_c_provider = gr.Radio(
                 _CLOUD_PROVIDER_CHOICES,
                 label="Online Service",
                 value=llm_c.provider,
+                info=SETTINGS_HELP["llm_cloud_provider"],
             )
             l_c_base = gr.Textbox(
                 label="Custom API URL (Optional)",
                 value=llm_c.base_url or "",
+                info=SETTINGS_HELP["llm_cloud_base_url"],
             )
             l_c_api_key = gr.Textbox(
                 label="API Key",
                 type="password",
                 placeholder=mask_api_key(llm_c.api_key),
+                info=SETTINGS_HELP["llm_cloud_api_key"],
             )
-            l_c_model = gr.Textbox(label="Model", value=llm_c.model)
+            l_c_model = gr.Textbox(
+                label="Model", value=llm_c.model, info=SETTINGS_HELP["llm_cloud_model"]
+            )
             l_c_timeout = gr.Slider(
                 30,
                 600,
                 step=10,
                 label="Timeout (seconds)",
                 value=llm_c.timeout,
+                info=SETTINGS_HELP["llm_cloud_timeout"],
             )
         with gr.Accordion("On This Computer (Local)", open=False):
             l_l_device = gr.Dropdown(
                 _HARDWARE_CHOICES,
                 label="Hardware",
                 value=llm_l.device,
+                info=SETTINGS_HELP["llm_local_device"],
             )
             l_l_n_gpu = gr.Slider(
                 -1,
@@ -505,24 +530,32 @@ def _build_settings_tab(cfg, settings_tab):
                 step=1,
                 label="GPU Offload Layers",
                 value=llm_l.n_gpu_layers,
+                info=SETTINGS_HELP["llm_local_n_gpu_layers"],
             )
-            l_l_model = gr.Textbox(label="Model Name", value=llm_l.model_name)
+            l_l_model = gr.Textbox(
+                label="Model Name",
+                value=llm_l.model_name,
+                info=SETTINGS_HELP["llm_local_model_name"],
+            )
 
     with gr.Accordion("Download", open=True):
         d_vid_fmt = gr.Dropdown(
             ["mp4", "webm", "mkv"],
             label="Video Format",
             value=dl.video_format,
+            info=SETTINGS_HELP["downloader_video_format"],
         )
         d_aud_fmt = gr.Dropdown(
             ["aac", "mp3", "opus"],
             label="Audio Format",
             value=dl.audio_format,
+            info=SETTINGS_HELP["downloader_audio_format"],
         )
         d_aud_q = gr.Dropdown(
             ["128k", "192k", "256k", "320k"],
             label="Audio Quality",
             value=dl.audio_quality,
+            info=SETTINGS_HELP["downloader_audio_quality"],
         )
 
     with gr.Accordion("Clip Limits", open=True):
@@ -532,6 +565,7 @@ def _build_settings_tab(cfg, settings_tab):
             step=1,
             label="Minimum Clips per Video",
             value=cs.min_clips,
+            info=SETTINGS_HELP["min_clips"],
         )
         cs_max_clips = gr.Slider(
             1,
@@ -539,6 +573,7 @@ def _build_settings_tab(cfg, settings_tab):
             step=1,
             label="Maximum Clips per Video",
             value=cs.max_clips,
+            info=SETTINGS_HELP["max_clips"],
         )
         cs_min_dur = gr.Slider(
             10,
@@ -546,6 +581,7 @@ def _build_settings_tab(cfg, settings_tab):
             step=5,
             label="Shortest Clip (seconds)",
             value=cs.min_clip_duration_seconds,
+            info=SETTINGS_HELP["min_clip_duration_seconds"],
         )
         cs_max_dur = gr.Slider(
             10,
@@ -553,6 +589,7 @@ def _build_settings_tab(cfg, settings_tab):
             step=5,
             label="Longest Clip (seconds)",
             value=cs.max_clip_duration_seconds,
+            info=SETTINGS_HELP["max_clip_duration_seconds"],
         )
         cs_heat = gr.Slider(
             1,
@@ -560,6 +597,7 @@ def _build_settings_tab(cfg, settings_tab):
             step=1,
             label="YouTube Highlights Sensitivity",
             value=cs.heatmap_threshold_percentile,
+            info=SETTINGS_HELP["heatmap_threshold_percentile"],
         )
         cs_spike = gr.Slider(
             10,
@@ -567,6 +605,7 @@ def _build_settings_tab(cfg, settings_tab):
             step=1,
             label="Maximum Moments to Consider",
             value=cs.spike_pool_size,
+            info=SETTINGS_HELP["spike_pool_size"],
         )
 
     with gr.Accordion("Video Processing", open=True):
@@ -574,6 +613,7 @@ def _build_settings_tab(cfg, settings_tab):
             _HARDWARE_CHOICES,
             label="Processing Hardware",
             value=vp.device,
+            info=SETTINGS_HELP["video_processing_device"],
         )
         vp_det_conf = gr.Slider(
             0.1,
@@ -581,39 +621,54 @@ def _build_settings_tab(cfg, settings_tab):
             step=0.05,
             label="Content Detection Certainty",
             value=vp.detection_confidence_threshold,
+            info=SETTINGS_HELP["detection_confidence_threshold"],
         )
         vp_face = gr.Checkbox(
             label="Smart Face Tracking",
             value=vp.auto_face_tracking,
+            info=SETTINGS_HELP["auto_face_tracking"],
         )
         vp_don = gr.Checkbox(
             label="Show Donation / Alert Popups",
             value=vp.preserve_donation_overlays,
+            info=SETTINGS_HELP["preserve_donation_overlays"],
         )
         vp_don_excl = gr.CheckboxGroup(
             _DONATION_EXCLUDE_CHOICES,
             label="Don't Show Popups On",
             value=list(vp.donation_overlay_exclude_types),
+            info=SETTINGS_HELP["donation_overlay_exclude_types"],
         )
 
     with gr.Accordion("Scene Detection", open=True):
-        rd_enabled = gr.Checkbox(label="Enabled", value=rd.enabled)
-        rd_model = gr.Textbox(label="Detection Model File", value=rd.model_name)
+        rd_enabled = gr.Checkbox(
+            label="Enabled",
+            value=rd.enabled,
+            info=SETTINGS_HELP["region_detection_enabled"],
+        )
+        rd_model = gr.Textbox(
+            label="Detection Model File",
+            value=rd.model_name,
+            info=SETTINGS_HELP["region_detection_model_name"],
+        )
         rd_frames = gr.Slider(
             1,
             20,
             step=1,
             label="Analysis Detail",
             value=rd.sample_frames,
+            info=SETTINGS_HELP["region_detection_sample_frames"],
         )
         rd_device = gr.Dropdown(
             _HARDWARE_CHOICES,
             label="Hardware",
             value=rd.device,
+            info=SETTINGS_HELP["region_detection_device"],
         )
         rd_motion = gr.Checkbox(
             label="Camera Follows Action",
             value=rd.gameplay_follow_motion,
+            info=SETTINGS_HELP["gameplay_follow_motion"],
         )
         rd_zoom = gr.Slider(
             1.0,
@@ -621,31 +676,80 @@ def _build_settings_tab(cfg, settings_tab):
             step=0.05,
             label="Gameplay Zoom",
             value=rd.gameplay_zoom,
+            info=SETTINGS_HELP["gameplay_zoom"],
         )
 
     with gr.Accordion("Caption Style", open=True):
-        sub_enabled = gr.Checkbox(label="Show Captions", value=sub.enabled)
+        sub_enabled = gr.Checkbox(
+            label="Show Captions",
+            value=sub.enabled,
+            info=SETTINGS_HELP["subtitles_enabled"],
+        )
         sub_collab = gr.Checkbox(
-            label="Show on Multi-Player Layout", value=sub.collab_enabled
+            label="Show on Multi-Player Layout",
+            value=sub.collab_enabled,
+            info=SETTINGS_HELP["subtitles_collab_enabled"],
         )
-        sub_upper = gr.Checkbox(label="ALL CAPS", value=sub.uppercase)
-        sub_font = gr.Textbox(label="Font File", value=sub.font_file)
-        sub_size = gr.Slider(20, 200, step=1, label="Font Size", value=sub.font_size)
-        sub_pc = gr.ColorPicker(label="Text Color", value="#FFFFFF")
-        sub_hc = gr.ColorPicker(label="Active Word Color", value="#96C8FF")
-        sub_oc = gr.ColorPicker(label="Text Outline Color", value="#000000")
+        sub_upper = gr.Checkbox(
+            label="ALL CAPS",
+            value=sub.uppercase,
+            info=SETTINGS_HELP["subtitles_uppercase"],
+        )
+        sub_font = gr.Textbox(
+            label="Font File",
+            value=sub.font_file,
+            info=SETTINGS_HELP["subtitles_font_file"],
+        )
+        sub_size = gr.Slider(
+            20,
+            200,
+            step=1,
+            label="Font Size",
+            value=sub.font_size,
+            info=SETTINGS_HELP["subtitles_font_size"],
+        )
+        sub_pc = gr.ColorPicker(
+            label="Text Color",
+            value="#FFFFFF",
+            info=SETTINGS_HELP["subtitles_primary_color"],
+        )
+        sub_hc = gr.ColorPicker(
+            label="Active Word Color",
+            value="#96C8FF",
+            info=SETTINGS_HELP["subtitles_highlight_color"],
+        )
+        sub_oc = gr.ColorPicker(
+            label="Text Outline Color",
+            value="#000000",
+            info=SETTINGS_HELP["subtitles_outline_color"],
+        )
         sub_ot = gr.Slider(
-            0, 20, step=1, label="Outline Weight", value=sub.outline_thickness
+            0,
+            20,
+            step=1,
+            label="Outline Weight",
+            value=sub.outline_thickness,
+            info=SETTINGS_HELP["subtitles_outline_thickness"],
         )
-        sub_bold = gr.Checkbox(label="Bold", value=sub.bold)
-        sub_shadow = gr.Checkbox(label="Shadow", value=sub.shadow)
+        sub_bold = gr.Checkbox(
+            label="Bold", value=sub.bold, info=SETTINGS_HELP["subtitles_bold"]
+        )
+        sub_shadow = gr.Checkbox(
+            label="Shadow", value=sub.shadow, info=SETTINGS_HELP["subtitles_shadow"]
+        )
         sub_align = gr.Dropdown(
             _ALIGNMENT_CHOICES,
             label="Position",
             value="bottom-center",
+            info=SETTINGS_HELP["subtitles_alignment"],
         )
         sub_margin = gr.Slider(
-            0, 1920, step=10, label="Distance from Bottom", value=sub.margin_v
+            0,
+            1920,
+            step=10,
+            label="Distance from Bottom",
+            value=sub.margin_v,
+            info=SETTINGS_HELP["subtitles_margin_v"],
         )
 
     with gr.Accordion("Save Settings", open=True):
