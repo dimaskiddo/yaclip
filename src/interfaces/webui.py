@@ -37,9 +37,7 @@ from src.interfaces.components import (
 )
 
 _SETTINGS_PATHS: list[str] = []
-
 _WIDGET_LIST: list = []
-
 _NAME_SORT = {
     "clips": 0,
     "videos": 1,
@@ -49,7 +47,6 @@ _NAME_SORT = {
     "tmp": 5,
     "logs": 6,
 }
-
 _NAME_DISPLAY: dict[str, str] = {
     "clips": "Clips",
     "videos": "Videos",
@@ -77,23 +74,19 @@ def _refresh_cache_info() -> list[list]:
 def _run_purge(targets: list[str], dry_run: bool) -> tuple[list[list], str]:
     before = {r["name"]: r for r in cache_usage()}
     run_purge_cycle(force=not dry_run, specific_target=targets or None)
-
     after = {r["name"]: r for r in cache_usage()}
     lines: list[str] = []
     total_freed = 0.0
-
     for name in before:
         freed = before[name]["size_mb"] - after[name]["size_mb"]
         if freed > 0.01:
             lines.append(f"{name}: {freed:.2f} MB freed")
             total_freed += freed
-
     summary = (
         f"Dry run — Would free {total_freed:.2f} MB"
         if dry_run
         else f"Freed {total_freed:.2f} MB total"
     )
-
     return _refresh_cache_info(), summary
 
 
@@ -102,7 +95,6 @@ def _refresh_controls() -> list[gr.update]:
     cfg = load_config()
     cs = cfg.clip_selection
     vp = cfg.video_processing
-
     return [
         gr.update(value=cs.auto_strategy),
         gr.update(minimum=cs.min_clips, maximum=cs.max_clips),
@@ -125,15 +117,21 @@ def _refresh_controls() -> list[gr.update]:
 def build_ui() -> gr.Blocks:
     cfg = load_config()
     cs = cfg.clip_selection
-
     with gr.Blocks(title="YaClip — AI Auto-Clipper") as app:
-        gr.Markdown("# YaClip — AI Auto-Clipper")
-
+        gr.HTML(
+            '<div style="display:flex;align-items:center;justify-content:space-between;'
+            'margin-bottom:4px;">'
+            '<h1 style="margin:0;font-size:1.75rem;">YaClip — AI Auto-Clipper</h1>'
+            '<a href="https://gift.trakteer.id/itsdrh" target="_blank" rel="noopener" '
+            'style="display:inline-block;background:#be1e2d;color:#fff;padding:8px 18px;'
+            "border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;"
+            'white-space:nowrap;">'
+            "❤️ Support This Project on Trakteer.ID</a>"
+            "</div>"
+        )
         with gr.Tab("Clipper") as clipper_tab:
             gr.HTML("<style>.mode-hide{display:none!important}</style>")
-
             is_manual = cs.mode == "manual"
-
             url_input = gr.Textbox(
                 label="YouTube URL",
                 placeholder="https://www.youtube.com/watch?v=...",
@@ -144,18 +142,15 @@ def build_ui() -> gr.Blocks:
                 label="Video Download Resolution",
             )
             force_redo = gr.Checkbox(label="Force Re-Download Video", value=False)
-
             cookies_file_input = gr.File(
                 label="Cookies File (Optional)",
                 file_types=[".txt"],
             )
-
             mode_radio = gr.Radio(
                 choices=["Auto", "Manual"],
                 value="Manual" if is_manual else "Auto",
                 label="Clip Selection Mode",
             )
-
             with gr.Column(
                 elem_classes=["auto-controls", "mode-hide"]
                 if is_manual
@@ -210,7 +205,6 @@ def build_ui() -> gr.Blocks:
                     placeholder="names, game terms, famous people...",
                     value=cfg.video_processing.subtitles.stt_context,
                 )
-
             with gr.Column(
                 elem_classes=["manual-controls", "mode-hide"]
                 if not is_manual
@@ -225,7 +219,6 @@ def build_ui() -> gr.Blocks:
                     label="Or Upload Timerange File",
                     file_types=[".txt"],
                 )
-
             language_dropdown = gr.Dropdown(
                 choices=LANGUAGE_CHOICES,
                 value="auto",
@@ -236,10 +229,8 @@ def build_ui() -> gr.Blocks:
                 placeholder="Leave blank to use default settings",
                 lines=3,
             )
-
             find_btn = gr.Button("Find Clips")
             pipeline_state = gr.State()
-
             mode_radio.change(
                 None,
                 inputs=[mode_radio],
@@ -251,7 +242,6 @@ def build_ui() -> gr.Blocks:
                 """,
                 queue=False,
             )
-
             clipper_tab.select(
                 fn=_refresh_controls,
                 outputs=[
@@ -269,7 +259,6 @@ def build_ui() -> gr.Blocks:
                     stt_context,
                 ],
             )
-
             find_btn.click(
                 fn=_run_clipper_pipeline,
                 inputs=[
@@ -296,16 +285,12 @@ def build_ui() -> gr.Blocks:
                 ],
                 outputs=[pipeline_state],
             )
-
         with gr.Tab("Review & Render"):
             pass
-
         with gr.Tab("Settings") as settings_tab:
             _build_settings_tab(cfg, settings_tab)
-
         with gr.Tab("Maintenance") as maintenance_tab:
             gr.Markdown("## Cache Management")
-
             usage_table = gr.Dataframe(
                 value=_refresh_cache_info(),
                 headers=["Directory", "Size (MB)", "Files", "Oldest"],
@@ -314,7 +299,6 @@ def build_ui() -> gr.Blocks:
                 row_count=10,
             )
             refresh_btn = gr.Button("⟳ Refresh Cache Info")
-
             purge_targets = gr.CheckboxGroup(
                 [
                     ("Clips", "clips"),
@@ -328,24 +312,47 @@ def build_ui() -> gr.Blocks:
                 label="Select Directories to Clean",
                 value=["tmp"],
             )
-
             with gr.Row():
                 dry_run_cb = gr.Checkbox(
                     label="Dry Run (Preview Only, No Deletion)", value=True
                 )
                 clear_btn = gr.Button("🗑️ Clear Cache Now", variant="stop")
-
             result_log = gr.Textbox(label="Result", lines=4, interactive=False)
-
             maintenance_tab.select(fn=_refresh_cache_info, outputs=[usage_table])
             refresh_btn.click(fn=_refresh_cache_info, outputs=[usage_table])
-
             clear_btn.click(
                 fn=_run_purge,
                 inputs=[purge_targets, dry_run_cb],
                 outputs=[usage_table, result_log],
             )
-
+        with gr.Tab("About"):
+            gr.Markdown(
+                "## What's YaClip?\n\n"
+                "**YouTube \u279c Your Shorts, Reels & TikToks \u2014 one shot.**\n\n"
+                "YaClip is your AI video editor that sniffs out the best moments "
+                "from any YouTube video \u2014 podcasts, gaming streams, or just-chillin' "
+                "rants \u2014 and serves them up as polished 9:16 shorts, ready for "
+                "YouTube Shorts, Instagram Reels, and TikTok.\n\n"
+                "Think of it as having a clip-hunting, caption-writing, face-tracking "
+                "robot sidekick. You bring the URL, it brings the highlight reel.\n\n"
+                "---\n\n"
+                "### \u2726 Quick Links\n\n"
+                "- **\U0001f3e0 Homepage** \u2192 [dimaskiddo.my.id](https://dimaskiddo.my.id)\n"
+                "- **\u2615 Support Me** \u2192 [gift.trakteer.id/itsdrh](https://gift.trakteer.id/itsdrh)\n\n"
+                "---\n\n"
+                "### \u26a1 Powered By\n\n"
+                "**[Trakteer.ID](https://trakteer.id)** \u2014 *Where Creator and Supporter Met Together "
+                "in One Platform!*"
+            )
+            gr.Image(
+                value="public/trakteer-logo.png",
+                show_label=False,
+                container=False,
+                interactive=False,
+                buttons=[],
+                height=28,
+                width=136,
+            )
     return app
 
 
@@ -372,13 +379,11 @@ def _build_settings_tab(cfg, settings_tab):
     vp = cfg.video_processing
     rd = vp.region_detection
     sub = vp.subtitles
-
     gr.Markdown("## Settings")
     gr.Markdown(
         "Changes apply to this session only. For permanent settings, "
         "close the app and edit the `config.yaml` file."
     )
-
     with gr.Accordion("Speech to Text", open=True):
         s_provider = gr.Radio(
             _PROVIDER_CHOICES,
@@ -480,7 +485,6 @@ def _build_settings_tab(cfg, settings_tab):
                     value=stt_a.repetition_penalty,
                     info=SETTINGS_HELP["stt_local_repetition_penalty"],
                 )
-
     with gr.Accordion("AI Clip Selection", open=True):
         l_provider = gr.Radio(
             _PROVIDER_CHOICES,
@@ -537,7 +541,6 @@ def _build_settings_tab(cfg, settings_tab):
                 value=llm_l.model_name,
                 info=SETTINGS_HELP["llm_local_model_name"],
             )
-
     with gr.Accordion("Download", open=True):
         d_vid_fmt = gr.Dropdown(
             ["mp4", "webm", "mkv"],
@@ -557,7 +560,6 @@ def _build_settings_tab(cfg, settings_tab):
             value=dl.audio_quality,
             info=SETTINGS_HELP["downloader_audio_quality"],
         )
-
     with gr.Accordion("Clip Limits", open=True):
         cs_min_clips = gr.Slider(
             1,
@@ -607,7 +609,6 @@ def _build_settings_tab(cfg, settings_tab):
             value=cs.spike_pool_size,
             info=SETTINGS_HELP["spike_pool_size"],
         )
-
     with gr.Accordion("Video Processing", open=True):
         vp_device = gr.Dropdown(
             _HARDWARE_CHOICES,
@@ -639,7 +640,6 @@ def _build_settings_tab(cfg, settings_tab):
             value=list(vp.donation_overlay_exclude_types),
             info=SETTINGS_HELP["donation_overlay_exclude_types"],
         )
-
     with gr.Accordion("Scene Detection", open=True):
         rd_enabled = gr.Checkbox(
             label="Enabled",
@@ -678,7 +678,6 @@ def _build_settings_tab(cfg, settings_tab):
             value=rd.gameplay_zoom,
             info=SETTINGS_HELP["gameplay_zoom"],
         )
-
     with gr.Accordion("Caption Style", open=True):
         sub_enabled = gr.Checkbox(
             label="Show Captions",
@@ -751,14 +750,12 @@ def _build_settings_tab(cfg, settings_tab):
             value=sub.margin_v,
             info=SETTINGS_HELP["subtitles_margin_v"],
         )
-
     with gr.Accordion("Save Settings", open=True):
         persist_cb = gr.Checkbox(
             label="Also Save to config.yaml file",
             value=False,
         )
         apply_btn = gr.Button("Apply Settings")
-
     _init_backups = list_config_backups()
     with gr.Accordion("Restore Settings from Backup", open=False):
         restore_dd = gr.Dropdown(
@@ -771,7 +768,6 @@ def _build_settings_tab(cfg, settings_tab):
             variant="secondary",
             interactive=bool(_init_backups),
         )
-
     widget_list: list[gr.components.Component] = [
         s_provider,
         s_c_provider,
@@ -831,12 +827,9 @@ def _build_settings_tab(cfg, settings_tab):
         sub_align,
         sub_margin,
     ]
-
     global _SETTINGS_PATHS, _WIDGET_LIST
-
     _WIDGET_LIST.clear()
     _WIDGET_LIST.extend(widget_list)
-
     _SETTINGS_PATHS.clear()
     path_list = [
         "ai_pipeline.stt.provider",
@@ -897,21 +890,17 @@ def _build_settings_tab(cfg, settings_tab):
         "video_processing.subtitles.alignment",
         "video_processing.subtitles.margin_v",
     ]
-
     _SETTINGS_PATHS.extend(path_list)
-
     apply_btn.click(
         fn=_apply_settings,
         inputs=widget_list + [persist_cb],
         outputs=[s_c_api_key, l_c_api_key, restore_dd, restore_btn],
     )
-
     restore_btn.click(
         fn=_restore_settings,
         inputs=[restore_dd],
         outputs=widget_list + [restore_dd],
     )
-
     settings_tab.select(
         fn=_refresh_backup_list,
         outputs=[restore_dd, restore_btn],
@@ -935,7 +924,6 @@ def _apply_settings(*values):
                 overrides[path] = val
             continue
         overrides[path] = None if val == "" else val
-
     try:
         cfg = apply_session_overrides(overrides)
         if persist:
@@ -946,7 +934,6 @@ def _apply_settings(*values):
     except Exception as e:
         cfg = load_config()
         gr.Warning(f"Failed to apply settings: {e}")
-
     _bk = list_config_backups()
     return (
         gr.update(
@@ -968,27 +955,23 @@ def _restore_settings(filename: str) -> list[gr.update]:
         return [gr.update() for _ in _WIDGET_LIST] + [
             gr.update(choices=_bk or [], interactive=bool(_bk)),
         ]
-
     try:
         cfg = restore_config(filename)
         gr.Success("Settings restored from backup. All settings reloaded.")
     except Exception as e:
         cfg = load_config()
         gr.Warning(f"Failed to restore: {e}")
-
     data = cfg.model_dump()
     updates: list[gr.update] = []
     for path in _SETTINGS_PATHS:
         node = data
         for key in path.split("."):
             node = node.get(key, {})  # type: ignore[assignment]
-
         val = node if not isinstance(node, dict) else None
         if path.endswith("api_key"):
             updates.append(gr.update(value="", placeholder=mask_api_key(val)))
         else:
             updates.append(gr.update(value=("" if val is None else val)))
-
     _bk = list_config_backups()
     updates.append(gr.update(choices=_bk or [], interactive=bool(_bk)))
     return updates
@@ -1021,7 +1004,6 @@ async def _run_clipper_pipeline(
         progress = gr.Progress()
     if not url:
         raise gr.Error("YouTube URL is required.")
-
     manual_ranges: list[dict] | None = None
     if mode == "Manual":
         if timerange_file:
@@ -1036,7 +1018,6 @@ async def _run_clipper_pipeline(
                 raise gr.Error(str(e)) from e
         else:
             raise gr.Error("Manual mode requires timeranges (textarea or file).")
-
     # Patch config
     cfg = load_config()
     cs = cfg.clip_selection
@@ -1059,11 +1040,9 @@ async def _run_clipper_pipeline(
         cfg.dk_clipper_sys_prompt = sys_prompt_override.strip()
     else:
         cfg.dk_clipper_sys_prompt = None
-
     progress(0.0, desc="Getting ready...")
     await asyncio.to_thread(ensure_workspace_integrity)
     await asyncio.to_thread(run_purge_cycle)
-
     from src.media.downloader import VideoDownloader
 
     progress(0.1, desc="Downloading video...")
@@ -1078,12 +1057,10 @@ async def _run_clipper_pipeline(
         )
     except Exception as e:
         raise gr.Error(f"Download failed: {e}") from e
-
     audio_path = result.get("audio_path")
     video_path = result.get("video_path")
     if not audio_path or not video_path:
         raise gr.Error("Download did not produce both video and audio files.")
-
     progress(0.4, desc="Analyzing video type...")
     from src.vision.content_type_detector import ContentTypeDetector
 
@@ -1092,7 +1069,6 @@ async def _run_clipper_pipeline(
         Path(video_path),
     )
     content_type = detection_result.content_type
-
     progress(0.6, desc="Finding best moments...")
     from src.ai.pipeline import AIPipeline
 
@@ -1111,7 +1087,6 @@ async def _run_clipper_pipeline(
         )
     except Exception as e:
         raise gr.Error(f"Clip selection failed: {e}") from e
-
     progress(1.0, desc="Done.")
     return {
         "proposals": clips,
