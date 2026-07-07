@@ -473,6 +473,10 @@ def _build_settings_tab(cfg):
                 label="Online Service",
                 value=stt_c.provider,
             )
+            s_c_base = gr.Textbox(
+                label="Custom API URL (Optional)",
+                value=stt_c.base_url or "",
+            )
             s_c_api_key = gr.Textbox(
                 label="API Key",
                 type="password",
@@ -733,6 +737,7 @@ def _build_settings_tab(cfg):
         s_provider,
         s_c_provider,
         s_c_api_key,
+        s_c_base,
         s_c_model,
         s_c_timeout,
         s_l_device,
@@ -794,6 +799,7 @@ def _build_settings_tab(cfg):
         "ai_pipeline.stt.provider",
         "ai_pipeline.stt.cloud.provider",
         "ai_pipeline.stt.cloud.api_key",
+        "ai_pipeline.stt.cloud.base_url",
         "ai_pipeline.stt.cloud.model",
         "ai_pipeline.stt.cloud.timeout",
         "ai_pipeline.stt.local.device",

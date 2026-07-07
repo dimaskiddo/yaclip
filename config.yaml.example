@@ -14,8 +14,9 @@ ai_pipeline:
     provider: "local"                  # cloud | local | auto (auto = try cloud, fall back to local)
     cloud:
       provider: "google"               # google | openai
+      base_url: null                   # null = provider default; set for OpenRouter, ElevenLabs, or self-hosted OpenAI-compatible STT
       api_key: "your-api-key-here"
-      model: "gemini-2.5-flash"        # Used for google; openai always uses whisper-1
+      model: "gemini-2.5-flash"        # Used for google; openai uses this model name against the endpoint
       timeout: 300                     # Request timeout in seconds for cloud STT calls (30-600).
                                        # Increase for long audio files or slow network connections.
     local:

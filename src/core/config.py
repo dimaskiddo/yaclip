@@ -73,6 +73,7 @@ class WebServerConfig(BaseModel):
 
 class STTCloudConfig(BaseModel):
     provider: Literal["google", "openai"] = Field(default="google")
+    base_url: str | None = Field(default=None)
     api_key: str = Field(default="your-api-key-here")
     model: str = Field(default="gemini-2.5-flash")
     timeout: int = Field(default=300, ge=30, le=600)
