@@ -55,12 +55,11 @@ class LayoutBuilder:
 
         # Determine LayoutMode. DONATION_OVERLAY is a per-clip type (promoted when a mediashare
         # popup is in the window); it reuses the 2-stack geometry with the popup forced bottom.
-        if content_type == ContentType.PODCAST:
+        if content_type in (ContentType.PODCAST, ContentType.JUST_CHAT):
             layout_mode = LayoutMode.SINGLE_VERTICAL
         elif content_type in (
             ContentType.GAMING_SOLO,
             ContentType.GAMING_SOLO_BOTTOM,
-            ContentType.JUST_CHAT,
             ContentType.DONATION_OVERLAY,
         ):
             layout_mode = LayoutMode.STACKED_SPLIT

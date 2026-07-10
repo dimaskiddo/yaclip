@@ -108,6 +108,12 @@ def setup_environment() -> None:
     os.environ["GLOG_logtostderr"] = "0"
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
+    # Silence libav H.264 decoder stderr ("mmco: unref short failure") emitted when OpenCV
+    # random-seeks into a non-keyframe during frame sampling. Benign — the decoder recovers —
+    # but 1080p DASH-merged videos have longer GOPs so seeks trip it often. -8 = AV_LOG_QUIET.
+    os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "-8"
+    os.environ["OPENCV_LOG_LEVEL"] = "OFF"
+
     # Guard against the MediaPipe × triton SIGSEGV (see guard_triton_segfault docstring).
     guard_triton_segfault()
 

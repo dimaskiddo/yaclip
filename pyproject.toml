@@ -11,7 +11,6 @@ dependencies = [
     "loguru",
     "pydantic",
     "pyyaml",
-    "apscheduler",
     "typer",
     "gradio",
     "static-ffmpeg",
@@ -55,12 +54,12 @@ select = ["E", "F", "I", "UP", "B", "SIM", "ARG"]
 ignore = ["E501"]
 
 [tool.ruff.lint.flake8-bugbear]
-# typer's CLI option/argument pattern is safe as a default value.
-extend-immutable-calls = ["typer.Option", "typer.Argument"]
+extend-immutable-calls = ["typer.Option", "typer.Argument", "gradio.Progress"]
 
 [tool.ruff.lint.per-file-ignores]
 # Third-party env var names here must stay lowercase as-is.
 "src/core/environment.py" = ["SIM112"]
+
 # Unused function arguments
 "src/core/logger.py" = ["ARG001"]
 "src/vision/face_tracker.py" = ["ARG002"]

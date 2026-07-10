@@ -1,0 +1,164 @@
+from __future__ import annotations
+
+import gradio as gr
+
+from src.core.config import load_config
+from src.interfaces.webui.tabs.clipper import build_clipper_tab
+from src.interfaces.webui.tabs.maintenance import build_maintenance_tab
+from src.interfaces.webui.tabs.review import (
+    _load_proposals,
+    _reject_and_start_new,
+    _run_render,
+    _start_new_clip,
+    build_review_tab,
+)
+from src.interfaces.webui.tabs.settings import build_settings_tab
+
+
+def build_ui() -> gr.Blocks:
+    cfg = load_config()
+    with gr.Blocks(title="Yet Another AI Auto-Clipper (YaClip)") as app:
+        gr.HTML(
+            '<div style="display:flex;align-items:center;justify-content:space-between;'
+            'margin-bottom:4px;">'
+            '<h1 style="margin:0;font-size:1.75rem;">Yet Another AI Auto-Clipper (YaClip)</h1>'
+            '<a href="https://gift.trakteer.id/itsdrh" target="_blank" rel="noopener" '
+            'style="display:inline-block;background:#be1e2d;color:#fff;padding:8px 18px;'
+            "border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;"
+            'white-space:nowrap;">'
+            "❤️ Support This Project on Trakteer.ID</a>"
+            "</div>"
+        )
+        clipper = build_clipper_tab(cfg)
+        clipper_tab = clipper.tab
+        url_input = clipper.url_input
+        pipeline_state = clipper.pipeline_state
+        clipper_progress = clipper.clipper_progress
+        timerange_input = clipper.timerange_input
+        timerange_file = clipper.timerange_file
+        review = build_review_tab()
+        review_tab = review.tab
+        job_type_state = review.job_type_state
+        rendered_state = review.rendered_state
+        proposals_state = review.proposals_state
+        render_progress_md = review.render_progress_md
+        review_col = review.review_col
+        render_btn = review.render_btn
+        rendered_actions = review.rendered_actions
+        new_clip_btn = review.new_clip_btn
+        reject_confirm_btn = review.reject_confirm_btn
+
+        review_tab.select(
+            fn=_load_proposals,
+            inputs=[pipeline_state, rendered_state],
+            outputs=[
+                proposals_state,
+                job_type_state,
+                render_btn,
+                review_col,
+                rendered_actions,
+            ],
+        )
+        settings = build_settings_tab(cfg)
+        settings_tab = settings.tab
+        maintenance = build_maintenance_tab()
+        maintenance_tab = maintenance.tab
+        with gr.Tab("About"):
+            gr.Markdown(
+                "## What's YaClip?\n\n"
+                "**YouTube \u279c Your Shorts, Reels & TikToks \u2014 one shot.**\n\n"
+                "YaClip is your AI video editor that sniffs out the best moments "
+                "from any YouTube video \u2014 podcasts, gaming streams, or just-chillin' "
+                "rants \u2014 and serves them up as polished 9:16 shorts, ready for "
+                "YouTube Shorts, Instagram Reels, and TikTok.\n\n"
+                "Think of it as having a clip-hunting, caption-writing, face-tracking "
+                "robot sidekick. You bring the URL, it brings the highlight reel.\n\n"
+                "---\n\n"
+                "### \u2726 Quick Links\n\n"
+                "- **\U0001f3e0 Homepage** \u2192 [dimaskiddo.my.id](https://dimaskiddo.my.id)\n"
+                "- **\u2615 Support Me** \u2192 [gift.trakteer.id/itsdrh](https://gift.trakteer.id/itsdrh)\n\n"
+                "---\n\n"
+                "### \u26a1 Powered By\n\n"
+                "**[Trakteer.ID](https://trakteer.id)** \u2014 *Where Creator and Supporter Met Together "
+                "in One Platform!*"
+            )
+            gr.Image(
+                value="public/trakteer-logo.png",
+                show_label=False,
+                container=False,
+                interactive=False,
+                buttons=[],
+                height=28,
+                width=136,
+            )
+
+        # ---- Deferred event wiring: render/reset/reject (after all tabs exist). ----
+        _OTHER_TABS = [clipper_tab, settings_tab, maintenance_tab]
+        _RESET_OUTPUTS = [
+            proposals_state,
+            rendered_state,
+            pipeline_state,
+            job_type_state,
+            review_col,
+            rendered_actions,
+            render_progress_md,
+            render_btn,
+            clipper_progress,
+            url_input,
+            timerange_input,
+            timerange_file,
+        ]
+
+        render_event = render_btn.click(
+            fn=lambda: (
+                [gr.update(interactive=False, value="Rendering Clips...")]
+                + [gr.update(elem_classes=["render-lock"])]
+                + [gr.update(interactive=False)] * len(_OTHER_TABS)
+            ),
+            outputs=[render_btn, review_col, *_OTHER_TABS],
+            queue=False,
+        ).then(
+            fn=_run_render,
+            inputs=[proposals_state, pipeline_state, job_type_state],
+            outputs=[
+                rendered_state,
+                render_progress_md,
+                review_col,
+                rendered_actions,
+                render_btn,
+            ],
+            show_progress_on=[render_btn, render_progress_md],
+        )
+        render_event.success(
+            fn=lambda: [gr.update(interactive=True)] * len(_OTHER_TABS),
+            outputs=[*_OTHER_TABS],
+            queue=False,
+        )
+        render_event.failure(
+            fn=lambda: (
+                [gr.update(interactive=True, value="Render Clips")]
+                + [gr.update(elem_classes=[])]
+                + [gr.update(interactive=True)] * len(_OTHER_TABS)
+            ),
+            outputs=[render_btn, review_col, *_OTHER_TABS],
+            queue=False,
+        )
+
+        new_clip_btn.click(fn=_start_new_clip, outputs=_RESET_OUTPUTS)
+
+        reject_confirm_btn.click(
+            fn=_reject_and_start_new,
+            inputs=[rendered_state],
+            outputs=_RESET_OUTPUTS,
+        )
+    return app
+
+
+def launch_webui(host: str = "127.0.0.1", port: int = 7860) -> None:
+    cfg = load_config().web_server
+    ui = build_ui()
+    ui.queue().launch(
+        server_name=host or cfg.host,
+        server_port=port or cfg.port,
+        share=cfg.share,
+    )

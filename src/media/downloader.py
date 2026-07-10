@@ -12,7 +12,12 @@ from loguru import logger
 from src.core.config import load_config
 from src.core.exceptions import DownloadError
 from src.core.utils import SystemUtils, extract_digits
-from src.core.workspace import DATA_DIR, active_pipeline_event, video_output_path
+from src.core.workspace import (
+    BIN_DIR,
+    DATA_DIR,
+    active_pipeline_event,
+    video_output_path,
+)
 from src.media.audio import AudioExtractor
 
 
@@ -33,6 +38,7 @@ def _is_transient_download_error(exc: Exception) -> bool:
         "ConnectionRefusedError",
         "IncompleteRead",
         "HTTPException",
+        "FileNotFoundError",
     }
 
     if any(cls in exc_name for cls in transient_classes):
@@ -49,6 +55,7 @@ def _is_transient_download_error(exc: Exception) -> bool:
         "temporary failure",
         "429",
         "read timed out",
+        "no such file",
     ]
     if any(pat in exc_msg for pat in transient_patterns):
         nontransient_patterns = [
@@ -142,7 +149,12 @@ class VideoDownloader:
             vid_ext = dl_cfg.video_format
 
             ydl_opts = {
-                "format": f"bestvideo[ext=mp4][vcodec^=avc][height<={target_res}]+bestaudio[ext=m4a]/best[ext=mp4][height<={target_res}]/bestvideo[height<={target_res}]+bestaudio/best[height<={target_res}]",
+                "format": (
+                    f"bestvideo[ext=mp4][vcodec^=avc][height<={target_res}]+bestaudio[ext=m4a]/"
+                    f"bestvideo[height<={target_res}]+bestaudio/"
+                    f"best[ext=mp4][height<={target_res}]/"
+                    f"best[height<={target_res}]"
+                ),
                 "merge_output_format": vid_ext,
                 "outtmpl": str(out_dir_path / "%(id)s.%(ext)s"),
                 "quiet": True,
@@ -154,6 +166,7 @@ class VideoDownloader:
                 "overwrites": force,
                 "socket_timeout": dl_cfg.retry.socket_timeout,
                 "fragment_retries": dl_cfg.retry.fragment_retries,
+                "ffmpeg_location": str(BIN_DIR.resolve()),
             }
 
             # Optional progress hook for CLI and Gradio UI

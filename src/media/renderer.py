@@ -66,6 +66,7 @@ class ClipRenderer:
         video_path: Path,
         clip_proposals: list[dict],
         content_type: ContentType | None = None,
+        progress_callback: Callable[[float, str], None] | None = None,
     ) -> list[Path]:
         """Render multiple clip proposals to vertical 9:16 MP4 files.
 
@@ -74,6 +75,8 @@ class ClipRenderer:
             clip_proposals: [{"start_time", "end_time", "title", optional "content_type"}].
             content_type: Video-level content type from the detector. When set, used as the
                 type for all clips (except those promoted to DONATION_OVERLAY or overridden).
+            progress_callback: Optional (fraction, description) callback fired at pass boundaries
+                so a UI can display a moving progress bar.
 
         Returns:
             Paths to the successfully rendered clips.
@@ -107,6 +110,8 @@ class ClipRenderer:
         ]
 
         # Pass 1 — visual region analysis (YOLO loaded once, released after).
+        if progress_callback:
+            progress_callback(0.1, "Analyzing video regions...")
         analyses = self._analyze_regions(video_path, clip_proposals, clip_types)
 
         # For manual mode (no LLM call) — any clip still without a type gets a visual fallback.
@@ -120,11 +125,15 @@ class ClipRenderer:
         clip_types = self._apply_donation_override(clip_proposals, clip_types, analyses)
 
         # Pass 2 — per-clip subtitle segments (whisper loaded once, released after).
+        if progress_callback:
+            progress_callback(0.4, "Transcribing audio...")
         segments_per_clip = self._transcribe_subtitles(
             video_path, clip_proposals, clip_types
         )
 
         # Pass 3 — layout + render.
+        if progress_callback:
+            progress_callback(0.7, "Rendering clips...")
         return self._render_pass(
             video_path,
             clip_proposals,

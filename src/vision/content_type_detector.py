@@ -29,6 +29,7 @@ from src.core.constants import (
     HUD_SCORE_THRESHOLD_GAMING_HINT,
     HUD_SPATIAL_GRAD_THRESH,
     HUD_TEMP_STD_THRESH,
+    PERSON_COUNT_CONF_MIN,
     SAMPLE_FRAME_END_FRAC,
     SAMPLE_FRAME_START_FRAC,
     ContentType,
@@ -213,6 +214,18 @@ class ContentTypeDetector:
             )
 
         # Donation overlay detection (colour heuristic) for single-face, no-gameplay content.
+        # Guard: if ANY sampled frame has ≥2 high-confidence person boxes (confidence ≥
+        # PERSON_COUNT_CONF_MIN), this is multi-person content regardless of cam-edge filtering.
+        raw_person_count = self._max_persons_in_frames(video_path)
+        evidence["raw_person_count"] = raw_person_count
+        if raw_person_count >= 2:
+            logger.info(
+                "Video type detected as podcast with 2+ faces (raw person count)."
+            )
+            return ContentTypeDetectionResult(
+                content_type=ContentType.PODCAST, evidence=evidence
+            )
+
         has_donation_alerts = self._check_donation_overlays(frames)
         evidence["donation_detected"] = has_donation_alerts
         if has_donation_alerts:
@@ -394,3 +407,37 @@ class ContentTypeDetector:
         # 0 < matches < DONATION_PERSISTENCE_MAX_RATIO fraction of frames = a real popup.
         ratio = matched_alerts / max(1, len(frames))
         return 0 < ratio < DONATION_PERSISTENCE_MAX_RATIO
+
+    def _max_persons_in_frames(self, video_path: Path) -> int:
+        """Max high-confidence person boxes across any single sampled frame.
+
+        Uses the same YOLOv8n model and threshold as ``_detect_regions``, counting
+        COCO class 0 (person) detections at >= ``PERSON_COUNT_CONF_MIN`` confidence.
+        This is the unfiltered raw count used as a guard before donation-overlay
+        false-positives can misroute multi-person content to JUST_CHAT.
+        """
+        frames = self._sample_frames(video_path, num_samples=25)
+        if not frames:
+            return 0
+        from src.core.utils import SystemUtils
+        from src.vision.frame_utils import yolo_predict_boxes
+        from src.vision.visual_analyzer import VisualAnalyzer
+
+        max_count = 0
+        analyzer = VisualAnalyzer()
+        try:
+            model = analyzer._load_model()  # type: ignore[attr-defined]
+            if model is None:
+                return 0
+            device = SystemUtils.resolve_device(analyzer.cfg.device)
+            for _, frame in frames:
+                boxes = yolo_predict_boxes(model, frame, device)
+                person_count = sum(
+                    1
+                    for cls_id, conf, _ in boxes
+                    if cls_id == 0 and conf >= PERSON_COUNT_CONF_MIN
+                )
+                max_count = max(max_count, person_count)
+        finally:
+            analyzer.release()
+        return max_count
