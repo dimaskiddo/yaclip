@@ -289,8 +289,8 @@ def build_review_tab() -> SimpleNamespace:
                     with gr.Group():
                         gr.Markdown(f"**Clip {idx + 1} — {Path(path).stem}**")
                         with gr.Row(equal_height=True):
-                            gr.Video(value=path, interactive=False, scale=1)
-                            with gr.Column(scale=1):
+                            gr.Video(value=path, interactive=False, height=480, scale=1)
+                            with gr.Column(scale=2):
                                 gr.Textbox(
                                     value=meta.get("title", ""),
                                     label="Title",
