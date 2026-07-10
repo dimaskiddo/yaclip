@@ -47,7 +47,6 @@ def build_ui() -> gr.Blocks:
         rendered_actions = review.rendered_actions
         new_clip_btn = review.new_clip_btn
         reject_confirm_btn = review.reject_confirm_btn
-        loading_text_md = review.loading_text_md
 
         review_tab.select(
             fn=_load_proposals,
@@ -108,7 +107,6 @@ def build_ui() -> gr.Blocks:
             url_input,
             timerange_input,
             timerange_file,
-            loading_text_md,
         ]
 
         render_event = render_btn.click(
@@ -128,7 +126,6 @@ def build_ui() -> gr.Blocks:
                 review_col,
                 rendered_actions,
                 render_btn,
-                loading_text_md,
             ],
             show_progress_on=[render_btn, render_progress_md],
         )
