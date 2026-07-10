@@ -268,7 +268,7 @@ Run these two commands **in order**. Both are required.
 
 ```bash
 # Using uv (recommended — much faster):
-uv pip install --no-cache -r requirements.txt
+uv sync --locked
 
 # Using pip (alternative):
 pip install --no-cache-dir -r requirements.txt
@@ -384,7 +384,7 @@ docker run --rm -p 7860:7860 \
   dimaskiddo/yaclip serve
 ```
 
-Then open `http://localhost:7860` in your browser. *(Launches the YaClip WebUI with 4 tabs: Clipper, Settings, Maintenance, and Review & Render.)*
+Then open `http://localhost:7860` in your browser. *(Launches the YaClip WebUI with tabs: Clipper, Review & Render, Settings, Maintenance, and About.)*
 
 > Your downloaded videos, AI models, and finished clips are saved to the `workspace/` folder on your computer — not inside the container — so they are kept between runs.
 
@@ -463,8 +463,11 @@ Manual mode ignores the clip-count and duration settings above — you always ge
 # Check how much disk space the cache folders are using:
 python app.py cache status
 
-# Delete old cached files to free up space:
-python app.py cache purge
+# Delete old cached files to free up space (default: dry-run preview):
+python app.py cache purge --concern
+
+# Force-delete ALL files in a directory regardless of age:
+python app.py cache clean tmp
 
 # Print your current settings:
 python app.py config
@@ -478,8 +481,8 @@ python app.py config
 # Activate environment first
 source .venv/bin/activate
 
-# Install dev dependencies (one time)
-uv pip install --no-cache -r requirements-dev.txt
+# Dev dependencies are already included via uv sync --locked
+# (ruff, pytest, etc. are under [project.optional-dependencies] dev in pyproject.toml)
 
 # Run all tests
 pytest tests/

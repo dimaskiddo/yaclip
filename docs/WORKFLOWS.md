@@ -26,7 +26,7 @@ flowchart TD
         BunCheck -- Yes --> FontCheck{Font in workspace/fonts/?}
         BunDL --> FontCheck
         FontCheck -- No --> FontDL[Download Anton.ttf from Google Fonts]
-        FontCheck -- Yes --> EnvInject[Inject PATH + HF_HOME + Start Purge Scheduler]
+        FontCheck -- Yes --> EnvInject[Inject PATH + HF_HOME + Run Sequential Purge Cycle]
         FontDL --> EnvInject
     end
 
@@ -310,7 +310,7 @@ STT and LLM run as two independent steps. Each resolves its own provider from co
 ---
 
 ### 6. Review Gate
-**Module**: `src/interfaces/webui.py`
+**Module**: `src/interfaces/webui/app.py`
 
 When `clip_selection.require_review_before_render: true` (default):
 - All clip proposals displayed in the Gradio **Review & Render** tab: Title, Reasoning, Start, End, and the **detected ContentType**.

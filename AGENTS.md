@@ -117,7 +117,7 @@ Each component has its own `provider` setting:
 - **WebUI:** Implemented with `gradio`. Must be visually clean and logically organized into tabs: **Clipper**, **Review & Render**, **Settings**, and **Maintenance**.
 - **Gradio Task Queuing (CRITICAL):** Always initialize with `.queue().launch()`. Never use `.launch()` alone — this causes socket timeouts on long video jobs.
 - **WSL Compatibility:** Gradio MUST bind to `127.0.0.1:7860` (configurable) so headless Linux/WSL environments expose the UI to the host Windows browser cleanly.
-- **Execution Routing:** `app.py` is entry/routing only (load config → environment → logging) and delegates to the Typer app in `src/interfaces/cli.py`. If `sys.argv` has CLI arguments → route to Typer; if run bare → launch Gradio. CLI commands: `clip <URL>` (the pipeline, with `--clips/--duration/--language/--output-dir/--force/--debug` overrides, plus `--manual/--timerange-file/--no-metadata` for manual mode — see §5.2), `config`, `cache status`, `cache purge [--dry-run]`, `serve` . `clean-workspace` remains as a hidden back-compat alias of `cache purge`.
+- **Execution Routing:** `app.py` is entry/routing only (load config → environment → logging) and delegates to the Typer app in `src/interfaces/cli/app.py`. If `sys.argv` has CLI arguments → route to Typer; if run bare → launch Gradio. CLI commands are registered by `src/interfaces/cli/commands/{clip,config,cache,serve}.py` via a `register(cli: typer.Typer)` function to avoid circular imports. Commands: `clip <URL>` (with `--clips/--duration/--min-duration/--max-duration/--language/--output-dir/--force/--debug` overrides, plus `--manual/--timerange-file/--no-metadata` for manual mode — see §5.2), `config`, `cache status`, `cache purge [--concern]` (default dry-run; `--concern` confirms deletion), `cache clean [target]` (force-clean, bypasses retention), `serve`. `clean-workspace` remains as a hidden back-compat alias of `cache purge`.
 - **WebUI parity
 
 ---
@@ -678,9 +678,22 @@ yaclip/
 │   │   ├── layout_builder.py         # ContentType + VisualAnalyzer regions → FFmpeg layout spec
 │   │   └── overlay_detector.py       # Appearance/disappearance novelty detection (median baseline diff; cam-exclusion guards)
 │   └── interfaces/
-│       ├── cli.py               # Typer CLI commands: clip, config, cache status/purge, serve, clean-workspace (alias)
-│       ├── webui.py             # Gradio layout: Clipper, Review & Render, Settings, Maintenance tabs
-│       └── components.py        # Reusable Gradio component factories
+│       ├── cli/
+│       │   ├── app.py               # Typer orchestrator
+│       │   └── commands/            # Per-subcommand modules
+│       │       ├── clip.py          #   clip <URL> — pipeline entry
+│       │       ├── config.py        #   config — show validated config
+│       │       ├── cache.py         #   cache status/purge/clean
+│       │       └── serve.py         #   serve — launch WebUI
+│       ├── webui/
+│       │   ├── app.py               # Gradio orchestrator
+│       │   └── tabs/                # Per-tab builders
+│       │       ├── clipper.py       #   Clipper tab
+│       │       ├── review.py        #   Review & Render tab
+│       │       ├── settings.py      #   Settings tab
+│       │       └── maintenance.py   #   Maintenance tab
+│       ├── components.py            # Reusable Gradio component factories
+│       └── utils.py                 # Shared helpers (both CLI and WebUI)
 └── workspace/
     ├── bin/                     # FFmpeg, Bun JS runtime (auto-downloaded on first boot)
     ├── fonts/                   # .ttf subtitle fonts (Anton.ttf auto-downloaded)
@@ -749,14 +762,15 @@ Since cleanup is sequential at startup, there are no race conditions with active
 
 | Command | Behaviour |
 |---|---|
-| `app.py clip <URL> [--clips N] [--duration S] [--language L] [--output-dir D] [--force] [--debug]` | Full pipeline: download → AI selection → render, with config overrides |
+| `app.py clip <URL> [--clips N] [--duration S] [--min-duration M] [--max-duration X] [--language L] [--output-dir D] [--force] [--debug] [--manual] [--timerange-file F] [--no-metadata]` | Full pipeline: download → AI selection → render, with config overrides; `--manual` + `--timerange-file` for manual mode; `--no-metadata` skips LLM titling (manual only) |
 | `app.py config` | Print the validated configuration (API keys masked) |
 | `app.py cache status` | Per-directory workspace disk usage (size, count, oldest) |
-| `app.py cache purge [target] [--dry-run]` | Immediate manual purge (all dirs or a specific target) |
+| `app.py cache purge [target] [--concern]` | Dry-run preview by default; pass `--concern` to actually delete files older than retention |
+| `app.py cache clean [target]` | Force-delete ALL files in selected directories regardless of age or dry-run setting |
 | `app.py clean-workspace [target]` | Hidden back-compat alias of `cache purge` |
 
 **WebUI — Maintenance tab:**
-- "🗑️ Clear Cache Now" button → triggers `run_purge_cycle()`, shows summary in `gr.Textbox`.
+- "🗑️ Cache Clean" button triggers a purge (force-clean) of selected directories; "Dry-Run Clean (Preview Only, No Deletion)" checkbox makes it a preview. Results are shown in a `gr.Textbox`.
 - Read-only disk usage panel: size (MB) and oldest file per purgeable directory, refreshed on tab open.
 - Dry-run toggle (`gr.Checkbox`) to preview without committing.
 

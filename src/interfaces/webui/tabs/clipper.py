@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -65,7 +64,8 @@ async def _run_clipper_pipeline(
     cookies_file_input: str | None,
     timerange_text: str,
     timerange_file: str | None,
-) -> AsyncGenerator[tuple[dict | None, str, gr.update], None]:
+    progress: gr.Progress = gr.Progress(),
+) -> tuple[dict | None, str, gr.update]:
     if not url:
         raise gr.Error("YouTube URL is required.")
     manual_ranges: list[dict] | None = None
@@ -105,17 +105,14 @@ async def _run_clipper_pipeline(
     else:
         cfg.dk_clipper_sys_prompt = None
 
-    yield None, "◌ Getting ready...", gr.update()
+    progress(0.0, desc="Getting ready...")
     await asyncio.to_thread(ensure_workspace_integrity)
     await asyncio.to_thread(run_purge_cycle)
-    from src.media.downloader import VideoDownloader
 
     try:
-        yield (
-            None,
-            "◌ Downloading video...",
-            gr.update(),
-        )
+        progress(0.2, desc="Downloading video and audio...")
+        from src.media.downloader import VideoDownloader
+
         cookies_path = cookies_file_input or None
         try:
             result = await asyncio.to_thread(
@@ -126,31 +123,14 @@ async def _run_clipper_pipeline(
                 cookies_file=cookies_path,
             )
         except Exception as e:
-            yield (
-                None,
-                f"❌ Download failed: {e}",
-                gr.update(interactive=True, value="Find Clips"),
-            )
             raise gr.Error(f"Download failed: {e}") from e
+
         audio_path = result.get("audio_path")
         video_path = result.get("video_path")
         if not audio_path or not video_path:
-            yield (
-                None,
-                "❌ No video or audio produced.",
-                gr.update(interactive=True, value="Find Clips"),
-            )
             raise gr.Error("Download did not produce both video and audio files.")
-        yield (
-            None,
-            "◌ Extracting audio...",
-            gr.update(),
-        )
-        yield (
-            None,
-            "◌ Analyzing video type...",
-            gr.update(),
-        )
+
+        progress(0.5, desc="Analyzing video type...")
         from src.vision.content_type_detector import ContentTypeDetector
 
         detection_result = await asyncio.to_thread(
@@ -158,11 +138,8 @@ async def _run_clipper_pipeline(
             Path(video_path),
         )
         content_type = detection_result.content_type
-        yield (
-            None,
-            "◌ Transcribing audio...",
-            gr.update(),
-        )
+
+        progress(0.7, desc="AI clip selection...")
         from src.ai.pipeline import AIPipeline
 
         try:
@@ -181,18 +158,10 @@ async def _run_clipper_pipeline(
                 no_metadata=False,
             )
         except Exception as e:
-            yield (
-                None,
-                f"❌ Clip selection failed: {e}",
-                gr.update(interactive=True, value="Find Clips"),
-            )
             raise gr.Error(f"Clip selection failed: {e}") from e
-        yield (
-            None,
-            "◌ Finalizing results...",
-            gr.update(),
-        )
-        yield (
+
+        progress(0.9, desc="Finalizing results...")
+        return (
             {
                 "proposals": clips,
                 "video_path": video_path,
@@ -201,12 +170,7 @@ async def _run_clipper_pipeline(
             "✅ Clips found. Switch to **Review & Render** tab above to review.",
             gr.update(interactive=True, value="Find Clips"),
         )
-    except Exception as e:
-        yield (
-            None,
-            f"❌ Unexpected error: {e}",
-            gr.update(interactive=True, value="Find Clips"),
-        )
+    except Exception:
         raise
 
 

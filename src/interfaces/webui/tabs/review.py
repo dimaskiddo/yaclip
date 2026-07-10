@@ -100,7 +100,8 @@ def _reset_review() -> tuple:
     Return order matches _RESET_OUTPUTS:
     proposals_state, rendered_state, pipeline_state,
     job_type_state, review_col, rendered_actions, render_progress_md,
-    render_btn, clipper_progress, url_input, timerange_input, timerange_file.
+    render_btn, clipper_progress, url_input, timerange_input, timerange_file,
+    loading_text_md.
     """
     return (
         [],
@@ -115,6 +116,7 @@ def _reset_review() -> tuple:
         gr.update(value=""),
         gr.update(value=""),
         gr.update(value=None),
+        gr.update(visible=False),
     )
 
 
@@ -135,7 +137,7 @@ async def _run_render(
     pipeline: dict | None,
     job_content_type: str | None,
     progress: gr.Progress = gr.Progress(),
-) -> tuple[list[str], str, gr.update, gr.update, gr.update]:
+) -> tuple[list[str], str, gr.update, gr.update, gr.update, gr.update]:
     """Render clips then return state + column visibility swaps."""
     if not proposals:
         raise gr.Error("No clips to render. Run Find Clips first.")
@@ -180,8 +182,10 @@ async def _run_render(
         )
     except Exception as e:
         raise gr.Error(f"Render failed: {e}") from e
+
     progress(0.9, desc="Cleaning up...")
     await asyncio.to_thread(run_purge_cycle, force=True, specific_target="tmp")
+
     progress(1.0, desc="Done.")
     return (
         [str(p) for p in rendered],
@@ -189,6 +193,7 @@ async def _run_render(
         gr.update(visible=False, elem_classes=[]),
         gr.update(visible=True),
         gr.update(visible=False, value="Render Clips"),
+        gr.update(visible=True),
     )
 
 
@@ -203,7 +208,6 @@ def build_review_tab() -> SimpleNamespace:
         rendered_state = gr.State([])
         proposals_state = gr.State([])
         gr.Markdown("## Review & Render")
-        render_progress_md = gr.Markdown(elem_id="render-progress")
 
         review_col = gr.Column(visible=True)
         with review_col:
@@ -214,6 +218,7 @@ def build_review_tab() -> SimpleNamespace:
                 if not proposals:
                     gr.Markdown("_No clips yet. Run Find Clips on the Clipper tab._")
                     return
+                loading_text_md.visible = False
                 for idx, clip in enumerate(proposals):
                     with gr.Group():
                         with gr.Row(equal_height=True):
@@ -273,15 +278,20 @@ def build_review_tab() -> SimpleNamespace:
                     )
 
         render_btn = gr.Button("Render Clips", variant="primary", visible=False)
+        render_progress_md = gr.Markdown(elem_id="render-progress")
 
         rendered_col = gr.Column(visible=True)
         with rendered_col:
+            loading_text_md = gr.Markdown(
+                "⏳ Please wait, loading rendered clips...", visible=False
+            )
 
             @gr.render(inputs=rendered_state)
             def _show_rendered_clips(paths: list[str]):
                 if not paths:
                     return
                 gr.Markdown("### Rendered Clips")
+                loading_text_md.visible = False
                 for idx, path in enumerate(paths):
                     meta = parse_clip_sidecar(path)
                     with gr.Group():
@@ -351,4 +361,5 @@ def build_review_tab() -> SimpleNamespace:
         reject_confirm_row=reject_confirm_row,
         reject_confirm_btn=reject_confirm_btn,
         reject_cancel_btn=reject_cancel_btn,
+        loading_text_md=loading_text_md,
     )

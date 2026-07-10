@@ -51,15 +51,18 @@ graph LR
     end
 
     subgraph interfaces["src/interfaces/"]
-        CLI["cli.py<br/>Typer Commands"]
-        WebUI["webui.py<br/>Gradio Dashboard"]
+        CLIApp["cli/app.py<br/>Typer Orchestrator"]
+        CLICmds["cli/commands/&lt;cmd&gt;.py<br/>Per-Command Register Functions"]
+        WebUIApp["webui/app.py<br/>Gradio Orchestrator"]
+        WebUITabs["webui/tabs/&lt;tab&gt;.py<br/>Per-Tab Builders"]
         Components["components.py<br/>Gradio Component Factories"]
+        IfUtils["utils.py<br/>CLI/WebUI Shared Helpers"]
     end
 
     Config --> Pipeline
     Config --> Downloader
-    Config --> WebUI
-    Config --> CLI
+    Config --> CLIApp
+    Config --> WebUIApp
     Config --> Cache
     Constants --> ContentDetector
     Constants --> LayoutBuilder
@@ -262,22 +265,26 @@ Font resolved from `./workspace/fonts/`. Full styling configurable: `font_size` 
 
 ### 7. Multi-Interface Modularity
 
-**CLI** (`typer`, in `src/interfaces/cli.py`; `app.py` is entry/routing only): `clip <URL>` (download → AI selection → render, with `--clips/--duration/--language/--output-dir/--force/--debug` overrides that patch the config singleton for the run, plus `--manual/--timerange-file/--no-metadata` for manual mode — see §4 Clip Selection), `config` (dump validated config, keys masked), `cache status` / `cache purge [--dry-run]`, `serve` 
+**CLI** (`typer`): Orchestrated by `src/interfaces/cli/app.py`. Each subcommand lives in its own module under `src/interfaces/cli/commands/` and exposes a `register(cli: typer.Typer)` function — this avoids circular imports (command modules import `typer` only, never import `cli/app.py`). Commands: `clip <URL>` (download → AI selection → render, with `--clips/--duration/--min-duration/--max-duration/--language/--output-dir/--force/--debug` overrides that patch the config singleton for the run, plus `--manual/--timerange-file/--no-metadata` for manual mode — see §4 Clip Selection), `config` (dump validated config, keys masked via `mask_config_keys` from `utils.py`), `cache status` / `cache purge [--concern]` (default dry-run; `--concern` confirms deletion) / `cache clean [target]` (force-delete all files), `serve`.
 
-**WebUI parity:** every `config.yaml` field must be editable in the Gradio UI, with each control defaulting from `config.yaml` — config stays the single source of truth.
+**WebUI** (`gradio`): Orchestrated by `src/interfaces/webui/app.py`. Each tab is built by its own module under `src/interfaces/webui/tabs/` — `build_clipper_tab(cfg)`, `build_review_tab()`, `build_settings_tab(cfg)`, `build_maintenance_tab()` — each returning a `SimpleNamespace` of Gradio component references. Self-contained event wiring stays inside the tab module; cross-tab wiring (render lock, tab-disable during render) lives in `app.py`. Tab builders receive the validated config singleton to populate their defaults.
 
-**WebUI** (`gradio`): 4-tab dashboard:
+**Shared interface utilities** — `src/interfaces/utils.py` contains framework-agnostic helpers used by both CLI and WebUI: `format_cache_rows` (canonical cache table formatting consumed by both `typer.echo()` and `gr.Dataframe`), `mask_config_keys` (recursive secret masking for config display), and `read_clip_sidecar`/`parse_clip_sidecar` (rendered-clip metadata). Keeping these in a dedicated module prevents duplication between the two interfaces.
+
+4-tab dashboard:
 - **Clipper** — URL input, mode toggle (Auto/Manual), timestamp area (Manual), clip count + duration sliders (Auto), subtitle language selector.
 - **Review & Render** — Clip proposals table with ContentType display and override; per-clip approve/edit/delete; render trigger.
 - **Settings** — Live config view and overrides.
-- **Maintenance** — Cache disk usage panel, Clear Cache Now button, dry-run toggle, purge summary output.
+- **Maintenance** — Cache disk usage panel, "🗑️ Cache Clean" button, "Dry-Run Clean (Preview Only, No Deletion)" checkbox, purge summary output.
+
+**WebUI parity:** every `config.yaml` field must be editable in the Gradio UI, with each control defaulting from `config.yaml` — config stays the single source of truth.
 
 **Key WebUI rules:**
 - Always initialize with `.queue().launch()` — never `.launch()` alone.
 - Bind to `127.0.0.1:7860` for WSL → Windows browser access.
 - Never pass multi-GB structures into persistent `gr.State()`. Reset state on every new submission.
 
-**Routing** (`app.py`): `sys.argv` present → Typer CLI. No args → Gradio WebUI.
+**Routing** (`app.py`): `sys.argv` present → Typer CLI (`src/interfaces/cli/app.py`). No args → Gradio WebUI (`launch_webui` from `src/interfaces/webui/app.py`).
 
 ---
 
