@@ -222,21 +222,25 @@ def build_review_tab() -> SimpleNamespace:
                                 value=clip.get("title", ""),
                                 label=f"Clip {idx + 1} — Title",
                                 scale=5,
+                                interactive=True,
                             )
                             del_btn = gr.Button("🗑️ Delete", scale=1, variant="stop")
                         with gr.Row():
                             start_box = gr.Number(
                                 value=float(clip.get("start_time", 0.0)),
                                 label="Start (s)",
+                                interactive=True,
                             )
                             end_box = gr.Number(
                                 value=float(clip.get("end_time", 0.0)),
                                 label="End (s)",
+                                interactive=True,
                             )
                             type_dd = gr.Dropdown(
                                 choices=_CONTENT_TYPE_CHOICES,
                                 value=clip.get("content_type", "auto"),
                                 label="Video Type",
+                                interactive=True,
                             )
                         gr.Textbox(
                             value=clip.get("reasoning", ""),
