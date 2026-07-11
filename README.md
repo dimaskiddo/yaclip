@@ -201,6 +201,37 @@ YaClip works on **any computer**. Before installing, pick the setup that matches
 
 ---
 
+## 📥 Download & Run (Prebuilt)
+
+Don't want to set up a Python environment? Download a ready-to-run build from the
+[GitHub Releases](https://github.com/dimaskiddo/yaclip/releases) page instead.
+
+| | CPU build | CUDA build |
+|---|---|---|
+| **Works on** | Any machine — Windows, macOS (Apple Silicon), Linux, both AMD64 and ARM64 | NVIDIA GPU machines only |
+| **Platforms** | Linux AMD64, Linux ARM64, macOS ARM64, Windows AMD64 | Linux AMD64, Windows AMD64 |
+| **Archive size** | ~1–2 GB | ~4–6 GB (bundles CUDA runtime libraries) |
+
+> **Not covered:** Windows on ARM64 and Intel (x86) macOS — no upstream PyTorch/MediaPipe wheels
+> exist for these targets. CUDA is Linux/Windows AMD64 only — Apple Silicon has no CUDA (use the
+> CPU build; it runs fine), and there are no ARM64 CUDA torch wheels.
+
+**To run it:**
+1. Download the `.zip` matching your OS, architecture, and variant, and unzip it anywhere.
+2. Run `./yaclip` (macOS/Linux) or `yaclip.exe` (Windows) from inside the unzipped folder.
+3. First launch downloads FFmpeg, Bun, and subtitle fonts into a `workspace/` folder next to the
+   executable — same self-provisioning behavior as running from source. This step needs internet
+   access even though the app itself is otherwise self-contained.
+4. Bare invocation (`./yaclip`) launches the WebUI at `http://127.0.0.1:7860`; pass CLI arguments
+   (`./yaclip clip <url>`, `./yaclip config`, ...) for terminal use — see [Terminal Commands](#-terminal-commands) below.
+
+> **macOS:** the app isn't code-signed, so Gatekeeper will warn on first launch. Right-click the
+> executable → **Open** to bypass, or run `xattr -d com.apple.quarantine ./yaclip` in Terminal.
+
+To build these archives yourself, see [Building Redistributable Binaries](#-building-redistributable-binaries) below.
+
+---
+
 ## 🛠️ Installation
 
 ### Step 1 — Download YaClip
@@ -476,6 +507,45 @@ python app.py cache clean tmp
 # Print your current settings:
 python app.py config
 ```
+
+---
+
+## 📦 Building Redistributable Binaries
+
+YaClip ships a GoReleaser-style build driver (`build.py`, wrapped by a `Makefile`) that packages
+the app with [PyInstaller](https://pyinstaller.org/) into a standalone folder — no venv or `uv`
+needed on the end-user's machine. One archive is built per OS/architecture/variant; native ML
+wheels (torch, mediapipe, opencv) can't be cross-compiled, so each archive is built **on** the
+platform it targets, not cross-built from one machine.
+
+**Locally (builds only for your current OS/arch):**
+```bash
+# Build + zip + checksum for your machine (CPU variant):
+make release
+
+# CUDA variant (only meaningful on Linux/Windows with an NVIDIA GPU + CUDA toolchain):
+make release VARIANT=cuda
+
+# Preview what would happen without actually running PyInstaller:
+python build.py build archive checksum --dry-run
+```
+Output lands in `dist/`: an onedir app folder, a `yaclip_<version>_<os>_<arch>_<variant>.zip`
+archive, and a `checksums.txt`.
+
+**Publishing to GitHub Releases:**
+```bash
+make publish TAG=v0.1.0
+```
+Requires `gh` CLI authentication and existing archives in `dist/`.
+
+**Full 6-platform matrix (CI):** the [`Release` workflow](.github/workflows/release.yml) is a
+manual `workflow_dispatch` — go to **Actions → Release → Run workflow**, enter the tag (e.g.
+`v0.1.0`), and it builds all 4 CPU platforms + 2 CUDA platforms in parallel, then publishes a
+single GitHub Release with all 6 archives and a merged `checksums.txt`.
+
+> **Packaged-build path note:** when running a PyInstaller build, `workspace/` and `config.yaml`
+> resolve next to the executable instead of the current working directory (detected via
+> `sys.frozen`), so the app is self-contained wherever the folder is unzipped.
 
 ---
 

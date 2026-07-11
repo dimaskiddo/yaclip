@@ -9,10 +9,10 @@ import yaml
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from src.core.exceptions import ConfigValidationError
-from src.core.workspace import CLIPS_DIR, LOGS_DIR
+from src.core.workspace import CLIPS_DIR, LOGS_DIR, app_root
 
-CONFIG_PATH = Path("config.yaml")
-BACKUP_DIR = Path("backups")
+CONFIG_PATH = app_root() / "config.yaml"
+BACKUP_DIR = app_root() / "backups"
 _BACKUP_PREFIX = "config.yaml_"
 _BACKUP_TS_FMT = "%Y-%m-%d_%H-%M-%S"
 

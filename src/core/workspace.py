@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import shutil
+import sys
 import threading
 import urllib.request
 import zipfile
@@ -16,8 +17,16 @@ from loguru import logger
 from src.core.constants import BYTES_PER_MB, SECONDS_PER_DAY
 from src.core.exceptions import CacheInitError
 
+
+def app_root() -> Path:
+    """Base dir for workspace/ and config.yaml. Next to the executable when frozen, else CWD."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path.cwd()
+
+
 # Global Path Constants
-WORKSPACE_DIR = Path("workspace").resolve()
+WORKSPACE_DIR = app_root() / "workspace"
 BIN_DIR = WORKSPACE_DIR / "bin"
 FONTS_DIR = WORKSPACE_DIR / "fonts"
 MODELS_DIR = WORKSPACE_DIR / "models"

@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark as pre-release"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: cpu
+            os_name: linux
+            arch: amd64
+            runner: ubuntu-latest
+          - variant: cpu
+            os_name: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - variant: cpu
+            os_name: macos
+            arch: arm64
+            runner: macos-14
+          - variant: cpu
+            os_name: windows
+            arch: amd64
+            runner: windows-latest
+          - variant: cuda
+            os_name: linux
+            arch: amd64
+            runner: ubuntu-latest
+          - variant: cuda
+            os_name: windows
+            arch: amd64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux GL/EGL libs (MediaPipe runtime deps)
+        if: matrix.os_name == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgles2 libgl1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Restore correct headless OpenCV build
+        run: uv pip install --no-cache --force-reinstall --no-deps opencv-python-headless
+
+      - name: Swap in CUDA torch build
+        if: matrix.variant == 'cuda'
+        run: |
+          uv pip uninstall torch torchvision
+          uv pip install --no-cache torch==2.12.0+cu121 torchvision==0.27.0+cu121 --index-url https://download.pytorch.org/whl/cu121
+
+      - name: Build
+        run: uv run python build.py build archive checksum --variant ${{ matrix.variant }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yaclip_${{ matrix.os_name }}_${{ matrix.arch }}_${{ matrix.variant }}
+          path: |
+            dist/*.zip
+            dist/checksums.txt
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect archives and merge checksums
+        run: |
+          mkdir -p dist
+          find artifacts -name "*.zip" -exec cp {} dist/ \;
+          cat artifacts/*/checksums.txt > dist/checksums.txt
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python build.py publish --tag "${{ inputs.tag }}" ${{ inputs.prerelease && '--prerelease' || '' }}
