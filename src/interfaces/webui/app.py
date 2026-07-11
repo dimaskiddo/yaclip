@@ -14,6 +14,36 @@ from src.interfaces.webui.tabs.review import (
 )
 from src.interfaces.webui.tabs.settings import build_settings_tab
 
+# Loads Trakteer's overlay-button library ourselves (Gradio's head= param only stores the
+# string in its JSON config -- it never executes as a real <script> tag), then draws Trakteer's
+# own real button straight into our header slot. draw() requires a literal
+# <script class="troverlay"> anchor already sitting where the button should appear -- it
+# inserts the button immediately before that anchor -- so the marker lives inside our visible
+# #trakteer-btn-slot span rather than a hidden container.
+_TRAKTEER_LOAD_JS = """
+() => {
+  const slot = document.getElementById('trakteer-btn-slot');
+  if (!slot || slot.dataset.done) return;
+  slot.dataset.done = '1';
+
+  const marker = document.createElement('script');
+  marker.className = 'troverlay';
+  slot.appendChild(marker);
+
+  const lib = document.createElement('script');
+  lib.src = 'https://edge-cdn.trakteer.id/js/trbtn-overlay.min.js?v=14-05-2025';
+  lib.onload = () => {
+    const id = trbtnOverlay.init(
+      'Support This Project on Trakteer.ID', '#be1e2d',
+      'https://trakteer.id/v1/itsdrh/tip/embed/modal',
+      'https://edge-cdn.trakteer.id/images/embed/trbtn-icon.png?v=14-05-2025',
+      '40', 'inline');
+    trbtnOverlay.draw(id);
+  };
+  document.head.appendChild(lib);
+}
+"""
+
 
 def build_ui() -> gr.Blocks:
     cfg = load_config()
@@ -22,11 +52,7 @@ def build_ui() -> gr.Blocks:
             '<div style="display:flex;align-items:center;justify-content:space-between;'
             'margin-bottom:4px;">'
             '<h1 style="margin:0;font-size:1.75rem;">Yet Another AI Auto-Clipper (YaClip)</h1>'
-            '<a href="https://gift.trakteer.id/itsdrh" target="_blank" rel="noopener" '
-            'style="display:inline-block;background:#be1e2d;color:#fff;padding:8px 18px;'
-            "border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;"
-            'white-space:nowrap;">'
-            "❤️ Support This Project on Trakteer.ID</a>"
+            '<span id="trakteer-btn-slot" style="margin-left:auto;"></span>'
             "</div>"
         )
         clipper = build_clipper_tab(cfg)
@@ -80,7 +106,7 @@ def build_ui() -> gr.Blocks:
                 "---\n\n"
                 "### \u26a1 Powered By\n\n"
                 "**[Trakteer.ID](https://trakteer.id)** \u2014 *Where Creator and Supporter Met Together "
-                "in One Platform!*"
+                "in One Place!*"
             )
             gr.Image(
                 value="public/trakteer-logo.png",
@@ -151,6 +177,8 @@ def build_ui() -> gr.Blocks:
             inputs=[rendered_state],
             outputs=_RESET_OUTPUTS,
         )
+
+        app.load(None, js=_TRAKTEER_LOAD_JS)
     return app
 
 

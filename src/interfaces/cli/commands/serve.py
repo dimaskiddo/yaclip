@@ -11,7 +11,7 @@ def serve(
 ) -> None:
     """Launch the YaClip WebUI in your browser.
 
-    Opens a Gradio interface at http://<host>:<port> where you can
+    Opens a YaClip WebUI interface at http://<host>:<port> where you can
     download videos, select clips, render layouts, and manage the cache
     — all through a visual UI instead of the command line.
     """
