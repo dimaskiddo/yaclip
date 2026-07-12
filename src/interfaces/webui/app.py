@@ -3,6 +3,7 @@ from __future__ import annotations
 import gradio as gr
 
 from src.core.config import load_config
+from src.core.workspace import cleanup_gradio_temp
 from src.interfaces.webui.tabs.clipper import build_clipper_tab
 from src.interfaces.webui.tabs.maintenance import build_maintenance_tab
 from src.interfaces.webui.tabs.review import (
@@ -12,14 +13,10 @@ from src.interfaces.webui.tabs.review import (
     _start_new_clip,
     build_review_tab,
 )
+from src.interfaces.webui.tabs.clipsmanager import build_clipsmanager_tab
 from src.interfaces.webui.tabs.settings import build_settings_tab
 
-# Loads Trakteer's overlay-button library ourselves (Gradio's head= param only stores the
-# string in its JSON config -- it never executes as a real <script> tag), then draws Trakteer's
-# own real button straight into our header slot. draw() requires a literal
-# <script class="troverlay"> anchor already sitting where the button should appear -- it
-# inserts the button immediately before that anchor -- so the marker lives inside our visible
-# #trakteer-btn-slot span rather than a hidden container.
+# Loads Trakteer's overlay-button library ourselves
 _TRAKTEER_LOAD_JS = """
 () => {
   const slot = document.getElementById('trakteer-btn-slot');
@@ -57,6 +54,7 @@ def build_ui() -> gr.Blocks:
         )
         clipper = build_clipper_tab(cfg)
         clipper_tab = clipper.tab
+        clipper_tab.select(fn=cleanup_gradio_temp)
         url_input = clipper.url_input
         pipeline_state = clipper.pipeline_state
         clipper_progress = clipper.clipper_progress
@@ -64,6 +62,7 @@ def build_ui() -> gr.Blocks:
         timerange_file = clipper.timerange_file
         review = build_review_tab()
         review_tab = review.tab
+        review_tab.select(fn=cleanup_gradio_temp)
         job_type_state = review.job_type_state
         rendered_state = review.rendered_state
         proposals_state = review.proposals_state
@@ -85,10 +84,14 @@ def build_ui() -> gr.Blocks:
                 rendered_actions,
             ],
         )
+        clipsmanager = build_clipsmanager_tab()
+        clipsmanager_tab = clipsmanager.tab
         settings = build_settings_tab(cfg)
         settings_tab = settings.tab
+        settings_tab.select(fn=cleanup_gradio_temp)
         maintenance = build_maintenance_tab()
         maintenance_tab = maintenance.tab
+        maintenance_tab.select(fn=cleanup_gradio_temp)
         with gr.Tab("About"):
             gr.Markdown(
                 "## What's YaClip?\n\n"
@@ -119,7 +122,7 @@ def build_ui() -> gr.Blocks:
             )
 
         # ---- Deferred event wiring: render/reset/reject (after all tabs exist). ----
-        _OTHER_TABS = [clipper_tab, settings_tab, maintenance_tab]
+        _OTHER_TABS = [clipper_tab, clipsmanager_tab, settings_tab, maintenance_tab]
         _RESET_OUTPUTS = [
             proposals_state,
             rendered_state,

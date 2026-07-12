@@ -356,3 +356,59 @@ def cache_usage() -> list[dict[str, object]]:
             }
         )
     return rows
+
+
+def list_clip_subdirs() -> list[tuple[str, str]]:
+    """Return (label, value) tuples for each subdirectory under ``CLIPS_DIR``.
+
+    Gradio ``gr.Dropdown`` consumes these directly. Returns empty list when
+    no subdirectories exist.
+    """
+    if not CLIPS_DIR.exists():
+        return []
+    return sorted(
+        (d.name, d.name) for d in CLIPS_DIR.iterdir() if d.is_dir()
+    )
+
+
+def list_clips_in_dir(dir_name: str) -> list[dict[str, str]]:
+    """Return clip metadata for every ``.mp4`` in a ``CLIPS_DIR`` subdirectory.
+
+    Each result dict: ``path``, ``title``, ``caption``, ``description``,
+    ``hashtags``.  Metadata is read from the per-clip ``.txt`` sidecar; when the
+    sidecar is absent/missing a field, ``title`` falls back to the filename stem
+    and other fields default to ``""``.
+    """
+    from src.interfaces.utils import parse_clip_sidecar
+
+    dir_path = CLIPS_DIR / dir_name
+    if not dir_path.is_dir():
+        return []
+    results: list[dict[str, str]] = []
+    for mp4 in sorted(
+        dir_path.glob("*.mp4"),
+        key=lambda p: int(p.stem.split("_", 1)[0]) if p.stem.split("_", 1)[0].isdigit() else 0,
+    ):
+        meta = parse_clip_sidecar(str(mp4))
+        results.append({
+            "path": str(mp4),
+            "title": meta.get("title", mp4.stem),
+            "caption": meta.get("caption", ""),
+            "description": meta.get("description", ""),
+            "hashtags": meta.get("hashtags", ""),
+        })
+    return results
+
+
+def cleanup_gradio_temp() -> None:
+    """Remove Gradio's file-copy directory at ``workspace/tmp/gradio/``.
+
+    Call this when leaving the File Manager tab so stale video copies don't
+    accumulate between tab switches.  Idempotent — no-op when the directory
+    does not exist.
+    """
+    dir_path = TMP_DIR / "gradio"
+    if dir_path.exists():
+        import shutil
+
+        shutil.rmtree(dir_path, ignore_errors=True)

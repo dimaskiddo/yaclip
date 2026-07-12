@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import ctypes
 import importlib.util
 import os
@@ -11,7 +12,7 @@ from loguru import logger
 
 from src.core.constants import MEDIAPIPE_GL_LIBS
 from src.core.exceptions import DetectionError
-from src.core.workspace import BIN_DIR, MODELS_DIR
+from src.core.workspace import BIN_DIR, MODELS_DIR, TMP_DIR
 
 
 def _has_usable_gpu() -> bool:
@@ -89,6 +90,15 @@ def guard_triton_segfault() -> None:
 def setup_environment() -> None:
     """Inject required environment variables for paths, caches, and log suppression."""
 
+    # Nuke any leftover Gradio file-copy directory from a prior session so we
+    # start clean before Gradio even bootstraps (the env var below then
+    # redirects new copies to our workspace path).
+    _cleanup_gradio_cache()
+
+    # Redirect Gradio's file-copy cache from /tmp/gradio to workspace/tmp/gradio
+    # so that rendered video proxies don't bloat the system temp directory.
+    os.environ["GRADIO_TEMP_DIR"] = str(TMP_DIR / "gradio")
+
     # AI Model Cache Path
     hf_workspace_dir = MODELS_DIR.resolve()
     os.environ["HF_HOME"] = str(hf_workspace_dir)
@@ -116,6 +126,21 @@ def setup_environment() -> None:
 
     # Guard against the MediaPipe × triton SIGSEGV (see guard_triton_segfault docstring).
     guard_triton_segfault()
+
+
+def _cleanup_gradio_cache() -> None:
+    """Remove Gradio's file-copy directory on process exit.
+
+    Registered as an atexit hook so that ``workspace/tmp/gradio/`` — where
+    Gradio stashes copies of rendered clips for video serving — is cleaned up
+    even when the user simply closes the WebUI without rendering new clips.
+    """
+    cache_dir = TMP_DIR / "gradio"
+    if cache_dir.exists():
+        shutil.rmtree(cache_dir, ignore_errors=True)
+
+
+atexit.register(_cleanup_gradio_cache)
 
 
 def _gl_install_hint() -> str:
