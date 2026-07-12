@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import gradio as gr
 
-from src.core.workspace import run_purge_cycle
+from src.core.workspace import cleanup_gradio_temp, run_purge_cycle
 from src.interfaces.components import _CONTENT_TYPE_CHOICES
 from src.interfaces.utils import parse_clip_sidecar
 
@@ -119,13 +119,15 @@ def _reset_review() -> tuple:
 
 
 def _start_new_clip() -> tuple:
-    """Reset the tab UI; leave rendered files on disk."""
+    """Reset the tab UI and purge Gradio cache; leave rendered files on disk."""
+    cleanup_gradio_temp()
     return _reset_review()
 
 
 def _reject_and_start_new(rendered: list[str]) -> tuple:
-    """Delete the rendered clip files, then reset the tab UI."""
+    """Delete the rendered clip files and Gradio cache, then reset the tab UI."""
     _delete_rendered_files(rendered)
+    cleanup_gradio_temp()
     gr.Info(f"Rejected and deleted {len(rendered)} rendered clip(s).")
     return _reset_review()
 
