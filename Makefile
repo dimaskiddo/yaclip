@@ -1,6 +1,6 @@
 PYTHON             := python
 BUILD_VARIANT      := cpu
-SERVICE_NAME  		 := yaclip
+SERVICE_NAME       := yaclip
 GITHUB_TOKEN       :=
 TAG                :=
 
