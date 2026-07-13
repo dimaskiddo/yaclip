@@ -5,7 +5,10 @@ import gradio as gr
 from src.core.config import load_config
 from src.interfaces.webui.tabs.about import build_about_tab
 from src.interfaces.webui.tabs.clipper import build_clipper_tab
-from src.interfaces.webui.tabs.clipsmanager import build_clipsmanager_tab
+from src.interfaces.webui.tabs.clipsmanager import (
+    _LOADING_SENTINEL,
+    build_clipsmanager_tab,
+)
 from src.interfaces.webui.tabs.maintenance import build_maintenance_tab
 from src.interfaces.webui.tabs.review import (
     _load_proposals,
@@ -85,6 +88,7 @@ def build_ui() -> gr.Blocks:
 
         clipsmanager = build_clipsmanager_tab()
         clipsmanager_tab = clipsmanager.tab
+        clips_state = clipsmanager.clips_state
         settings = build_settings_tab(cfg)
         settings_tab = settings.tab
         maintenance = build_maintenance_tab()
@@ -155,6 +159,25 @@ def build_ui() -> gr.Blocks:
             fn=_reject_and_start_new,
             inputs=[rendered_state],
             outputs=_RESET_OUTPUTS,
+        )
+
+        # ---- Clips Manager loading lock ----
+        # clips_state IS the panel's data source (@gr.render keys off it), so its
+        # value tells us exactly what the panel shows: the loading sentinel while
+        # "Loading clips…" is on screen, a list once panels render. Disable every
+        # other tab while the sentinel is set; re-enable when the clips list lands.
+        # Empty list (no clips found) is a normal loaded state -> tabs enabled.
+        _CM_LOCK_TABS = [*_OTHER_TABS, review_tab]
+
+        def _clips_panel_lock(clips: object) -> list[gr.update]:
+            loading = isinstance(clips, str) and clips == _LOADING_SENTINEL
+            return [gr.update(interactive=not loading)] * len(_CM_LOCK_TABS)
+
+        clips_state.change(
+            fn=_clips_panel_lock,
+            inputs=[clips_state],
+            outputs=_CM_LOCK_TABS,
+            queue=False,
         )
 
         app.load(None, js=_TRAKTEER_LOAD_JS)

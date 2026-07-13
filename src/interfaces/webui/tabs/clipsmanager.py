@@ -9,6 +9,7 @@ from src.core.workspace import (
     cleanup_gradio_temp,
     list_clip_subdirs,
     list_clips_in_dir,
+    prewarm_gradio_cache,
 )
 
 _LOADING_SENTINEL = "LOADING"
@@ -41,19 +42,28 @@ def _load_clips(dir_name: str | None) -> list[dict[str, str]]:
     Runs as the ``.then()`` step after the loading sentinel is displayed so
     the UI shows a progress message instead of stale panels while the disk
     scan executes.
+
+    Pre-warms each clip into Gradio's file cache before returning so the heavy
+    ``gr.Video`` copy happens here (under the tab-disable lock) rather than in
+    the ``@gr.render`` response — this is what makes the other-tabs lock hold
+    through the real panel-populate window instead of blinking off instantly.
     """
     if not dir_name:
         return []
 
-    return list_clips_in_dir(dir_name)
+    clips = list_clips_in_dir(dir_name)
+    prewarm_gradio_cache([c["path"] for c in clips])
+    return clips
 
 
 def build_clipsmanager_tab() -> SimpleNamespace:
     """Build the Clips Manager tab UI.
 
-    Returns a ``SimpleNamespace`` with a single public attribute ``tab``
-    (the ``gr.Tab`` context-manager object) — no cross-tab wiring is needed
-    because this tab is entirely self-contained.
+    Returns a ``SimpleNamespace`` exposing ``tab`` (the ``gr.Tab`` object) and
+    ``clips_state`` (the ``gr.State`` driving the clip panels). ``clips_state``
+    is surfaced so the orchestrator can key an other-tabs disable/enable lock
+    off the panel's actual data state — its value is the loading sentinel while
+    the panel shows "Loading clips…", and the clips list once panels render.
     """
     with gr.Tab("Clips Manager") as clipsmanager_tab:
         clips_state = gr.State([])
@@ -132,4 +142,4 @@ def build_clipsmanager_tab() -> SimpleNamespace:
             fn=_on_dir_change, inputs=[video_dropdown], outputs=[clips_state]
         ).then(fn=_load_clips, inputs=[video_dropdown], outputs=[clips_state])
 
-    return SimpleNamespace(tab=clipsmanager_tab)
+    return SimpleNamespace(tab=clipsmanager_tab, clips_state=clips_state)

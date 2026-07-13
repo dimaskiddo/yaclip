@@ -432,3 +432,32 @@ def cleanup_gradio_temp() -> None:
             with contextlib.suppress(OSError):
                 if not any(child.iterdir()):
                     child.rmdir()
+
+
+def prewarm_gradio_cache(paths: list[str]) -> None:
+    """Copy each clip ``.mp4`` into Gradio's file cache ahead of ``gr.Video``.
+
+    ``gr.Video`` copies its source file into ``GRADIO_TEMP_DIR`` the first time a
+    panel renders — that copy is the slow part of "populating" the Clips Manager
+    panels, and it runs in the ``@gr.render`` response, decoupled from any
+    server-side loading lock. Doing the copy here (inside the load step, under
+    the tab-disable lock) moves that cost under the lock, so the panels paint
+    near-instantly once rendered and the lock covers the real work.
+
+    Uses the same ``save_file_to_cache`` call, hash, and ``cache_dir`` Gradio
+    uses internally, so the later ``gr.Video`` copy is an idempotent no-op
+    (``save_file_to_cache`` skips the copy when the hashed target already
+    exists). ``cache_dir`` mirrors ``GRADIO_TEMP_DIR`` (set in
+    ``environment.py`` to ``workspace/tmp/gradio``).
+
+    Best-effort and never raises: a failed pre-warm just means ``gr.Video``
+    does its own copy later (the original blink), not a crash.
+    """
+    import contextlib
+
+    from gradio.processing_utils import save_file_to_cache
+
+    cache_dir = str(TMP_DIR / "gradio")
+    for p in paths:
+        with contextlib.suppress(OSError, ValueError):
+            save_file_to_cache(p, cache_dir)
