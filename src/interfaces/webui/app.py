@@ -82,17 +82,18 @@ def build_ui() -> gr.Blocks:
                 rendered_actions,
             ],
         )
+
         clipsmanager = build_clipsmanager_tab()
         clipsmanager_tab = clipsmanager.tab
-
         settings = build_settings_tab(cfg)
         settings_tab = settings.tab
         maintenance = build_maintenance_tab()
         maintenance_tab = maintenance.tab
-        build_about_tab()
+        about = build_about_tab()
+        about_tab = about.tab
 
         # ---- Deferred event wiring: render/reset/reject (after all tabs exist). ----
-        _OTHER_TABS = [clipper_tab, clipsmanager_tab, settings_tab, maintenance_tab]
+        _OTHER_TABS = [clipper_tab, settings_tab, maintenance_tab, about_tab]
         _RESET_OUTPUTS = [
             proposals_state,
             rendered_state,
@@ -106,6 +107,7 @@ def build_ui() -> gr.Blocks:
             url_input,
             timerange_input,
             timerange_file,
+            clipsmanager_tab,
         ]
 
         render_event = render_btn.click(
@@ -113,8 +115,9 @@ def build_ui() -> gr.Blocks:
                 [gr.update(interactive=False, value="Rendering Clips...")]
                 + [gr.update(elem_classes=["render-lock"])]
                 + [gr.update(interactive=False)] * len(_OTHER_TABS)
+                + [gr.update(interactive=False)]
             ),
-            outputs=[render_btn, review_col, *_OTHER_TABS],
+            outputs=[render_btn, review_col, *_OTHER_TABS, clipsmanager_tab],
             queue=False,
         ).then(
             fn=_run_render,
@@ -133,13 +136,16 @@ def build_ui() -> gr.Blocks:
             outputs=[*_OTHER_TABS],
             queue=False,
         )
+        # clipsmanager_tab stays disabled after successful render;
+        # re-enabled by _start_new_clip / _reject_and_start_new via _RESET_OUTPUTS.
         render_event.failure(
             fn=lambda: (
                 [gr.update(interactive=True, value="Render Clips")]
                 + [gr.update(elem_classes=[])]
                 + [gr.update(interactive=True)] * len(_OTHER_TABS)
+                + [gr.update(interactive=True)]
             ),
-            outputs=[render_btn, review_col, *_OTHER_TABS],
+            outputs=[render_btn, review_col, *_OTHER_TABS, clipsmanager_tab],
             queue=False,
         )
 

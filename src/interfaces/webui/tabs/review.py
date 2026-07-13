@@ -100,7 +100,8 @@ def _reset_review() -> tuple:
     Return order matches _RESET_OUTPUTS:
     proposals_state, rendered_state, pipeline_state,
     job_type_state, review_col, rendered_actions, render_progress_md,
-    render_btn, clipper_progress, url_input, timerange_input, timerange_file.
+    render_btn, clipper_progress, url_input, timerange_input, timerange_file,
+    clipsmanager_tab.
     """
     return (
         [],
@@ -115,6 +116,7 @@ def _reset_review() -> tuple:
         gr.update(value=""),
         gr.update(value=""),
         gr.update(value=None),
+        gr.update(interactive=True),
     )
 
 
