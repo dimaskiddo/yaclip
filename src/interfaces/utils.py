@@ -1,14 +1,6 @@
-"""Shared pure helpers used by both CLI and WebUI interface modules.
-
-No Gradio, Typer, or Gradio-component dependencies — these are pure functions
-and constants that can be imported from either interface without framework coupling.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
-
-# ── Cache-management display constants ──────────────────────────────────────
 
 CACHE_DIR_SORT_ORDER: dict[str, int] = {
     "clips": 0,
@@ -58,9 +50,6 @@ def format_cache_rows(rows: list[dict]) -> list[list]:
     ]
 
 
-# ── Config-key masking ──────────────────────────────────────────────────────
-
-
 def mask_config_keys(node: object, key_name: str = "api_key") -> object:
     """Recursively mask all values whose dictionary key is ``key_name``.
 
@@ -78,23 +67,29 @@ def mask_config_keys(node: object, key_name: str = "api_key") -> object:
     return node
 
 
-# ── Rendered-clip metadata sidecar helpers ─────────────────────────────────
-
-
 def read_clip_sidecar(clip_path: str) -> str:
     """Read the ``.txt`` metadata sidecar next to a rendered clip.
 
     The sidecar contains ``Title:/Caption:/Description:/Hashtags:`` lines
     written by ``ClipRenderer._write_clip_metadata()``.
+    Returns ``"(no metadata sidecar)"`` when the file is absent or
+    unreadable — never raises.
     """
+    import contextlib
+
     sidecar = Path(str(clip_path).replace(".mp4", ".txt"))
-    if not sidecar.exists():
-        return "(no metadata sidecar)"
-    return sidecar.read_text(encoding="utf-8")
+    with contextlib.suppress(OSError):
+        if sidecar.exists():
+            return sidecar.read_text(encoding="utf-8")
+    return "(no metadata sidecar)"
 
 
 def parse_clip_sidecar(clip_path: str) -> dict[str, str]:
-    """Return key→value pairs from a rendered clip's ``.txt`` sidecar."""
+    """Return key→value pairs from a rendered clip's ``.txt`` sidecar.
+
+    Missing or unreadable sidecar → empty ``dict`` (no crash).
+    Malformed lines (no ``": "`` separator) → silently skipped.
+    """
     raw = read_clip_sidecar(clip_path)
     if raw == "(no metadata sidecar)":
         return {}

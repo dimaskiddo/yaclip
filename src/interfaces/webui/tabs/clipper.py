@@ -180,13 +180,15 @@ def build_clipper_tab(cfg) -> SimpleNamespace:
     with gr.Tab("Clipper") as clipper_tab:
         gr.HTML(
             "<style>"
+            "#clips-css-wrap { display: none !important; }"
             ".mode-hide{display:none!important}"
             "#clipper-progress{min-height:60px}"
             "#clipper-progress>div{padding-top:8px}"
             "#render-progress{min-height:60px}"
             "#render-progress>div{padding-top:8px}"
             ".render-lock{pointer-events:none;opacity:0.55}"
-            "</style>"
+            "</style>",
+            elem_id="clips-css-wrap",
         )
         is_manual = cs.mode == "manual"
         url_input = gr.Textbox(

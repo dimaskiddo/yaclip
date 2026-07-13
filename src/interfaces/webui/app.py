@@ -3,8 +3,9 @@ from __future__ import annotations
 import gradio as gr
 
 from src.core.config import load_config
-from src.core.workspace import cleanup_gradio_temp
+from src.interfaces.webui.tabs.about import build_about_tab
 from src.interfaces.webui.tabs.clipper import build_clipper_tab
+from src.interfaces.webui.tabs.clipsmanager import build_clipsmanager_tab
 from src.interfaces.webui.tabs.maintenance import build_maintenance_tab
 from src.interfaces.webui.tabs.review import (
     _load_proposals,
@@ -13,7 +14,6 @@ from src.interfaces.webui.tabs.review import (
     _start_new_clip,
     build_review_tab,
 )
-from src.interfaces.webui.tabs.clipsmanager import build_clipsmanager_tab
 from src.interfaces.webui.tabs.settings import build_settings_tab
 
 # Loads Trakteer's overlay-button library ourselves
@@ -54,7 +54,6 @@ def build_ui() -> gr.Blocks:
         )
         clipper = build_clipper_tab(cfg)
         clipper_tab = clipper.tab
-        clipper_tab.select(fn=cleanup_gradio_temp)
         url_input = clipper.url_input
         pipeline_state = clipper.pipeline_state
         clipper_progress = clipper.clipper_progress
@@ -62,7 +61,6 @@ def build_ui() -> gr.Blocks:
         timerange_file = clipper.timerange_file
         review = build_review_tab()
         review_tab = review.tab
-        review_tab.select(fn=cleanup_gradio_temp)
         job_type_state = review.job_type_state
         rendered_state = review.rendered_state
         proposals_state = review.proposals_state
@@ -86,40 +84,12 @@ def build_ui() -> gr.Blocks:
         )
         clipsmanager = build_clipsmanager_tab()
         clipsmanager_tab = clipsmanager.tab
+
         settings = build_settings_tab(cfg)
         settings_tab = settings.tab
-        settings_tab.select(fn=cleanup_gradio_temp)
         maintenance = build_maintenance_tab()
         maintenance_tab = maintenance.tab
-        maintenance_tab.select(fn=cleanup_gradio_temp)
-        with gr.Tab("About"):
-            gr.Markdown(
-                "## What's YaClip?\n\n"
-                "**YouTube \u279c Your Shorts, Reels & TikToks \u2014 one shot.**\n\n"
-                "YaClip is your AI video editor that sniffs out the best moments "
-                "from any YouTube video \u2014 podcasts, gaming streams, or just-chillin' "
-                "rants \u2014 and serves them up as polished 9:16 shorts, ready for "
-                "YouTube Shorts, Instagram Reels, and TikTok.\n\n"
-                "Think of it as having a clip-hunting, caption-writing, face-tracking "
-                "robot sidekick. You bring the URL, it brings the highlight reel.\n\n"
-                "---\n\n"
-                "### \u2726 Quick Links\n\n"
-                "- **\U0001f3e0 Homepage** \u2192 [dimaskiddo.my.id](https://dimaskiddo.my.id)\n"
-                "- **\u2615 Support Me** \u2192 [gift.trakteer.id/itsdrh](https://gift.trakteer.id/itsdrh)\n\n"
-                "---\n\n"
-                "### \u26a1 Powered By\n\n"
-                "**[Trakteer.ID](https://trakteer.id)** \u2014 *Where Creator and Supporter Met Together "
-                "in One Place!*"
-            )
-            gr.Image(
-                value="public/trakteer-logo.png",
-                show_label=False,
-                container=False,
-                interactive=False,
-                buttons=[],
-                height=28,
-                width=136,
-            )
+        build_about_tab()
 
         # ---- Deferred event wiring: render/reset/reject (after all tabs exist). ----
         _OTHER_TABS = [clipper_tab, clipsmanager_tab, settings_tab, maintenance_tab]

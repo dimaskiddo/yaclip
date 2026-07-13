@@ -1,0 +1,81 @@
+# PyInstaller build recipe for YaClip (onedir). Same spec on every platform/variant;
+# per-arch native libs (torch/opencv/mediapipe/...) are resolved from whichever venv
+# `pyinstaller yaclip.spec` runs in — see build.py for the per-OS/variant driver.
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
+
+# Packages whose data files (templates, JSON schemas, model configs) must ship as real
+# files -- static analysis alone won't find them.
+_DATA_PACKAGES = [
+    "gradio",
+    "gradio_client",
+    "ultralytics",
+    "mediapipe",
+]
+
+# Packages whose submodules PyInstaller's import scanner misses (plugin-style imports,
+# lazy `importlib`, or optional backends).
+_HIDDEN_PACKAGES = [
+    "gradio",
+    "gradio_client",
+    "ultralytics",
+    "mediapipe",
+    "faster_whisper",
+    "ctranslate2",
+    "llama_cpp",
+    "google.generativeai",
+    "yt_dlp",
+    "static_ffmpeg",
+]
+
+# Packages that ship native .so/.dylib/.dll files outside the usual extension-module
+# discovery path (torch's libtorch_*, opencv's libopencv_*).
+_NATIVE_LIB_PACKAGES = ["torch", "torchvision", "cv2"]
+
+datas = [
+    ("config.yaml.example", "."),
+    ("LICENSE", "."),
+    ("README.md", "."),
+    ("public", "public"),
+]
+for pkg in _DATA_PACKAGES:
+    datas += collect_data_files(pkg)
+
+hiddenimports = []
+for pkg in _HIDDEN_PACKAGES:
+    hiddenimports += collect_submodules(pkg)
+
+binaries = []
+for pkg in _NATIVE_LIB_PACKAGES:
+    binaries += collect_dynamic_libs(pkg)
+
+a = Analysis(
+    ["app.py"],
+    pathex=[],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    excludes=["pytest", "ruff"],
+    noarchive=False,
+    # Gradio ships route/template source it reads as files at runtime -- embedding it
+    # in the archive breaks that, so keep it as plain .py files on disk.
+    module_collection_mode={"gradio": "py"},
+)
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="yaclip",
+    console=True,
+    onefile=False,
+)
+
+COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    name="yaclip",
+)

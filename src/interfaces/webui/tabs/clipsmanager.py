@@ -1,44 +1,17 @@
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
 import gradio as gr
 
-from src.core.workspace import TMP_DIR, list_clip_subdirs, list_clips_in_dir
-
-
-def _cleanup_gradio_stale() -> None:
-    """Remove Gradio's file-copy directory so stale video copies never accumulate.
-
-    Runs before every tab activation and directory change so that only the
-    currently-viewed clip set occupies disk space in ``workspace/tmp/gradio/``.
-    Gradio re-creates the directory automatically on the next file serve.
-    """
-    cache_dir = TMP_DIR / "gradio"
-    if cache_dir.exists():
-        shutil.rmtree(cache_dir, ignore_errors=True)
-
+from src.core.workspace import (
+    cleanup_gradio_temp,
+    list_clip_subdirs,
+    list_clips_in_dir,
+)
 
 _LOADING_SENTINEL = "LOADING"
-
-
-def _refresh_choices() -> gr.update:
-    """Re-read the clips directory tree and return an updated dropdown (choices only).
-
-    Never sets ``value`` so Gradio does **not** fire a spurious ``.change``
-    event — the user must explicitly pick a directory to trigger clip loading.
-    """
-    subdirs = list_clip_subdirs()
-    return gr.update(choices=subdirs)
-
-
-def _load_clips(dir_name: str | None) -> list[dict[str, str]]:
-    """Return the clip list for the selected video directory, or empty."""
-    if not dir_name:
-        return []
-    return list_clips_in_dir(dir_name)
 
 
 def _on_tab_select() -> tuple[gr.update, list]:
@@ -47,8 +20,7 @@ def _on_tab_select() -> tuple[gr.update, list]:
     Returns an **empty** clips state so the old clip panels with stale Gradio-
     cached paths are torn down immediately.  The user must re-pick a directory.
     """
-    _cleanup_gradio_stale()
-    from src.core.workspace import list_clip_subdirs  # avoid circular on module import
+    cleanup_gradio_temp()
 
     return (gr.update(choices=list_clip_subdirs(), value=None), [])
 
@@ -59,8 +31,21 @@ def _on_dir_change(_dir_name: str | None) -> str:
     Returns the loading sentinel so ``@gr.render`` shows a progress message
     while the heavy file listing runs in the ``.then()`` step.
     """
-    _cleanup_gradio_stale()
+    cleanup_gradio_temp()
     return _LOADING_SENTINEL
+
+
+def _load_clips(dir_name: str | None) -> list[dict[str, str]]:
+    """Enumerate clips in selected directory.
+
+    Runs as the ``.then()`` step after the loading sentinel is displayed so
+    the UI shows a progress message instead of stale panels while the disk
+    scan executes.
+    """
+    if not dir_name:
+        return []
+
+    return list_clips_in_dir(dir_name)
 
 
 def build_clipsmanager_tab() -> SimpleNamespace:
@@ -73,6 +58,17 @@ def build_clipsmanager_tab() -> SimpleNamespace:
     with gr.Tab("Clips Manager") as clipsmanager_tab:
         clips_state = gr.State([])
 
+        gr.HTML(
+            "<style>\n"
+            "#clips-css-wrap { display: none !important; }\n"
+            ".clips-dir-dropdown ul {\n"
+            "  max-height: 200px !important;\n"
+            "  overflow-y: auto !important;\n"
+            "}\n"
+            "</style>",
+            elem_id="clips-css-wrap",
+        )
+
         gr.Markdown("## Clips Manager")
         gr.Markdown(
             "Browse clips from previous renders. "
@@ -80,6 +76,7 @@ def build_clipsmanager_tab() -> SimpleNamespace:
         )
 
         video_dropdown = gr.Dropdown(
+            elem_classes=["clips-dir-dropdown"],
             choices=[],
             label="Select Video (Clips Directory)",
             interactive=True,
@@ -128,7 +125,9 @@ def build_clipsmanager_tab() -> SimpleNamespace:
 
         # Wire events: clean stale copies + refresh choices on tab activation;
         # clean again on directory change so only the current dir's clips stay cached.
-        clipsmanager_tab.select(fn=_on_tab_select, outputs=[video_dropdown, clips_state])
+        clipsmanager_tab.select(
+            fn=_on_tab_select, outputs=[video_dropdown, clips_state]
+        )
         video_dropdown.change(
             fn=_on_dir_change, inputs=[video_dropdown], outputs=[clips_state]
         ).then(fn=_load_clips, inputs=[video_dropdown], outputs=[clips_state])

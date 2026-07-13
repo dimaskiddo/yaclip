@@ -366,9 +366,7 @@ def list_clip_subdirs() -> list[tuple[str, str]]:
     """
     if not CLIPS_DIR.exists():
         return []
-    return sorted(
-        (d.name, d.name) for d in CLIPS_DIR.iterdir() if d.is_dir()
-    )
+    return sorted((d.name, d.name) for d in CLIPS_DIR.iterdir() if d.is_dir())
 
 
 def list_clips_in_dir(dir_name: str) -> list[dict[str, str]]:
@@ -387,28 +385,50 @@ def list_clips_in_dir(dir_name: str) -> list[dict[str, str]]:
     results: list[dict[str, str]] = []
     for mp4 in sorted(
         dir_path.glob("*.mp4"),
-        key=lambda p: int(p.stem.split("_", 1)[0]) if p.stem.split("_", 1)[0].isdigit() else 0,
+        key=lambda p: (
+            int(p.stem.split("_", 1)[0]) if p.stem.split("_", 1)[0].isdigit() else 0
+        ),
     ):
         meta = parse_clip_sidecar(str(mp4))
-        results.append({
-            "path": str(mp4),
-            "title": meta.get("title", mp4.stem),
-            "caption": meta.get("caption", ""),
-            "description": meta.get("description", ""),
-            "hashtags": meta.get("hashtags", ""),
-        })
+        results.append(
+            {
+                "path": str(mp4),
+                "title": meta.get("title", mp4.stem),
+                "caption": meta.get("caption", ""),
+                "description": meta.get("description", ""),
+                "hashtags": meta.get("hashtags", ""),
+            }
+        )
     return results
 
 
 def cleanup_gradio_temp() -> None:
-    """Remove Gradio's file-copy directory at ``workspace/tmp/gradio/``.
+    """Remove cached ``.mp4`` files from Gradio's file-copy directory.
 
-    Call this when leaving the File Manager tab so stale video copies don't
-    accumulate between tab switches.  Idempotent — no-op when the directory
-    does not exist.
+    Empty parent directories (the hash-prefixed subdirs Gradio creates)
+    are cleaned up too — only those at or under ``workspace/tmp/gradio/``.
+    Non-video cached assets such as the Trakteer logo (``.png``) are
+    **preserved** so static images inside ``gr.Image`` components survive
+    across tab switches.  The full directory is only wiped at startup and
+    shutdown (via ``_cleanup_gradio_cache`` / ``atexit``).
+
+    Idempotent — no-op when the directory does not exist.
     """
-    dir_path = TMP_DIR / "gradio"
-    if dir_path.exists():
-        import shutil
+    import contextlib
 
-        shutil.rmtree(dir_path, ignore_errors=True)
+    dir_path = TMP_DIR / "gradio"
+    if not dir_path.exists():
+        return
+    for f in list(dir_path.rglob("*.mp4")):
+        with contextlib.suppress(OSError):
+            f.unlink(missing_ok=True)
+
+    # Prune now-empty subdirectories from leaf up so Gradio's hash dirs
+    # don't accumulate when only .mp4s live inside them.
+    for child in sorted(
+        dir_path.rglob("*"), key=lambda p: (len(p.parts), str(p)), reverse=True
+    ):
+        if child.is_dir() and child != dir_path:
+            with contextlib.suppress(OSError):
+                if not any(child.iterdir()):
+                    child.rmdir()
