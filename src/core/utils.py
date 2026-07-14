@@ -26,6 +26,25 @@ def make_even(value: int) -> int:
     return value if value % 2 == 0 else value - 1
 
 
+def clip_stem(index: int, total: int, title: str) -> str:
+    """Build the zero-padded filename stem for a rendered clip.
+
+    Returns ``"{NN}_{Title-Case}"`` where ``NN`` is the 1-based ``index``
+    zero-padded to ``max(2, len(str(total)))`` digits.  Minimum width of 2
+    means clips always look like ``01_`` even when there are fewer than 10.
+
+    Args:
+        index: 0-based clip index.
+        total: Total number of clips (used to compute pad width).
+        title: Raw title string — sanitized + title-cased by caller.
+
+    Returns:
+        Filename stem without extension, e.g. ``"03_Highlight-Reel"``.
+    """
+    width = max(2, len(str(total)))
+    return f"{str(index + 1).zfill(width)}_{title}"
+
+
 def parse_timerange_line(line: str) -> tuple[float, float]:
     """Parse a manual timerange line into (start_seconds, end_seconds).
 

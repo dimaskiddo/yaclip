@@ -389,6 +389,7 @@ class ClipRenderer:
         caption: str,
         description: str,
         hashtags: str,
+        total: int = 1,
     ) -> Path | None:
         """Write a TXT metadata file alongside a rendered clip MP4.
 
@@ -420,7 +421,9 @@ class ClipRenderer:
         txt_subdir = output_dir / video_id.upper()
         txt_subdir.mkdir(parents=True, exist_ok=True)
         tc = _titlecase_filename(safe_title)
-        txt_path = txt_subdir / f"{clip_index + 1}_{tc}.txt"
+        from src.core.utils import clip_stem
+
+        txt_path = txt_subdir / f"{clip_stem(clip_index, total, tc)}.txt"
         txt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return txt_path
 
@@ -634,11 +637,13 @@ class ClipRenderer:
         clip_subdir = output_dir / video_id.upper()
         clip_subdir.mkdir(parents=True, exist_ok=True)
 
+        total = len(clips)
         for idx, clip in enumerate(clips):
             result = self._render_one_clip(
                 idx,
                 clip,
                 clip_types,
+                total,
                 analyses,
                 segments_per_clip,
                 video_path,
@@ -680,6 +685,7 @@ class ClipRenderer:
         idx: int,
         clip: dict,
         clip_types: list[ContentType],
+        total: int,
         analyses: list[dict],
         segments_per_clip: list[list[dict]],
         video_path: Path,
@@ -701,7 +707,9 @@ class ClipRenderer:
             if safe_title.startswith("Manual_")
             else _titlecase_filename(safe_title)
         )
-        output_path = clip_subdir / f"{idx + 1}_{tc}.mp4"
+        from src.core.utils import clip_stem
+
+        output_path = clip_subdir / f"{clip_stem(idx, total, tc)}.mp4"
 
         logger.info(
             f"--- Rendering Clip {idx + 1}/{len(clip_types)}: {title} "
@@ -768,6 +776,7 @@ class ClipRenderer:
                 clip.get("caption", ""),
                 clip.get("description", ""),
                 clip.get("hashtags", ""),
+                total,
             )
             if txt_path:
                 logger.info(f"Metadata saved: {txt_path.name}")

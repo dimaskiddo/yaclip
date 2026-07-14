@@ -620,6 +620,7 @@ Configured in `pyproject.toml`. Not optional.
 | Constant | `SCREAMING_SNAKE_CASE` | `MAX_CLIP_DURATION`, `CACHE_DIR` |
 | Private helper | `_snake_case` prefix | `_resolve_wsl_path()` |
 | Enum member | `SCREAMING_SNAKE_CASE` | `ContentType.GAMING_SOLO` |
+| Rendered clip filenames | `{VIDEO_ID}/{NN}_{Title-Case}` | `NN` = 1-based index, zero-padded to `max(2, digits(total))` |
 
 #### 11.16 Modular Directory Tree
 
