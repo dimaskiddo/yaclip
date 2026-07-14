@@ -16,7 +16,7 @@ from src.core.constants import (
     STACK3_PANEL_ASPECT,
     ContentType,
 )
-from src.core.utils import SystemUtils
+from src.core.utils import SystemUtils, clip_stem
 from src.core.workspace import SUBTITLES_DIR, TMP_DIR, audio_output_path
 from src.media.audio import AudioExtractor
 from src.media.ffmpeg_builder import FFmpegCommandBuilder
@@ -421,8 +421,6 @@ class ClipRenderer:
         txt_subdir = output_dir / video_id.upper()
         txt_subdir.mkdir(parents=True, exist_ok=True)
         tc = _titlecase_filename(safe_title)
-        from src.core.utils import clip_stem
-
         txt_path = txt_subdir / f"{clip_stem(clip_index, total, tc)}.txt"
         txt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return txt_path
@@ -707,8 +705,6 @@ class ClipRenderer:
             if safe_title.startswith("Manual_")
             else _titlecase_filename(safe_title)
         )
-        from src.core.utils import clip_stem
-
         output_path = clip_subdir / f"{clip_stem(idx, total, tc)}.mp4"
 
         logger.info(
