@@ -1,4 +1,4 @@
-FROM python:3.11-slim-bookworm
+FROM dimaskiddo/cuda:12.8-runtime
 MAINTAINER Dimas Restu Hidayanto <drh.dimasrestu@gmail.com>
 
 LABEL maintainer="Dimas Restu Hidayanto <drh.dimasrestu@gmail.com>"
@@ -8,7 +8,10 @@ ENV LANG=C.UTF-8 \
     TZ=Asia/Jakarta \
     HOME=/
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    YACLIP_FORCE_TRITON=1
 
 WORKDIR /usr/app
 
@@ -20,6 +23,9 @@ RUN apt-get -y update --allow-releaseinfo-change \
         libgles2 \
         libgl1 \
         ffmpeg \
+        python3 \
+        python3-pip \
+        python3-venv \
     && apt-get -y purge --autoremove \
     && apt-get -y clean \
     && rm -rf /var/lib/apt/lists/*
@@ -29,17 +35,19 @@ RUN pip3 install --no-cache-dir --upgrade --break-system-packages \
       uv
 
 # Copy dependency manifest first (Docker layer caching).
-COPY requirements.txt .
+COPY requirements-cuda.txt .
 
 # Create venv and install packages.
-# GPU torch is NOT installed — CPU-only torch is the safe default for Docker.
-# opencv-python-headless prevents WSL/headless display crashes.
+# CUDA torch replaces CPU-only torch — the CUDA build carries triton, which is
+# required for GPU acceleration.  guard_triton_segfault() in environment.py is
+# automatically disabled when CUDA is present (torch.cuda.is_available() == True).
+# opencv-python-headless prevents display-server crashes in headless containers.
 RUN uv venv \
     && uv pip install --no-cache --upgrade \
         pip \
         setuptools \
         wheel \
-    && uv pip install --no-cache -r requirements.txt \
+    && uv pip install --no-cache -r requirements-cuda.txt \
     && uv pip install --no-cache --force-reinstall --no-deps \
         opencv-python-headless
 

@@ -21,8 +21,8 @@ dependencies = [
     "huggingface_hub",
     "llama-cpp-python",
     "faster-whisper",
-    "torch==2.12.0+cpu",
-    "torchvision==0.27.0+cpu",
+    "torch==2.11.0+cpu",
+    "torchvision==0.26.0+cpu",
     "opencv-python-headless",
     "ultralytics"
 ]

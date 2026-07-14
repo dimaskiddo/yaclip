@@ -634,7 +634,8 @@ yaclip/
 ├── requirements-dev.txt         # Dev/test dependencies
 ├── pyproject.toml               # uv/pip deps + ruff/mypy config
 ├── README.md                    # Setup and usage guide
-├── Dockerfile                   # Container build
+├── Dockerfile                   # Container build (CPU-only)
+├── Dockerfile.CUDA              # Container build (GPU/CUDA, requires nvidia-container-toolkit)
 ├── docs/
 │   ├── ARCHITECTURE.md          # System design and component overview
 │   └── WORKFLOWS.md             # Pipeline diagrams and operational flows

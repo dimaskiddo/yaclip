@@ -395,6 +395,8 @@ You should see your settings printed with no errors. If you get an error, make s
 
 If you have Docker installed, you can skip Steps 2–4 entirely. Docker packages everything YaClip needs into a single container.
 
+**CPU-only build** (default, works everywhere):
+
 ```bash
 # 1. Build the container (one time only):
 docker build -t dimaskiddo/yaclip .
@@ -413,6 +415,28 @@ docker run --rm -p 7860:7860 \
   -v "$PWD/workspace:/app/workspace" \
   -v "$PWD/config.yaml:/app/config.yaml" \
   dimaskiddo/yaclip serve
+```
+
+**CUDA GPU build** (requires [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) on the host):
+
+```bash
+# 1. Build the GPU container:
+docker build -f Dockerfile.CUDA -t dimaskiddo/yaclip-cuda .
+
+# 2. Copy the configuration file:
+cp config.yaml.example config.yaml
+
+# 3. Run with GPU access:
+docker run --rm --gpus all \
+  -v "$PWD/workspace:/app/workspace" \
+  -v "$PWD/config.yaml:/app/config.yaml" \
+  dimaskiddo/yaclip-cuda clip "https://www.youtube.com/watch?v=<id>"
+
+# 4. Or open the browser interface with GPU:
+docker run --rm --gpus all -p 7860:7860 \
+  -v "$PWD/workspace:/app/workspace" \
+  -v "$PWD/config.yaml:/app/config.yaml" \
+  dimaskiddo/yaclip-cuda serve
 ```
 
 Then open `http://localhost:7860` in your browser. *(Launches the YaClip WebUI with tabs: Clipper, Review & Render, Settings, Maintenance, and About.)*

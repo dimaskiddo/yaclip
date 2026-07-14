@@ -14,8 +14,8 @@ mediapipe
 huggingface_hub
 llama-cpp-python
 faster-whisper
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.11.0+cpu
-torchvision==0.26.0+cpu
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0
+torchvision==0.26.0
 opencv-python-headless
 ultralytics
