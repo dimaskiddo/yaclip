@@ -30,25 +30,20 @@ RUN apt-get -y update --allow-releaseinfo-change \
     && apt-get -y clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv (fast Python package manager).
-RUN pip3 install --no-cache-dir --upgrade --break-system-packages \
-      uv
-
 # Copy dependency manifest first (Docker layer caching).
 COPY requirements-cuda.txt .
 
-# Create venv and install packages.
+# Install packages directly into system Python.
 # CUDA torch replaces CPU-only torch — the CUDA build carries triton, which is
 # required for GPU acceleration.  guard_triton_segfault() in environment.py is
 # automatically disabled when CUDA is present (torch.cuda.is_available() == True).
 # opencv-python-headless prevents display-server crashes in headless containers.
-RUN uv venv \
-    && uv pip install --no-cache --upgrade \
+RUN pip3 install --no-cache-dir --break-system-packages --upgrade \
         pip \
         setuptools \
         wheel \
-    && uv pip install --no-cache -r requirements-cuda.txt \
-    && uv pip install --no-cache --force-reinstall --no-deps \
+    && pip3 install --no-cache-dir --break-system-packages -r requirements-cuda.txt \
+    && pip3 install --no-cache-dir --break-system-packages --force-reinstall --no-deps \
         opencv-python-headless
 
 # Copy the rest of the application.
@@ -62,5 +57,5 @@ EXPOSE 7860
 
 # Default: serve the WebUI (override via CLI args: `clip <url>`, `cache purge`, etc.).
 # The workspace auto-initialises on first boot (FFmpeg, fonts, dirs).
-ENTRYPOINT ["uv", "run", "app.py"]
+ENTRYPOINT ["python3", "app.py"]
 CMD ["serve"]

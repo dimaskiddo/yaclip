@@ -24,23 +24,18 @@ RUN apt-get -y update --allow-releaseinfo-change \
     && apt-get -y clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv (fast Python package manager).
-RUN pip3 install --no-cache-dir --upgrade --break-system-packages \
-      uv
-
 # Copy dependency manifest first (Docker layer caching).
 COPY requirements.txt .
 
-# Create venv and install packages.
+# Install packages directly into system Python.
 # GPU torch is NOT installed — CPU-only torch is the safe default for Docker.
 # opencv-python-headless prevents WSL/headless display crashes.
-RUN uv venv \
-    && uv pip install --no-cache --upgrade \
+RUN pip3 install --no-cache-dir --break-system-packages --upgrade \
         pip \
         setuptools \
         wheel \
-    && uv pip install --no-cache -r requirements.txt \
-    && uv pip install --no-cache --force-reinstall --no-deps \
+    && pip3 install --no-cache-dir --break-system-packages -r requirements.txt \
+    && pip3 install --no-cache-dir --break-system-packages --force-reinstall --no-deps \
         opencv-python-headless
 
 # Copy the rest of the application.
@@ -54,5 +49,5 @@ EXPOSE 7860
 
 # Default: serve the WebUI (override via CLI args: `clip <url>`, `cache purge`, etc.).
 # The workspace auto-initialises on first boot (FFmpeg, fonts, dirs).
-ENTRYPOINT ["uv", "run", "app.py"]
+ENTRYPOINT ["python3", "app.py"]
 CMD ["serve"]

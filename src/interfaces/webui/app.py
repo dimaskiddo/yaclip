@@ -84,6 +84,7 @@ def build_ui() -> gr.Blocks:
                 review_col,
                 rendered_actions,
             ],
+            api_name="review-load-proposals",
         )
 
         clipsmanager = build_clipsmanager_tab()
@@ -123,6 +124,7 @@ def build_ui() -> gr.Blocks:
             ),
             outputs=[render_btn, review_col, *_OTHER_TABS, clipsmanager_tab],
             queue=False,
+            api_name=False,
         ).then(
             fn=_run_render,
             inputs=[proposals_state, pipeline_state, job_type_state],
@@ -134,11 +136,13 @@ def build_ui() -> gr.Blocks:
                 render_btn,
             ],
             show_progress_on=[render_btn, render_progress_md],
+            api_name="review-render-clips",
         )
         render_event.success(
             fn=lambda: [gr.update(interactive=True)] * len(_OTHER_TABS),
             outputs=[*_OTHER_TABS],
             queue=False,
+            api_name=False,
         )
         # clipsmanager_tab stays disabled after successful render;
         # re-enabled by _start_new_clip / _reject_and_start_new via _RESET_OUTPUTS.
@@ -151,14 +155,19 @@ def build_ui() -> gr.Blocks:
             ),
             outputs=[render_btn, review_col, *_OTHER_TABS, clipsmanager_tab],
             queue=False,
+            api_name=False,
         )
 
-        new_clip_btn.click(fn=_start_new_clip, outputs=_RESET_OUTPUTS)
+        new_clip_btn.click(
+            fn=_start_new_clip, outputs=_RESET_OUTPUTS,
+            api_name="review-start-new-clip",
+        )
 
         reject_confirm_btn.click(
             fn=_reject_and_start_new,
             inputs=[rendered_state],
             outputs=_RESET_OUTPUTS,
+            api_name="review-reject-start-new-clip",
         )
 
         # ---- Clips Manager loading lock ----
@@ -178,6 +187,7 @@ def build_ui() -> gr.Blocks:
             inputs=[clips_state],
             outputs=_CM_LOCK_TABS,
             queue=False,
+            api_name="clips-loading-lock",
         )
 
         app.load(None, js=_TRAKTEER_LOAD_JS)

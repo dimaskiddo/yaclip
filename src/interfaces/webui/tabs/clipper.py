@@ -301,6 +301,7 @@ def build_clipper_tab(cfg) -> SimpleNamespace:
             }
             """,
             queue=False,
+            api_name=False,
         )
         clipper_tab.select(
             fn=_refresh_controls,
@@ -318,11 +319,13 @@ def build_clipper_tab(cfg) -> SimpleNamespace:
                 video_encoder,
                 stt_context,
             ],
+            api_name="clipper-refresh-controls",
         )
         find_btn.click(
             fn=lambda: gr.update(interactive=False, value="Finding Clips..."),
             outputs=[find_btn],
             queue=False,
+            api_name=False,
         ).then(
             fn=_run_clipper_pipeline,
             inputs=[
@@ -349,10 +352,12 @@ def build_clipper_tab(cfg) -> SimpleNamespace:
             ],
             outputs=[pipeline_state, clipper_progress, find_btn],
             show_progress_on=[find_btn, clipper_progress],
+            api_name="clipper-find-clips",
         ).success(
             fn=lambda: gr.update(interactive=True, value="Find Clips"),
             outputs=[find_btn],
             queue=False,
+            api_name=False,
         )
 
     return SimpleNamespace(

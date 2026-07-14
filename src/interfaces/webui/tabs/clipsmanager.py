@@ -136,10 +136,15 @@ def build_clipsmanager_tab() -> SimpleNamespace:
         # Wire events: clean stale copies + refresh choices on tab activation;
         # clean again on directory change so only the current dir's clips stay cached.
         clipsmanager_tab.select(
-            fn=_on_tab_select, outputs=[video_dropdown, clips_state]
+            fn=_on_tab_select, outputs=[video_dropdown, clips_state],
+            api_name="clips-refresh",
         )
         video_dropdown.change(
-            fn=_on_dir_change, inputs=[video_dropdown], outputs=[clips_state]
-        ).then(fn=_load_clips, inputs=[video_dropdown], outputs=[clips_state])
+            fn=_on_dir_change, inputs=[video_dropdown], outputs=[clips_state],
+            api_name="clips-select-video",
+        ).then(
+            fn=_load_clips, inputs=[video_dropdown], outputs=[clips_state],
+            api_name="clips-load",
+        )
 
     return SimpleNamespace(tab=clipsmanager_tab, clips_state=clips_state)

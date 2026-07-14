@@ -173,7 +173,6 @@ Before you begin, make sure you have the following installed on your computer:
 | Requirement | Version | Where to get it |
 |---|---|---|
 | **Python** | 3.10 or newer | [python.org/downloads](https://www.python.org/downloads/) |
-| **uv** *(recommended)* or pip | Any | [docs.astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/) |
 | **Git** | Any | [git-scm.com](https://git-scm.com/downloads) |
 
 > **How to check if Python is already installed:**
@@ -293,27 +292,25 @@ source .venv/bin/activate
 
 #### 🟢 CPU Setup *(recommended for most users)*
 
-Run these two commands **in order**. Both are required.
+Run these commands **in order**. All three are required.
 
-**4a. Install all packages:**
+**4a. Upgrade core build tools first (prevents silent install failures):**
 
 ```bash
-# Using uv (recommended — much faster):
-uv sync --locked
+pip install --no-cache-dir --upgrade pip setuptools wheel
+```
 
-# Using pip (alternative):
+**4b. Install all packages:**
+
+```bash
 pip install --no-cache-dir -r requirements.txt
 ```
 
-**4b. Restore the correct video library *(required — do not skip)*:**
+**4c. Restore the correct video library *(required — do not skip)*:**
 
-Some packages installed in step 4a will silently swap out a critical video library with a version that crashes on WSL2 and Linux servers. This command puts the correct one back:
+Some packages installed in step 4b will silently swap out a critical video library with a version that crashes on WSL2 and Linux servers. This command puts the correct one back:
 
 ```bash
-# Using uv:
-uv pip install --no-cache --force-reinstall --no-deps opencv-python-headless
-
-# Using pip:
 pip install --no-cache-dir --force-reinstall --no-deps opencv-python-headless
 ```
 
@@ -321,14 +318,9 @@ pip install --no-cache-dir --force-reinstall --no-deps opencv-python-headless
 
 #### 🟡 GPU Setup *(only if you have an NVIDIA GPU)*
 
-First, complete steps 4a and 4b above exactly as written. Then reinstall with the CUDA requirements file to swap CPU torch for GPU torch:
+First, complete steps 4a, 4b, and 4c above exactly as written. Then reinstall with the CUDA requirements file to swap CPU torch for GPU torch:
 
 ```bash
-# Using uv (recommended):
-uv pip install --no-cache -r requirements-cuda.txt
-uv pip install --no-cache --force-reinstall --no-deps opencv-python-headless
-
-# Using pip (alternative):
 pip install --no-cache-dir -r requirements-cuda.txt
 pip install --no-cache-dir --force-reinstall --no-deps opencv-python-headless
 ```
@@ -350,11 +342,6 @@ export YACLIP_FORCE_TRITON=1
 If you previously installed AI packages outside of this guide, you may have a GPU version of the AI library installed without realising it — this can cause YaClip to crash silently on startup. Switch back to the safe CPU version with:
 
 ```bash
-# Using uv (recommended):
-uv pip install --no-cache -r requirements.txt
-uv pip install --no-cache --force-reinstall --no-deps opencv-python-headless
-
-# Using pip (alternative):
 pip install --no-cache-dir -r requirements.txt
 pip install --no-cache-dir --force-reinstall --no-deps opencv-python-headless
 ```
@@ -531,7 +518,7 @@ python app.py config
 ## 📦 Building Redistributable Binaries
 
 YaClip ships a GoReleaser-style build driver (`build.py`, wrapped by a `Makefile`) that packages
-the app with [PyInstaller](https://pyinstaller.org/) into a standalone folder — no venv or `uv`
+the app with [PyInstaller](https://pyinstaller.org/) into a standalone folder — no venv
 needed on the end-user's machine. One archive is built per OS/architecture/variant; native ML
 wheels (torch, mediapipe, opencv) can't be cross-compiled, so each archive is built **on** the
 platform it targets, not cross-built from one machine.
@@ -573,7 +560,9 @@ single GitHub Release with all 6 archives and a merged `checksums.txt`.
 # Activate environment first
 source .venv/bin/activate
 
-# Dev dependencies are already included via uv sync --locked
+# Dev dependencies — install with uv (fast) or pip:
+#   uv sync --locked          (recommended for developers)
+#   pip install --no-cache-dir -r requirements.txt  (alternative)
 # (ruff, pytest, etc. are under [project.optional-dependencies] dev in pyproject.toml)
 
 # Run all tests

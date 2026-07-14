@@ -258,27 +258,32 @@ def build_review_tab() -> SimpleNamespace:
                         _edit_field(idx, "title"),
                         inputs=[title_box, proposals_state],
                         outputs=[],
+                        api_name=False,
                     )
                     start_box.change(
                         _edit_field(idx, "start_time"),
                         inputs=[start_box, proposals_state],
                         outputs=[],
+                        api_name=False,
                     )
                     end_box.change(
                         _edit_field(idx, "end_time"),
                         inputs=[end_box, proposals_state],
                         outputs=[],
+                        api_name=False,
                     )
                     type_dd.change(
                         _edit_field(idx, "content_type"),
                         inputs=[type_dd, proposals_state],
                         outputs=[],
+                        api_name=False,
                     )
                     # Delete swaps the list, triggering a re-render.
                     del_btn.click(
                         _delete_clip(idx),
                         inputs=[proposals_state],
                         outputs=[proposals_state],
+                        api_name=False,
                     )
 
         render_btn = gr.Button("Render Clips", variant="primary", visible=False)
@@ -339,11 +344,13 @@ def build_review_tab() -> SimpleNamespace:
             fn=lambda: gr.update(visible=True),
             outputs=[reject_confirm_row],
             queue=False,
+            api_name=False,
         )
         reject_cancel_btn.click(
             fn=lambda: gr.update(visible=False),
             outputs=[reject_confirm_row],
             queue=False,
+            api_name=False,
         )
 
     return SimpleNamespace(

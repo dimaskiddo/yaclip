@@ -74,12 +74,19 @@ def build_maintenance_tab() -> SimpleNamespace:
             )
             clear_btn = gr.Button("🗑️ Cache Clean", variant="stop")
         result_log = gr.Textbox(label="Result", lines=4, interactive=False)
-        maintenance_tab.select(fn=_refresh_cache_info, outputs=[usage_table])
-        refresh_btn.click(fn=_refresh_cache_info, outputs=[usage_table])
+        maintenance_tab.select(
+            fn=_refresh_cache_info, outputs=[usage_table],
+            api_name="cache-refresh-info",
+        )
+        refresh_btn.click(
+            fn=_refresh_cache_info, outputs=[usage_table],
+            api_name="cache-refresh-stats",
+        )
         clear_btn.click(
             fn=_run_purge,
             inputs=[purge_targets, dry_run_cb],
             outputs=[usage_table, result_log],
+            api_name="cache-purge",
         )
 
     return SimpleNamespace(

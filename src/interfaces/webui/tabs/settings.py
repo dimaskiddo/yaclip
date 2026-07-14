@@ -632,15 +632,18 @@ def build_settings_tab(cfg) -> SimpleNamespace:
             fn=_apply_settings,
             inputs=widget_list + [persist_cb],
             outputs=[s_c_api_key, l_c_api_key, restore_dd, restore_btn],
+            api_name="settings-apply",
         )
         restore_btn.click(
             fn=_restore_settings,
             inputs=[restore_dd],
             outputs=widget_list + [restore_dd],
+            api_name="settings-restore",
         )
         settings_tab.select(
             fn=_refresh_backup_list,
             outputs=[restore_dd, restore_btn],
+            api_name="settings-refresh-backups",
         )
 
     return SimpleNamespace(tab=settings_tab)
