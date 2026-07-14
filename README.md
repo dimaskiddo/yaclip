@@ -321,16 +321,16 @@ pip install --no-cache-dir --force-reinstall --no-deps opencv-python-headless
 
 #### 🟡 GPU Setup *(only if you have an NVIDIA GPU)*
 
-First, complete steps 4a and 4b above exactly as written. Then run these **additional** commands to replace the CPU AI library with the GPU version:
+First, complete steps 4a and 4b above exactly as written. Then reinstall with the CUDA requirements file to swap CPU torch for GPU torch:
 
 ```bash
-# Remove the CPU version that was just installed:
-uv pip uninstall torch torchvision
+# Using uv (recommended):
+uv pip install --no-cache -r requirements-cuda.txt
+uv pip install --no-cache --force-reinstall --no-deps opencv-python-headless
 
-# Install the GPU version:
-# (Replace "cu121" with your CUDA version if different — check with: nvidia-smi)
-uv pip install --no-cache torch==2.12.0+cu121 torchvision==0.27.0+cu121 \
-  --index-url https://download.pytorch.org/whl/cu121
+# Using pip (alternative):
+pip install --no-cache-dir -r requirements-cuda.txt
+pip install --no-cache-dir --force-reinstall --no-deps opencv-python-headless
 ```
 
 Then tell YaClip that a real GPU is present by setting an environment variable:
@@ -350,19 +350,13 @@ export YACLIP_FORCE_TRITON=1
 If you previously installed AI packages outside of this guide, you may have a GPU version of the AI library installed without realising it — this can cause YaClip to crash silently on startup. Switch back to the safe CPU version with:
 
 ```bash
-# Remove the GPU version and everything it brought with it:
-uv pip uninstall torch torchvision triton \
-  nvidia-cublas-cu13 nvidia-cudnn-cu13 nvidia-cuda-runtime-cu13 nvidia-cuda-nvrtc-cu13 \
-  nvidia-cuda-cupti-cu13 nvidia-cufft-cu13 nvidia-curand-cu13 nvidia-cusolver-cu13 \
-  nvidia-cusparse-cu13 nvidia-nccl-cu13 nvidia-nvjitlink-cu13 nvidia-nvtx-cu13 \
-  cuda-toolkit cuda-bindings 2>/dev/null || true
-
-# Install the CPU version:
-uv pip install --no-cache torch==2.12.0+cpu torchvision==0.27.0+cpu \
-  --index-url https://download.pytorch.org/whl/cpu
-
-# Restore the correct video library (same as step 4b):
+# Using uv (recommended):
+uv pip install --no-cache -r requirements.txt
 uv pip install --no-cache --force-reinstall --no-deps opencv-python-headless
+
+# Using pip (alternative):
+pip install --no-cache-dir -r requirements.txt
+pip install --no-cache-dir --force-reinstall --no-deps opencv-python-headless
 ```
 
 ---
