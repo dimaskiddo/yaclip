@@ -6,8 +6,8 @@ from src.core.workspace import ensure_workspace_integrity, run_purge_cycle
 
 
 def serve(
-    host: str = typer.Option("127.0.0.1", help="Host IP to bind Gradio to"),
-    port: int = typer.Option(7860, help="Port to bind Gradio to"),
+    host: str = typer.Option(None, help="Host IP to bind Gradio to (default: from config.yaml)"),
+    port: int = typer.Option(None, help="Port to bind Gradio to (default: from config.yaml)"),
 ) -> None:
     """Launch the YaClip WebUI in your browser.
 

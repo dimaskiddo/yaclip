@@ -3,9 +3,8 @@
 YaClip uses **cookies** to authenticate with YouTube when downloading videos. This helps bypass
 bot detection and allows access to member-only or age-restricted content.
 
-We **do not** auto-extract cookies from your browser (the old mechanism was fragile and
-platform-specific). Instead, you manually export your YouTube cookies once and provide the file
-to YaClip.
+We **do not** auto-extract cookies from your browser. Instead, you manually export your
+YouTube cookies once and provide the file to YaClip.
 
 ## Step 1 — Install a Cookie Export Extension
 

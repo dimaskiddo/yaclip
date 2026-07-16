@@ -194,11 +194,11 @@ def build_ui() -> gr.Blocks:
     return app
 
 
-def launch_webui(host: str = "127.0.0.1", port: int = 7860) -> None:
+def launch_webui(host: str | None = None, port: int | None = None) -> None:
     cfg = load_config().web_server
     ui = build_ui()
     ui.queue().launch(
-        server_name=host or cfg.host,
-        server_port=port or cfg.port,
+        server_name=host if host is not None else cfg.host,
+        server_port=port if port is not None else cfg.port,
         share=cfg.share,
     )

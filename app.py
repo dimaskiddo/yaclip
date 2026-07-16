@@ -22,7 +22,7 @@ def main() -> None:
     if len(sys.argv) > 1:
         cli()
     else:
-        serve(host="127.0.0.1", port=7860)
+        serve()
 
 
 if __name__ == "__main__":

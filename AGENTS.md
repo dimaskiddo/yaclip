@@ -126,7 +126,6 @@ All clips: 9:16 vertical. Clip length = `[default_clip_duration_seconds, default
 2. **Never auto-run pipeline.** After implementing/fixing, provide the exact `python app.py clip <url>` command + expected output. Wait for user to report results.
 3. **No guessing** on FFmpeg filter graphs, speaker diarization, content type detection model, or Gradio callback architecture. Describe the ambiguity + options, await decision.
 4. **Never use system temp dirs.** All files in `./workspace/`.
-5. **WSL cookie resolution:** Detect WSL, resolve Windows host username, map cookie DB via `/mnt/c/Users/<WinUser>/AppData/...`, copy to `workspace/tmp/`.
 
 ---
 
