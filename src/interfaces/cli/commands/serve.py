@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import typer
+from loguru import logger
 
+from src.core.config import load_config
+from src.core.utils import AIUtils
 from src.core.workspace import ensure_workspace_integrity, run_purge_cycle
 
 
@@ -17,6 +20,10 @@ def serve(
     """
     ensure_workspace_integrity()
     run_purge_cycle()
+
+    for r in AIUtils.validate_cloud_connections(load_config()):
+        if not r["ok"]:
+            logger.warning(f"Cloud {r['component']} ({r['provider']}): {r['error']}")
 
     from src.interfaces.webui import launch_webui
 

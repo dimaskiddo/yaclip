@@ -11,7 +11,7 @@ from src.core.config import (
     restore_config,
     save_config_to_disk,
 )
-from src.core.utils import mask_api_key
+from src.core.utils import AIUtils, mask_api_key
 from src.interfaces.components import (
     _ALIGNMENT_CHOICES,
     _CLOUD_PROVIDER_CHOICES,
@@ -45,7 +45,26 @@ def _apply_settings(*values):
             continue
         overrides[path] = None if val == "" else val
     try:
-        cfg = apply_session_overrides(overrides)
+        # Validate cloud providers BEFORE applying. If check fails, strip that
+        # provider's cloud overrides so old values are kept instead of breaking.
+        _trial = apply_session_overrides(dict(overrides))
+        _failed: set[str] = set()
+        for r in AIUtils.validate_cloud_connections(_trial):
+            if not r["ok"]:
+                gr.Warning(f"Cloud {r['component']} ({r['provider']}): {r['error']}")
+                _failed.add(r["component"])
+        if _failed:
+            for path in [
+                p for p in overrides
+                if (p.startswith("ai_pipeline.stt.cloud.") and "STT" in _failed)
+                or (p.startswith("ai_pipeline.llm.cloud.") and "LLM" in _failed)
+            ]:
+                del overrides[path]
+            # Reload from disk to clear stale trial values from singleton cache
+            load_config(force_reload=True)
+            cfg = apply_session_overrides(overrides)
+        else:
+            cfg = _trial
         if persist:
             save_config_to_disk()
             gr.Success("Settings applied and saved to config.yaml.")

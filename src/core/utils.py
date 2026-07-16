@@ -5,8 +5,9 @@ import os
 import platform
 import re
 import subprocess
+import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from loguru import logger
 
@@ -355,6 +356,13 @@ class SystemUtils:
         return None
 
 
+class ConnectionCheckResult(TypedDict):
+    component: str
+    provider: str
+    ok: bool
+    error: str | None
+
+
 class AIUtils:
     @staticmethod
     def has_credentials(api_key: str | None) -> bool:
@@ -477,6 +485,89 @@ class AIUtils:
             raise AIProviderError("Parsed response is not a JSON array.")
 
         return parsed_data
+
+    @staticmethod
+    def _check_provider(
+        provider: str,
+        api_key: str,
+        base_url: str | None,
+        model: str,
+        timeout: float = 10.0,
+    ) -> tuple[bool, str | None]:
+        """Probe a single cloud provider endpoint. Returns (ok, error_message).
+
+        Runs an internet check first, then a provider-specific lightweight call:
+        Google → ``generate_content("hi")``; OpenAI → ``client.models.list()``.
+        """
+        try:
+            urllib.request.urlopen("https://www.google.com/generate_204", timeout=3)
+        except Exception:
+            return False, "No internet connection"
+
+        try:
+            if provider == "google":
+                import google.generativeai as genai
+
+                genai.configure(api_key=api_key)
+                model_obj = genai.GenerativeModel(model)
+                model_obj.generate_content(
+                    "hi",
+                    generation_config={"max_output_tokens": 1},
+                    request_options={"timeout": timeout},
+                )
+            else:
+                from src.ai.api_client import make_openai_client
+
+                client = make_openai_client(api_key, base_url, timeout)
+                client.models.list()
+
+        except ImportError as e:
+            return False, f"Package not installed: {e}"
+        except Exception as e:
+            exc_type = type(e).__name__
+            if "InvalidAPIKey" in exc_type or "401" in str(e) or "authentication" in str(e).lower():
+                return False, "Invalid API key"
+            if "Timeout" in exc_type or "timeout" in str(e).lower():
+                return False, "Connection timeout"
+            if "ConnectionError" in exc_type or "APIConnectionError" in exc_type:
+                return False, "Cannot reach API endpoint"
+            return False, f"{exc_type}: {str(e)[:120]}"
+
+        return True, None
+
+    @staticmethod
+    def validate_cloud_connections(cfg: Any) -> list[ConnectionCheckResult]:
+        """Validate cloud provider connectivity for STT and LLM.
+
+        Returns a list of results — one per cloud provider that has credentials
+        configured. Skips providers where ``provider != "cloud"`` or no valid API key.
+        """
+        results: list[ConnectionCheckResult] = []
+        for component, cloud_cfg, pipeline_cfg in [
+            ("STT", cfg.ai_pipeline.stt.cloud, cfg.ai_pipeline.stt),
+            ("LLM", cfg.ai_pipeline.llm.cloud, cfg.ai_pipeline.llm),
+        ]:
+            if pipeline_cfg.provider != "cloud":
+                continue
+            if not AIUtils.has_credentials(cloud_cfg.api_key):
+                results.append({
+                    "component": component,
+                    "provider": cloud_cfg.provider,
+                    "ok": False,
+                    "error": "No API key configured",
+                })
+                continue
+            ok, error = AIUtils._check_provider(
+                cloud_cfg.provider, cloud_cfg.api_key,
+                cloud_cfg.base_url, cloud_cfg.model, cloud_cfg.timeout,
+            )
+            results.append({
+                "component": component,
+                "provider": cloud_cfg.provider,
+                "ok": ok,
+                "error": error,
+            })
+        return results
 
 
 def mask_api_key(key: str) -> str:

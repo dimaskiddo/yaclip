@@ -3,6 +3,7 @@ from __future__ import annotations
 import gradio as gr
 
 from src.core.config import load_config
+from src.core.utils import AIUtils
 from src.interfaces.webui.tabs.about import build_about_tab
 from src.interfaces.webui.tabs.clipper import build_clipper_tab
 from src.interfaces.webui.tabs.clipsmanager import (
@@ -191,6 +192,16 @@ def build_ui() -> gr.Blocks:
         )
 
         app.load(None, js=_TRAKTEER_LOAD_JS)
+
+        def _startup_connection_check() -> None:
+            for r in AIUtils.validate_cloud_connections(load_config()):
+                if not r["ok"]:
+                    gr.Warning(
+                        f"Cloud {r['component']} ({r['provider']}): {r['error']}"
+                    )
+
+        app.load(fn=_startup_connection_check, inputs=[], outputs=[])
+
     return app
 
 
