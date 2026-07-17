@@ -32,7 +32,6 @@ from src.core.constants import (
     MAR_WIDTH_PAIR,
     MIN_CROP_DIMENSION,
     MIN_SHOT_SECONDS,
-    PAN_SMOOTHING_FACTOR,
     PODCAST_CROP_ASPECT,
     PODCAST_DETECTION_FPS,
     SOLO_CROP_HEIGHT_FRAC,
@@ -865,8 +864,8 @@ class FaceTracker:
             sx = float(crops[0]["crop_x"])
             sy = float(crops[0]["crop_y"])
             for c in crops:
-                sx += (c["crop_x"] - sx) * PAN_SMOOTHING_FACTOR
-                sy += (c["crop_y"] - sy) * PAN_SMOOTHING_FACTOR
+                sx += (c["crop_x"] - sx) * self.config.video_processing.camera_pan_speed
+                sy += (c["crop_y"] - sy) * self.config.video_processing.camera_pan_speed
                 c["crop_x"] = int(sx)
                 c["crop_y"] = int(sy)
 

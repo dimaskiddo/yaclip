@@ -189,6 +189,8 @@ SETTINGS_HELP: dict[str, str] = {
     "off keeps a steady static crop (recommended).",
     "gameplay_zoom": "How close-up the gameplay crop is (zoom). Higher zooms in more and hides the "
     "edges; 1.0 shows the full view.",
+    "camera_pan_speed": "How fast the camera glides toward its target. Higher = snappier "
+    "response to scene changes; lower = smoother, slower ease.",
     "subtitles_enabled": "Burn captions (subtitles) into the clips. Off makes clips with no "
     "captions.",
     "subtitles_collab_enabled": "Also show captions on the crowded multi-player (collab) layout. "

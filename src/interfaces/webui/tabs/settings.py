@@ -434,6 +434,14 @@ def build_settings_tab(cfg) -> SimpleNamespace:
                 value=rd.gameplay_zoom,
                 info=SETTINGS_HELP["gameplay_zoom"],
             )
+            rd_pan_speed = gr.Slider(
+                0.01,
+                0.3,
+                step=0.01,
+                label="Camera Pan Speed",
+                value=vp.camera_pan_speed,
+                info=SETTINGS_HELP["camera_pan_speed"],
+            )
         with gr.Accordion("Caption Style", open=True):
             sub_enabled = gr.Checkbox(
                 label="Show Captions",
@@ -569,6 +577,7 @@ def build_settings_tab(cfg) -> SimpleNamespace:
             rd_device,
             rd_motion,
             rd_zoom,
+            rd_pan_speed,
             sub_enabled,
             sub_collab,
             sub_upper,
@@ -632,6 +641,7 @@ def build_settings_tab(cfg) -> SimpleNamespace:
             "video_processing.region_detection.device",
             "video_processing.region_detection.gameplay_follow_motion",
             "video_processing.region_detection.gameplay_zoom",
+            "video_processing.camera_pan_speed",
             "video_processing.subtitles.enabled",
             "video_processing.subtitles.collab_enabled",
             "video_processing.subtitles.uppercase",

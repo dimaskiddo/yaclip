@@ -263,6 +263,9 @@ class VideoProcessingConfig(BaseModel):
     # largest-face crop instead of the heavier MediaPipe + audio active-speaker pipeline.  Trades
     # multi-speaker accuracy for speed.  Does NOT affect content-type detection or Mode B/C.
     fast_mode: bool = Field(default=False)
+    # How fast the camera glides toward its target (EMA smoothing factor).
+    # Higher = snappier; lower = smoother, slower ease. Range: 0.01–0.3.
+    camera_pan_speed: float = Field(default=0.03, ge=0.01, le=0.3)
     content_type_override: str = Field(default="auto")
     detection_confidence_threshold: float = Field(default=0.6)
     auto_face_tracking: bool = Field(default=True)
