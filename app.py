@@ -5,7 +5,8 @@ import sys
 from src.core.config import load_config
 from src.core.environment import setup_environment
 from src.core.logger import setup_logger
-from src.interfaces.cli import cli, serve
+from src.interfaces.cli import cli
+from src.interfaces.cli.commands.serve import _launch_webui
 
 
 def main() -> None:
@@ -22,7 +23,7 @@ def main() -> None:
     if len(sys.argv) > 1:
         cli()
     else:
-        serve()
+        _launch_webui()
 
 
 if __name__ == "__main__":

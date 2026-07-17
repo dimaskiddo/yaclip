@@ -30,5 +30,24 @@ def serve(
     launch_webui(host, port)
 
 
+def _launch_webui() -> None:
+    """Bare-invocation entry point — loads config, skips Typer.
+
+    Called from ``app.py`` when no CLI args are present.  Resolves host/port
+    from ``config.yaml`` instead of relying on ``typer.Option`` descriptors
+    (which don't resolve when invoked directly from Python).
+    """
+    ensure_workspace_integrity()
+    run_purge_cycle()
+
+    for r in AIUtils.validate_cloud_connections(load_config()):
+        if not r["ok"]:
+            logger.warning(f"Cloud {r['component']} ({r['provider']}): {r['error']}")
+
+    from src.interfaces.webui import launch_webui
+
+    launch_webui()
+
+
 def register(cli: typer.Typer) -> None:
     cli.command("serve")(serve)
